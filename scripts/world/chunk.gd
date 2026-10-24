@@ -3,8 +3,6 @@ extends Node3D
 ## Квадрат мира 32×32 м: рельеф, объекты (через MultiMesh — тысячи
 ## деревьев рисуются дёшево), рыбы в глубоких местах и, иногда, сундук.
 
-const DECOR_VISIBLE_DISTANCE := 110.0
-
 var coord := Vector2i.ZERO
 var heights := PackedFloat32Array()
 var colors := PackedColorArray()
@@ -16,6 +14,10 @@ var fish: FishSchool
 
 var _terrain_mesh: MeshInstance3D
 var _multimeshes := {}
+var _grass: MultiMesh
+var _grass_buffer := PackedFloat32Array()
+var _litter: MultiMesh
+var _litter_buffer := PackedFloat32Array()
 
 
 func setup(chunk_coord: Vector2i, data: Dictionary) -> void:
@@ -33,6 +35,7 @@ func setup(chunk_coord: Vector2i, data: Dictionary) -> void:
 
 	props.assign(data["props"])
 	_build_props()
+	_build_cover(data)
 
 	if data.has("chest"):
 		var c: Dictionary = data["chest"]
@@ -83,11 +86,55 @@ func _build_props() -> void:
 		mmi.material_override = ModelLibrary.foliage_material()
 		if GameData.PROPS[id]["kind"] == "decor":
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			mmi.visibility_range_end = DECOR_VISIBLE_DISTANCE
+			mmi.visibility_range_end = Platform.decor_distance()
 			mmi.visibility_range_end_margin = 20.0
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		add_child(mmi)
 		_multimeshes[key] = mm
+
+
+## Трава и опавшие листья: два MultiMesh, буферы посчитаны в рабочем потоке.
+func _build_cover(data: Dictionary) -> void:
+	_grass_buffer = data.get("grass", PackedFloat32Array())
+	_litter_buffer = data.get("litter", PackedFloat32Array())
+	if not _grass_buffer.is_empty():
+		_grass = _cover_multimesh(GroundCover.grass_mesh(), _grass_buffer, GroundCover.GRASS_STRIDE, false)
+		_add_cover(_grass, GroundCover.grass_material(Platform.grass_distance()), Platform.grass_distance())
+	if not _litter_buffer.is_empty():
+		_litter = _cover_multimesh(GroundCover.litter_mesh(), _litter_buffer, GroundCover.LITTER_STRIDE, true)
+		var far := Platform.grass_distance() * 1.15
+		_add_cover(_litter, GroundCover.litter_material(far), far)
+
+
+static func _cover_multimesh(mesh: Mesh, buffer: PackedFloat32Array, stride: int, custom: bool) -> MultiMesh:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	mm.use_custom_data = custom
+	mm.mesh = mesh
+	mm.instance_count = buffer.size() / stride
+	mm.buffer = buffer
+	return mm
+
+
+func _add_cover(mm: MultiMesh, material: Material, distance: float) -> void:
+	var mmi := MultiMeshInstance3D.new()
+	mmi.multimesh = mm
+	mmi.material_override = material
+	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	# Пучки сами уходят в землю к distance (шейдер); чанк целиком прячется чуть дальше,
+	# когда в нём точно ничего не видно (полдиагонали чанка — 23 м).
+	mmi.visibility_range_end = distance + WorldGen.CHUNK_SIZE * 0.75
+	add_child(mmi)
+
+
+## Убирает траву и листья в прямоугольнике (мировые XZ), например под зданием.
+func clear_cover(rect: Rect2) -> void:
+	var local := Rect2(rect.position - Vector2(position.x, position.z), rect.size)
+	if _grass and GroundCover.hide_in_rect(_grass_buffer, GroundCover.GRASS_STRIDE, local):
+		_grass.buffer = _grass_buffer
+	if _litter and GroundCover.hide_in_rect(_litter_buffer, GroundCover.LITTER_STRIDE, local):
+		_litter.buffer = _litter_buffer
 
 
 func _instance_tint(id: String, index: int) -> Color:
@@ -129,7 +176,7 @@ static func is_harvestable(p: Dictionary) -> bool:
 
 ## Ближайший объект или сундук на луче (в мировых координатах).
 ## Возвращает {"t": расстояние, "prop": Dictionary} или {"t", "chest": Chest}, либо {}.
-func pick(from: Vector3, dir: Vector3) -> Dictionary:
+func pick(from: Vector3, dir: Vector3, slack := 0.0) -> Dictionary:
 	var best := {}
 	var best_t := INF
 	var o := from - global_position
@@ -138,12 +185,12 @@ func pick(from: Vector3, dir: Vector3) -> Dictionary:
 			continue
 		var def: Dictionary = GameData.PROPS[p["id"]]
 		var s: float = p["scale"]
-		var t := _ray_vs_column(o, dir, p["pos"], float(def["radius"]) * s * 0.75, float(def["height"]) * s)
+		var t := _ray_vs_column(o, dir, p["pos"], float(def["radius"]) * s * 0.75 + slack, float(def["height"]) * s)
 		if t < best_t:
 			best_t = t
 			best = {"t": t, "prop": p, "chunk": self}
 	if is_instance_valid(chest) and not chest.opened:
-		var t := _ray_vs_column(o, dir, chest.position, Chest.RADIUS, Chest.HEIGHT)
+		var t := _ray_vs_column(o, dir, chest.position, Chest.RADIUS + slack, Chest.HEIGHT)
 		if t < best_t:
 			best = {"t": t, "chest": chest, "chunk": self}
 	return best
@@ -188,12 +235,13 @@ func height_local(lx: float, lz: float) -> float:
 	return WorldGen.sample_height(heights, coord, lx, lz)
 
 
+## i, j — от -1 до RES + 1 (с запасом вокруг чанка).
 func get_vertex_height(i: int, j: int) -> float:
-	return heights[j * (WorldGen.RES + 1) + i]
+	return heights[WorldGen.hidx(i, j)]
 
 
 func set_vertex_height(i: int, j: int, h: float) -> void:
-	heights[j * (WorldGen.RES + 1) + i] = h
+	heights[WorldGen.hidx(i, j)] = h
 
 
 ## Перестраивает рельеф после выравнивания и ставит объекты на новую высоту.
@@ -209,3 +257,9 @@ func rebuild_terrain() -> void:
 			_multimeshes[p["mm"]].set_instance_transform(p["mm_i"], prop_transform(p))
 	if is_instance_valid(chest):
 		chest.position.y = height_local(chest.position.x, chest.position.z)
+	if _grass:
+		GroundCover.refit_heights(_grass_buffer, GroundCover.GRASS_STRIDE, height_local)
+		_grass.buffer = _grass_buffer
+	if _litter:
+		GroundCover.refit_heights(_litter_buffer, GroundCover.LITTER_STRIDE, height_local)
+		_litter.buffer = _litter_buffer

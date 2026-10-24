@@ -5,6 +5,9 @@ extends CanvasLayer
 ##   справа сверху — часы, сезон, погода и шестерёнка настроек;
 ##   снизу — текущее действие, меню стройки и панель инструментов;
 ##   справа — ремесло.
+## На телефоне (Platform.is_touch) всё компактнее и не заходит под вырез экрана:
+## меню стройки — лента карточек, подсказка — плашка над инструментами, а у правого
+## края, под большим пальцем, — кнопки действий (построить, повернуть, снести…).
 
 signal new_world_requested
 
@@ -15,15 +18,21 @@ const TOOLS := [
 	[Interaction.Tool.FLATTEN, "tool_flatten", "Ровнять", "3"],
 	[Interaction.Tool.DEMOLISH, "tool_demolish", "Снос", "4"],
 ]
+## Ширина колонки кнопок действий на телефоне (вместе с отступом).
+const ACTIONS_WIDTH := 74.0
 
 var interaction: Interaction
 var thumbnails: Thumbnails
 
+var _touch := false
 var _root: Control
 var _bottom: VBoxContainer
+var _resource_bar: PanelContainer
 var _main_counts := {}
 var _all_panel: PanelContainer
+var _all_scroll: ScrollContainer
 var _all_counts := {}
+var _clock_row: HBoxContainer
 var _clock_time: Label
 var _clock_icon: TextureRect
 var _season_icon: TextureRect
@@ -33,10 +42,13 @@ var _settings: SettingsDialog
 var _tool_buttons := {}
 var _build_panel: PanelContainer
 var _category_buttons := {}
-var _build_grid: HFlowContainer
+var _build_grid: Container
 var _build_cards := {}
 var _category := "production"
+## Телефон: открыта ли лента зданий (закрывается, когда здание выбрано).
+var _drawer_open := false
 var _craft_panel: PanelContainer
+var _craft_scroll: ScrollContainer
 var _craft_rows := {}
 var _craft_progress: ProgressBar
 var _craft_queue_label: Label
@@ -46,14 +58,20 @@ var _job_label: Label
 var _job_bar: ProgressBar
 var _hover_panel: PanelContainer
 var _hover_label: Label
+var _hint_panel: PanelContainer
+var _hint_label: Label
+var _actions: VBoxContainer
+var _actions_key := ""
 var _toast: PanelContainer
 var _toast_label: Label
 var _toast_tween: Tween
 var _loading: Control
+var _portrait_hint: Control
 var _info_timer := 0.0
 
 
 func _ready() -> void:
+	_touch = Platform.is_touch
 	_root = Control.new()
 	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -67,18 +85,22 @@ func _ready() -> void:
 	_bottom.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 	_bottom.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	_bottom.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_bottom.position.y = -16
 	_bottom.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_bottom.add_theme_constant_override("separation", 10)
+	_bottom.add_theme_constant_override("separation", _px(10, 6))
 	_root.add_child(_bottom)
 
 	_build_resources()
 	_build_clock()
 	_build_job_panel()
 	_build_build_panel()
+	if _touch:
+		_build_hint()
 	_build_toolbar()
 	_build_craft_panel()
-	_build_hover()
+	if _touch:
+		_build_actions()
+	else:
+		_build_hover()
 	_build_toast()
 	_settings = SettingsDialog.new()
 	_root.add_child(_settings)
@@ -86,6 +108,8 @@ func _ready() -> void:
 		show_message("Мир сохранён" if WorldState.save_game() else "Не удалось сохранить"))
 	_settings.new_world_requested.connect(func() -> void: new_world_requested.emit())
 	_build_loading()
+	if _touch:
+		_build_portrait_hint()
 	Inventory.changed.connect(_on_inventory_changed)
 	Crafting.queue_changed.connect(_refresh_crafting)
 	Crafting.crafted.connect(func(id: String) -> void: show_message("Готово: %s" % GameData.RECIPES[id]["name"]))
@@ -93,6 +117,8 @@ func _ready() -> void:
 	Weather.season_changed.connect(func(_i: int) -> void: show_message("Наступает %s" % Weather.season_name().to_lower()))
 	_on_inventory_changed("")
 	thumbnails.request(GameData.BUILDINGS.keys())
+	Platform.layout_changed.connect(_apply_layout)
+	_apply_layout.call_deferred()
 
 
 func bind(target: Interaction) -> void:
@@ -104,69 +130,161 @@ func bind(target: Interaction) -> void:
 	_on_tool_changed(interaction.tool)
 
 
+## Размер для ПК или для телефона.
+func _px(pc: float, touch: float) -> float:
+	return touch if _touch else pc
+
+
 func is_modal_open() -> bool:
 	return _settings.is_open()
+
+
+## Закрывает верхнюю открытую панель (кнопка «Назад» на Android). false — закрывать нечего.
+func close_top_panel() -> bool:
+	if _settings.is_open():
+		_settings.close()
+	elif _all_panel.get_meta("fade_target", false):
+		UiStyle.fade(_all_panel, false)
+	elif _craft_panel.get_meta("fade_target", false):
+		toggle_crafting()
+	elif _touch and _drawer_open and interaction.building_system.selected_id != "":
+		_set_drawer(false)
+	else:
+		return false
+	return true
+
+
+## Расставляет панели с учётом безопасной зоны экрана (вырез и полоска «домой» на iPhone).
+func _apply_layout() -> void:
+	var m := Platform.safe_margins() if _touch else {"left": 16.0, "top": 16.0, "right": 16.0, "bottom": 16.0}
+	var vp := _root.get_viewport_rect().size
+	# Панели привязаны к углам; смещения задаём от угла, остальное растёт само.
+	_pin(_resource_bar, m["left"], m["top"], m["left"], m["top"])
+	_pin(_clock_row, -m["right"], m["top"], -m["right"], m["top"])
+	_pin(_bottom, 0.0, -m["bottom"], 0.0, -m["bottom"])
+	var toast_y: float = m["top"] + _px(80, 56)
+	_pin(_toast, 0.0, toast_y, 0.0, toast_y)
+	var below_bar: float = m["top"] + _resource_bar.get_combined_minimum_size().y + 8.0
+	_pin(_all_panel, m["left"], below_bar, m["left"], below_bar)
+	if not _touch:
+		_pin(_craft_panel, -m["right"], 0.0, -m["right"], 0.0)
+		return
+	# Браузер на телефоне не умеет закрепить альбомную ориентацию — просим повернуть.
+	_portrait_hint.visible = vp.x < vp.y
+	_all_scroll.custom_minimum_size.y = minf(_all_scroll.get_child(0).get_combined_minimum_size().y,
+		vp.y - below_bar - m["bottom"] - 60.0)
+	var side := maxf(m["left"], m["right"]) + ACTIONS_WIDTH
+	_build_panel.custom_minimum_size.x = maxf(vp.x - side * 2.0, 360.0)
+	_pin(_actions, -m["right"], -m["bottom"], -m["right"], -m["bottom"])
+	# Ремесло — посередине, между часами и панелью инструментов.
+	var craft_top: float = m["top"] + 58.0
+	_pin(_craft_panel, 0.0, craft_top, 0.0, craft_top)
+	# Снизу — панель инструментов (~74), сверху в самой панели — заголовок и очередь (~96).
+	var craft_room: float = vp.y - craft_top - m["bottom"] - 74.0 - 96.0
+	_craft_scroll.custom_minimum_size.y = clampf(_craft_scroll.get_child(0).get_combined_minimum_size().y, 80.0, maxf(craft_room, 80.0))
+
+
+## Смещения краёв от точек привязки; размер дорастает до минимального сам
+## (в сторону, заданную grow_horizontal / grow_vertical).
+static func _pin(c: Control, left: float, top: float, right: float, bottom: float) -> void:
+	c.offset_left = left
+	c.offset_top = top
+	c.offset_right = right
+	c.offset_bottom = bottom
 
 
 # --- Ресурсы ---------------------------------------------------------------------------------
 
 func _build_resources() -> void:
-	var bar := PanelContainer.new()
-	bar.position = Vector2(16, 16)
-	_root.add_child(bar)
+	_resource_bar = PanelContainer.new()
+	if _touch:
+		_resource_bar.add_theme_stylebox_override("panel", UiStyle.panel(14, 9))
+	_root.add_child(_resource_bar)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 14)
-	bar.add_child(row)
+	row.add_theme_constant_override("separation", _px(14, 9))
+	_resource_bar.add_child(row)
 	for id: String in GameData.MAIN_RESOURCES:
 		var item := HBoxContainer.new()
-		item.add_theme_constant_override("separation", 5)
+		item.add_theme_constant_override("separation", _px(5, 3))
 		item.tooltip_text = GameData.res_name(id)
 		item.mouse_filter = Control.MOUSE_FILTER_PASS
-		item.add_child(UiStyle.icon_rect(id, 30))
-		var count := UiStyle.label("0", 18, UiStyle.TEXT, 800)
-		count.custom_minimum_size = Vector2(30, 0)
+		item.add_child(UiStyle.icon_rect(id, _px(30, 24)))
+		var count := UiStyle.label("0", _px(18, 15), UiStyle.TEXT, 800)
+		count.custom_minimum_size = Vector2(_px(30, 24), 0)
 		item.add_child(count)
 		row.add_child(item)
 		_main_counts[id] = count
+		if _touch:
+			# Подсказок при наведении на телефоне нет — название показываем по нажатию.
+			item.gui_input.connect(func(e: InputEvent) -> void:
+				if e is InputEventMouseButton and e.pressed:
+					show_message("%s: %d" % [GameData.res_name(id), Inventory.count(id)]))
 	var more := Button.new()
 	more.icon = UiStyle.icon("more")
-	more.add_theme_constant_override("icon_max_width", 22)
-	more.custom_minimum_size = Vector2(40, 34)
+	more.add_theme_constant_override("icon_max_width", _px(22, 20))
+	more.custom_minimum_size = Vector2(_px(40, 42), _px(34, 30))
 	more.tooltip_text = "Все ресурсы"
 	more.pressed.connect(func() -> void: UiStyle.fade(_all_panel, not _all_panel.get_meta("fade_target", false)))
 	row.add_child(more)
 
 	_all_panel = PanelContainer.new()
-	_all_panel.position = Vector2(16, 76)
 	_all_panel.visible = false
 	_all_panel.modulate.a = 0.0
 	_root.add_child(_all_panel)
+	var outer := VBoxContainer.new()
+	outer.add_theme_constant_override("separation", 6)
+	_all_panel.add_child(outer)
+	var title := HBoxContainer.new()
+	title.add_child(UiStyle.label("Все ресурсы", _px(18, 16), UiStyle.TEXT, 800))
+	outer.add_child(title)
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 6)
-	_all_panel.add_child(box)
-	box.add_child(UiStyle.label("Все ресурсы", 18, UiStyle.TEXT, 800))
+	box.add_theme_constant_override("separation", _px(6, 4))
+	if _touch:
+		var spacer := Control.new()
+		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		title.add_child(spacer)
+		var close := Button.new()
+		close.icon = UiStyle.icon("close")
+		close.add_theme_constant_override("icon_max_width", 16)
+		close.custom_minimum_size = Vector2(36, 30)
+		close.pressed.connect(func() -> void: UiStyle.fade(_all_panel, false))
+		title.add_child(close)
+		_all_scroll = _scroll(false)
+		outer.add_child(_all_scroll)
+		_all_scroll.add_child(box)
+	else:
+		outer.add_child(box)
 	for group: Array in GROUPS:
-		box.add_child(UiStyle.label(group[1], 13, UiStyle.BRAND_DARK, 800))
+		box.add_child(UiStyle.label(group[1], _px(13, 12), UiStyle.BRAND_DARK, 800))
 		var grid := GridContainer.new()
-		grid.columns = 3
-		grid.add_theme_constant_override("h_separation", 18)
-		grid.add_theme_constant_override("v_separation", 4)
+		grid.columns = int(_px(3, 4))
+		grid.add_theme_constant_override("h_separation", _px(18, 12))
+		grid.add_theme_constant_override("v_separation", _px(4, 2))
 		for id: String in GameData.RESOURCES:
 			if GameData.RESOURCES[id]["group"] != group[0]:
 				continue
 			var item := HBoxContainer.new()
 			item.add_theme_constant_override("separation", 6)
-			item.custom_minimum_size = Vector2(190, 34)
-			item.add_child(UiStyle.icon_rect(id, 30))
-			item.add_child(UiStyle.label(GameData.res_name(id), 15, UiStyle.TEXT, 600))
+			item.custom_minimum_size = Vector2(_px(190, 150), _px(34, 30))
+			item.add_child(UiStyle.icon_rect(id, _px(30, 26)))
+			item.add_child(UiStyle.label(GameData.res_name(id), _px(15, 13), UiStyle.TEXT, 600))
 			var spacer := Control.new()
 			spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			item.add_child(spacer)
-			var count := UiStyle.label("0", 15, UiStyle.TEXT, 800)
+			var count := UiStyle.label("0", _px(15, 13), UiStyle.TEXT, 800)
 			item.add_child(count)
 			grid.add_child(item)
 			_all_counts[id] = count
 		box.add_child(grid)
+
+
+## Прокрутка для телефона: листается пальцем, полосы прокрутки тонкие.
+func _scroll(horizontal: bool) -> ScrollContainer:
+	var s := ScrollContainer.new()
+	s.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER if horizontal else ScrollContainer.SCROLL_MODE_DISABLED
+	s.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED if horizontal else ScrollContainer.SCROLL_MODE_AUTO
+	s.scroll_deadzone = 8
+	return s
 
 
 func _on_inventory_changed(res_id: String) -> void:
@@ -190,41 +308,47 @@ func _on_inventory_changed(res_id: String) -> void:
 # --- Часы, погода и настройки ------------------------------------------------------------------
 
 func _build_clock() -> void:
-	var row := HBoxContainer.new()
-	row.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	row.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	row.position = Vector2(-16, 16)
-	row.add_theme_constant_override("separation", 10)
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_root.add_child(row)
+	_clock_row = HBoxContainer.new()
+	_clock_row.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_clock_row.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_clock_row.add_theme_constant_override("separation", _px(10, 8))
+	_clock_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_clock_row)
 	var clock := PanelContainer.new()
-	row.add_child(clock)
+	if _touch:
+		clock.add_theme_stylebox_override("panel", UiStyle.panel(14, 9))
+		# На телефоне строка «сезон · погода · биом» спрятана — она появляется по нажатию.
+		clock.gui_input.connect(func(e: InputEvent) -> void:
+			if e is InputEventMouseButton and e.pressed:
+				show_message(_clock_sub.text))
+	_clock_row.add_child(clock)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 0)
 	clock.add_child(box)
 	var line := HBoxContainer.new()
-	line.add_theme_constant_override("separation", 8)
-	_clock_icon = UiStyle.icon_rect("clock_day", 26)
+	line.add_theme_constant_override("separation", _px(8, 6))
+	_clock_icon = UiStyle.icon_rect("clock_day", _px(26, 22))
 	line.add_child(_clock_icon)
-	_clock_time = UiStyle.label("12:00", 20, UiStyle.TEXT, 800)
+	_clock_time = UiStyle.label("12:00", _px(20, 17), UiStyle.TEXT, 800)
 	line.add_child(_clock_time)
-	_season_icon = UiStyle.icon_rect("season_summer", 24)
+	_season_icon = UiStyle.icon_rect("season_summer", _px(24, 21))
 	line.add_child(_season_icon)
-	_weather_icon = UiStyle.icon_rect("weather_clear", 26)
+	_weather_icon = UiStyle.icon_rect("weather_clear", _px(26, 22))
 	line.add_child(_weather_icon)
 	box.add_child(line)
 	_clock_sub = UiStyle.label("", 13, UiStyle.MUTED, 700)
+	_clock_sub.visible = not _touch
 	box.add_child(_clock_sub)
 	var gear := Button.new()
 	gear.icon = UiStyle.icon("settings")
-	gear.add_theme_constant_override("icon_max_width", 28)
-	gear.custom_minimum_size = Vector2(52, 52)
+	gear.add_theme_constant_override("icon_max_width", _px(28, 24))
+	gear.custom_minimum_size = Vector2.ONE * _px(52, 44)
 	gear.add_theme_stylebox_override("normal", UiStyle.panel(16, 10))
 	gear.add_theme_stylebox_override("hover", UiStyle.box(UiStyle.BASE, 16, 10, 3, UiStyle.BRAND_DARK, true))
 	gear.add_theme_stylebox_override("pressed", UiStyle.box(UiStyle.BRAND, 16, 10, 2, UiStyle.BRAND_DARK, true))
 	gear.tooltip_text = "Настройки"
 	gear.pressed.connect(func() -> void: _settings.open())
-	row.add_child(gear)
+	_clock_row.add_child(gear)
 
 
 func _update_clock() -> void:
@@ -244,15 +368,21 @@ func _update_clock() -> void:
 func _build_toolbar() -> void:
 	var bar := PanelContainer.new()
 	bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	bar.add_theme_stylebox_override("panel", UiStyle.panel(20, 10))
+	bar.add_theme_stylebox_override("panel", UiStyle.panel(_px(20, 18), _px(10, 6)))
 	_bottom.add_child(bar)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", _px(8, 4))
 	bar.add_child(row)
 	for t: Array in TOOLS:
 		var b := _tool_button(t[1], t[2], t[3])
 		b.toggle_mode = true
-		b.pressed.connect(func() -> void: interaction.set_tool(t[0]))
+		b.pressed.connect(func() -> void:
+			# Повторное нажатие «Стройки» на телефоне открывает и закрывает ленту зданий.
+			if _touch and t[0] == Interaction.Tool.BUILD and interaction.tool == Interaction.Tool.BUILD:
+				_set_drawer(not _drawer_open)
+				b.set_pressed_no_signal(true)
+				return
+			interaction.set_tool(t[0]))
 		row.add_child(b)
 		_tool_buttons[t[0]] = b
 	var sep := VSeparator.new()
@@ -265,31 +395,43 @@ func _build_toolbar() -> void:
 
 func _tool_button(icon_name: String, text: String, hotkey: String) -> Button:
 	var b := Button.new()
-	b.custom_minimum_size = Vector2(92, 74)
+	b.custom_minimum_size = Vector2(_px(92, 64), _px(74, 54))
 	b.tooltip_text = "%s [%s]" % [text, hotkey]
 	var box := VBoxContainer.new()
 	box.set_anchors_preset(Control.PRESET_FULL_RECT)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_theme_constant_override("separation", 2)
+	box.add_theme_constant_override("separation", _px(2, 1))
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var ic := UiStyle.icon_rect(icon_name, 36)
+	var ic := UiStyle.icon_rect(icon_name, _px(36, 26))
 	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	box.add_child(ic)
-	var l := UiStyle.label(text, 13, UiStyle.TEXT, 700)
+	var l := UiStyle.label(text, _px(13, 11), UiStyle.TEXT, 700)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(l)
 	b.add_child(box)
-	var key := UiStyle.label(hotkey, 11, UiStyle.BRAND_DARK, 800)
-	key.position = Vector2(6, 3)
-	b.add_child(key)
+	if not _touch:
+		var key := UiStyle.label(hotkey, 11, UiStyle.BRAND_DARK, 800)
+		key.position = Vector2(6, 3)
+		b.add_child(key)
 	return b
 
 
 func _on_tool_changed(tool: Interaction.Tool) -> void:
 	for t in _tool_buttons:
 		_tool_buttons[t].set_pressed_no_signal(t == tool)
-	UiStyle.fade(_build_panel, tool == Interaction.Tool.BUILD)
+	if _touch:
+		# Лента зданий открыта, пока здание не выбрано.
+		_set_drawer(tool == Interaction.Tool.BUILD and interaction.building_system.selected_id == "")
+	else:
+		UiStyle.fade(_build_panel, tool == Interaction.Tool.BUILD)
 	if tool == Interaction.Tool.BUILD:
+		_refresh_build_cards()
+
+
+func _set_drawer(open: bool) -> void:
+	_drawer_open = open
+	UiStyle.fade(_build_panel, open)
+	if open:
 		_refresh_build_cards()
 
 
@@ -311,36 +453,49 @@ func _build_build_panel() -> void:
 	_build_panel.custom_minimum_size = Vector2(980, 0)
 	_build_panel.visible = false
 	_build_panel.modulate.a = 0.0
+	if _touch:
+		_build_panel.add_theme_stylebox_override("panel", UiStyle.panel(16, 8))
 	_bottom.add_child(_build_panel)
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 10)
+	box.add_theme_constant_override("separation", _px(10, 6))
 	_build_panel.add_child(box)
 	var tabs := HBoxContainer.new()
-	tabs.add_theme_constant_override("separation", 6)
+	tabs.add_theme_constant_override("separation", _px(6, 4))
 	var group := ButtonGroup.new()
 	for cat: String in GameData.BUILDING_CATEGORIES:
 		var b := Button.new()
 		b.text = GameData.BUILDING_CATEGORIES[cat]
 		b.icon = UiStyle.icon("cat_" + cat)
-		b.add_theme_constant_override("icon_max_width", 22)
+		b.add_theme_constant_override("icon_max_width", _px(22, 18))
 		b.toggle_mode = true
 		b.button_group = group
 		b.button_pressed = cat == _category
-		b.custom_minimum_size = Vector2(0, 38)
+		b.custom_minimum_size = Vector2(0, _px(38, 34))
+		if _touch:
+			b.add_theme_font_size_override("font_size", 12)
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.pressed.connect(func() -> void:
 			_category = cat
 			_refresh_build_cards())
 		tabs.add_child(b)
 		_category_buttons[cat] = b
 	box.add_child(tabs)
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(0, 186)
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var scroll: ScrollContainer
+	if _touch:
+		# Лента карточек листается пальцем вбок.
+		scroll = _scroll(true)
+		scroll.custom_minimum_size = Vector2(0, 136)
+		_build_grid = HBoxContainer.new()
+		_build_grid.add_theme_constant_override("separation", 6)
+	else:
+		scroll = ScrollContainer.new()
+		scroll.custom_minimum_size = Vector2(0, 186)
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		_build_grid = HFlowContainer.new()
+		_build_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_build_grid.add_theme_constant_override("h_separation", 8)
+		_build_grid.add_theme_constant_override("v_separation", 8)
 	box.add_child(scroll)
-	_build_grid = HFlowContainer.new()
-	_build_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_build_grid.add_theme_constant_override("h_separation", 8)
-	_build_grid.add_theme_constant_override("v_separation", 8)
 	scroll.add_child(_build_grid)
 	for id: String in GameData.BUILDINGS:
 		_build_cards[id] = _make_card(id)
@@ -350,30 +505,35 @@ func _build_build_panel() -> void:
 func _make_card(id: String) -> Dictionary:
 	var def: Dictionary = GameData.BUILDINGS[id]
 	var b := Button.new()
-	b.custom_minimum_size = Vector2(178, 178)
+	b.custom_minimum_size = Vector2(_px(178, 112), _px(178, 132))
 	b.tooltip_text = def["desc"]
-	b.pressed.connect(func() -> void: interaction.start_building(id))
+	if _touch:
+		# Иначе лента не листается, если палец начал движение на карточке.
+		b.mouse_filter = Control.MOUSE_FILTER_PASS
+	b.pressed.connect(func() -> void:
+		interaction.start_building(id)
+		Platform.haptic(0.2))
 	var box := VBoxContainer.new()
 	box.set_anchors_preset(Control.PRESET_FULL_RECT)
-	box.add_theme_constant_override("separation", 2)
+	box.add_theme_constant_override("separation", _px(2, 1))
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(box)
 	var thumb := TextureRect.new()
-	thumb.custom_minimum_size = Vector2(0, 96)
+	thumb.custom_minimum_size = Vector2(0, _px(96, 62))
 	thumb.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	thumb.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	thumb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	thumb.texture = thumbnails.textures.get(id, UiStyle.icon("cat_" + def["category"]))
 	box.add_child(thumb)
-	var title := UiStyle.label(def["name"], 14, UiStyle.TEXT, 800)
+	var title := UiStyle.label(def["name"], _px(14, 12), UiStyle.TEXT, 800)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	box.add_child(title)
 	var time_row := HBoxContainer.new()
 	time_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	time_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	time_row.add_child(UiStyle.icon_rect("timer", 14))
-	time_row.add_child(UiStyle.label("%d с" % def["time"], 12, UiStyle.MUTED, 700))
+	time_row.add_child(UiStyle.icon_rect("timer", _px(14, 12)))
+	time_row.add_child(UiStyle.label("%d с" % def["time"], _px(12, 11), UiStyle.MUTED, 700))
 	box.add_child(time_row)
 	var cost_holder := CenterContainer.new()
 	cost_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -399,9 +559,9 @@ func _refresh_build_cards() -> void:
 		var holder: CenterContainer = card["cost"]
 		for c in holder.get_children():
 			c.queue_free()
-		holder.add_child(UiStyle.cost_row(def["cost"], 18))
+		holder.add_child(UiStyle.cost_row(def["cost"], int(_px(18, 15))))
 		var selected := interaction != null and interaction.building_system.selected_id == id
-		b.add_theme_stylebox_override("normal", UiStyle.box(UiStyle.BRAND.lightened(0.35) if selected else UiStyle.SURFACE, 14, 8,
+		b.add_theme_stylebox_override("normal", UiStyle.box(UiStyle.BRAND.lightened(0.35) if selected else UiStyle.SURFACE, 14, int(_px(8, 5)),
 			2 if selected else 0, UiStyle.BRAND_DARK))
 		b.modulate = Color.WHITE if Inventory.has_all(def["cost"]) else Color(1, 1, 1, 0.78)
 
@@ -410,33 +570,58 @@ func _refresh_build_cards() -> void:
 
 func _build_craft_panel() -> void:
 	_craft_panel = PanelContainer.new()
-	_craft_panel.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
-	_craft_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_craft_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-	_craft_panel.position.x = -16
-	_craft_panel.custom_minimum_size = Vector2(440, 0)
+	if _touch:
+		_craft_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+		_craft_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		_craft_panel.custom_minimum_size = Vector2(440, 0)
+		_craft_panel.add_theme_stylebox_override("panel", UiStyle.panel(16, 10))
+	else:
+		_craft_panel.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
+		_craft_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+		_craft_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
+		_craft_panel.custom_minimum_size = Vector2(440, 0)
 	_craft_panel.visible = false
 	_craft_panel.modulate.a = 0.0
 	_root.add_child(_craft_panel)
 	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 8)
+	box.add_theme_constant_override("separation", _px(8, 6))
 	_craft_panel.add_child(box)
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 8)
-	header.add_child(UiStyle.icon_rect("tool_craft", 28))
-	header.add_child(UiStyle.label("Ремесло", 22, UiStyle.TEXT, 800))
+	header.add_child(UiStyle.icon_rect("tool_craft", _px(28, 24)))
+	header.add_child(UiStyle.label("Ремесло", _px(22, 18), UiStyle.TEXT, 800))
 	box.add_child(header)
-	_craft_queue_label = UiStyle.label("", 13, UiStyle.MUTED, 700)
+	if _touch:
+		var spacer := Control.new()
+		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		header.add_child(spacer)
+		var close := Button.new()
+		close.icon = UiStyle.icon("close")
+		close.add_theme_constant_override("icon_max_width", 16)
+		close.custom_minimum_size = Vector2(40, 34)
+		close.pressed.connect(toggle_crafting)
+		header.add_child(close)
+	_craft_queue_label = UiStyle.label("", _px(13, 12), UiStyle.MUTED, 700)
 	box.add_child(_craft_queue_label)
 	_craft_progress = ProgressBar.new()
 	_craft_progress.max_value = 1.0
 	_craft_progress.show_percentage = false
 	_craft_progress.custom_minimum_size = Vector2(0, 8)
 	box.add_child(_craft_progress)
+	var rows := box
+	if _touch:
+		_craft_scroll = _scroll(false)
+		box.add_child(_craft_scroll)
+		rows = VBoxContainer.new()
+		rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		rows.add_theme_constant_override("separation", 6)
+		_craft_scroll.add_child(rows)
 	for id: String in GameData.RECIPES:
 		var r: Dictionary = GameData.RECIPES[id]
 		var row := PanelContainer.new()
-		row.add_theme_stylebox_override("panel", UiStyle.box(UiStyle.SURFACE, 12, 8))
+		row.add_theme_stylebox_override("panel", UiStyle.box(UiStyle.SURFACE, 12, int(_px(8, 6))))
+		if _touch:
+			row.mouse_filter = Control.MOUSE_FILTER_PASS
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", 8)
 		row.add_child(line)
@@ -447,22 +632,26 @@ func _build_craft_panel() -> void:
 		formula.add_theme_constant_override("separation", 6)
 		var ins := HBoxContainer.new()
 		formula.add_child(ins)
-		formula.add_child(UiStyle.label("→", 16, UiStyle.BRAND_DARK, 800))
-		formula.add_child(UiStyle.cost_row(r["out"], 20, false))
+		formula.add_child(UiStyle.icon_rect("arrow", 18))
+		formula.add_child(UiStyle.cost_row(r["out"], int(_px(20, 18)), false))
 		info.add_child(formula)
 		var sub := UiStyle.label("", 12, UiStyle.MUTED, 700)
 		info.add_child(sub)
 		line.add_child(info)
 		var b := Button.new()
 		b.text = "Сделать"
-		b.custom_minimum_size = Vector2(96, 36)
+		b.custom_minimum_size = Vector2(_px(96, 92), _px(36, 40))
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		if _touch:
+			b.mouse_filter = Control.MOUSE_FILTER_PASS
 		b.pressed.connect(func() -> void:
 			var reason := Crafting.enqueue(id)
 			if reason != "":
-				show_message(reason))
+				show_message(reason)
+			else:
+				Platform.haptic(0.3))
 		line.add_child(b)
-		box.add_child(row)
+		rows.add_child(row)
 		_craft_rows[id] = {"button": b, "sub": sub, "ins": ins}
 
 
@@ -485,7 +674,7 @@ func _refresh_crafting() -> void:
 		var ins: HBoxContainer = row["ins"]
 		for c in ins.get_children():
 			c.queue_free()
-		ins.add_child(UiStyle.cost_row(r["in"], 20))
+		ins.add_child(UiStyle.cost_row(r["in"], int(_px(20, 18))))
 	if Crafting.queue.is_empty():
 		_craft_queue_label.text = "Очередь пуста"
 	else:
@@ -500,25 +689,27 @@ func _refresh_crafting() -> void:
 func _build_job_panel() -> void:
 	_job_panel = PanelContainer.new()
 	_job_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	_job_panel.custom_minimum_size = Vector2(400, 0)
+	_job_panel.custom_minimum_size = Vector2(_px(400, 320), 0)
 	_job_panel.visible = false
 	_job_panel.modulate.a = 0.0
+	if _touch:
+		_job_panel.add_theme_stylebox_override("panel", UiStyle.panel(14, 8))
 	_bottom.add_child(_job_panel)
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 10)
+	row.add_theme_constant_override("separation", _px(10, 8))
 	_job_panel.add_child(row)
-	_job_icon = UiStyle.icon_rect("tool_harvest", 32)
+	_job_icon = UiStyle.icon_rect("tool_harvest", _px(32, 26))
 	row.add_child(_job_icon)
 	var box := VBoxContainer.new()
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.add_theme_constant_override("separation", 4)
+	box.add_theme_constant_override("separation", _px(4, 3))
 	row.add_child(box)
-	_job_label = UiStyle.label("", 15, UiStyle.TEXT, 700)
+	_job_label = UiStyle.label("", _px(15, 13), UiStyle.TEXT, 700)
 	box.add_child(_job_label)
 	_job_bar = ProgressBar.new()
 	_job_bar.max_value = 1.0
 	_job_bar.show_percentage = false
-	_job_bar.custom_minimum_size = Vector2(0, 10)
+	_job_bar.custom_minimum_size = Vector2(0, _px(10, 8))
 	box.add_child(_job_bar)
 
 
@@ -549,22 +740,116 @@ func _build_hover() -> void:
 	_hover_panel.add_child(_hover_label)
 
 
+## Телефон: подсказка — плашка над панелью инструментов, а не у курсора.
+func _build_hint() -> void:
+	_hint_panel = PanelContainer.new()
+	_hint_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_hint_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_hint_panel.add_theme_stylebox_override("panel", UiStyle.box(Color(UiStyle.BASE, 0.94), 12, 7, 2, UiStyle.BRAND, true))
+	_hint_panel.visible = false
+	_hint_panel.modulate.a = 0.0
+	_bottom.add_child(_hint_panel)
+	_hint_label = UiStyle.label("", 13, UiStyle.TEXT, 700)
+	_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hint_panel.add_child(_hint_label)
+
+
 func _on_hover_changed(text: String) -> void:
+	if _touch:
+		if text != "":
+			_hint_label.text = text
+			_hint_panel.reset_size()
+		UiStyle.fade(_hint_panel, text != "")
+		return
 	_hover_label.text = text
 	_hover_panel.reset_size()
 	_hover_panel.visible = text != ""
+
+
+# --- Кнопки действий (телефон) ------------------------------------------------------------------
+
+func _build_actions() -> void:
+	_actions = VBoxContainer.new()
+	_actions.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	_actions.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_actions.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_actions.alignment = BoxContainer.ALIGNMENT_END
+	_actions.add_theme_constant_override("separation", 8)
+	_actions.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_actions)
+
+
+func _action_button(icon_name: String, text: String, accent := false) -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(ACTIONS_WIDTH - 8.0, 58)
+	var bg := UiStyle.BRAND if accent else Color(UiStyle.BASE, 0.97)
+	b.add_theme_stylebox_override("normal", UiStyle.box(bg, 18, 6, 2, UiStyle.BRAND_DARK if accent else UiStyle.BRAND, true))
+	b.add_theme_stylebox_override("hover", UiStyle.box(bg, 18, 6, 2, UiStyle.BRAND_DARK, true))
+	b.add_theme_stylebox_override("pressed", UiStyle.box(UiStyle.BRAND.darkened(0.08), 18, 6, 2, UiStyle.BRAND_DARK, true))
+	var box := VBoxContainer.new()
+	box.set_anchors_preset(Control.PRESET_FULL_RECT)
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_theme_constant_override("separation", 1)
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ic := UiStyle.icon_rect(icon_name, 26)
+	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(ic)
+	var l := UiStyle.label(text, 11, UiStyle.TEXT, 800)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(l)
+	b.add_child(box)
+	_actions.add_child(b)
+	return b
+
+
+## Набор кнопок зависит от инструмента и выбора; пересобираем, только когда он меняется.
+func _update_actions() -> void:
+	var bs := interaction.building_system
+	var key := "%d|%s|%s|%s|%s" % [interaction.tool, bs.selected_id != "", is_instance_valid(interaction.selected_building),
+		not interaction.jobs.is_empty(), _drawer_open]
+	if key == _actions_key:
+		return
+	_actions_key = key
+	for c in _actions.get_children():
+		c.queue_free()
+	match interaction.tool:
+		Interaction.Tool.BUILD:
+			if bs.selected_id != "":
+				_action_button("cat_housing", "Здания").pressed.connect(func() -> void: _set_drawer(not _drawer_open))
+				_action_button("rotate", "Повернуть").pressed.connect(interaction.rotate_building)
+				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction.set_tool(Interaction.Tool.HARVEST))
+				_action_button("check", "Построить", true).pressed.connect(interaction.confirm_build)
+			else:
+				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction.set_tool(Interaction.Tool.HARVEST))
+		Interaction.Tool.FLATTEN:
+			_action_button("plus", "Шире").pressed.connect(func() -> void: interaction.resize_brush(1.0))
+			_action_button("minus", "Уже").pressed.connect(func() -> void: interaction.resize_brush(-1.0))
+			_action_button("check", "Готово").pressed.connect(func() -> void: interaction.set_tool(Interaction.Tool.HARVEST))
+		Interaction.Tool.DEMOLISH:
+			if is_instance_valid(interaction.selected_building):
+				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction.select_building(null))
+				_action_button("tool_demolish", "Снести", true).pressed.connect(interaction.demolish_selected)
+			else:
+				_action_button("check", "Готово").pressed.connect(func() -> void: interaction.set_tool(Interaction.Tool.HARVEST))
+		Interaction.Tool.HARVEST:
+			if not interaction.jobs.is_empty():
+				_action_button("close", "Очередь").pressed.connect(interaction.cancel_all_jobs)
+	for c in _actions.get_children():
+		if c.is_queued_for_deletion():
+			continue
+		c.modulate.a = 0.0
+		c.create_tween().tween_property(c, "modulate:a", 1.0, 0.15)
 
 
 func _build_toast() -> void:
 	_toast = PanelContainer.new()
 	_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
 	_toast.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_toast.position.y = 96
 	_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_toast.add_theme_stylebox_override("panel", UiStyle.box(Color(UiStyle.BASE, 0.97), 22, 12, 2, UiStyle.BRAND, true))
+	_toast.add_theme_stylebox_override("panel", UiStyle.box(Color(UiStyle.BASE, 0.97), 22, int(_px(12, 9)), 2, UiStyle.BRAND, true))
 	_toast.modulate.a = 0.0
 	_root.add_child(_toast)
-	_toast_label = UiStyle.label("", 17, UiStyle.TEXT, 700)
+	_toast_label = UiStyle.label("", _px(17, 14), UiStyle.TEXT, 700)
 	_toast.add_child(_toast_label)
 
 
@@ -590,7 +875,7 @@ func _build_loading() -> void:
 	box.grow_vertical = Control.GROW_DIRECTION_BOTH
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	_loading.add_child(box)
-	var title := UiStyle.label("Тихие Земли", 54, UiStyle.TEXT, 900)
+	var title := UiStyle.label("Тихие Земли", _px(54, 40), UiStyle.TEXT, 900)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 	var line := ColorRect.new()
@@ -598,7 +883,31 @@ func _build_loading() -> void:
 	line.custom_minimum_size = Vector2(220, 3)
 	line.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	box.add_child(line)
-	var sub := UiStyle.label("Создаём мир…", 20, UiStyle.BRAND_DARK, 700)
+	var sub := UiStyle.label("Создаём мир…", _px(20, 16), UiStyle.BRAND_DARK, 700)
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(sub)
+
+
+## Телефон в портретной ориентации (бывает только в браузере): просим повернуть его.
+func _build_portrait_hint() -> void:
+	_portrait_hint = ColorRect.new()
+	(_portrait_hint as ColorRect).color = UiStyle.BASE
+	_portrait_hint.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_portrait_hint.visible = false
+	_root.add_child(_portrait_hint)
+	var box := VBoxContainer.new()
+	box.set_anchors_preset(Control.PRESET_CENTER)
+	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	box.grow_vertical = Control.GROW_DIRECTION_BOTH
+	box.add_theme_constant_override("separation", 14)
+	_portrait_hint.add_child(box)
+	var ic := UiStyle.icon_rect("rotate", 72)
+	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(ic)
+	var title := UiStyle.label("Поверните телефон", 26, UiStyle.TEXT, 900)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+	var sub := UiStyle.label("Играть удобнее горизонтально", 16, UiStyle.BRAND_DARK, 700)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(sub)
 
@@ -617,7 +926,9 @@ func _process(delta: float) -> void:
 	if interaction:
 		_update_job_panel()
 		_craft_progress.value = Crafting.current_fraction()
-	if _hover_panel.visible:
+		if _touch:
+			_update_actions()
+	if _hover_panel and _hover_panel.visible:
 		var target := get_viewport().get_mouse_position() + Vector2(22, 22)
 		var vp := get_viewport().get_visible_rect().size
 		target.x = minf(target.x, vp.x - _hover_panel.size.x - 8)

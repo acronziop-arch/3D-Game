@@ -4,7 +4,7 @@ extends Node
 ## Мир бесконечный, поэтому храним только изменения, а не сам мир.
 
 const SAVE_PATH := "user://world.save"
-const SAVE_VERSION := 2
+const SAVE_VERSION := 3
 
 var world_seed: int = 0
 ## Vector2i(вершина сетки) -> высота.

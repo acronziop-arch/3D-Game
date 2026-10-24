@@ -19,6 +19,12 @@ const DEFAULTS := {
 	"shadows": true,
 	"view_distance": 7,
 	"fish": true,
+	## Густота травы и листьев на земле, 0..1.
+	"grass": 1.0,
+	## Разрешение 3D-картинки относительно экрана (на телефоне меньше — ради плавности).
+	"render_scale": 1.0,
+	## Вибрация при действиях (телефоны).
+	"haptics": true,
 }
 
 var values := {}
@@ -26,10 +32,13 @@ var values := {}
 
 func _ready() -> void:
 	values = DEFAULTS.duplicate()
+	# На телефоне часть значений по умолчанию легче (дальность, разрешение, трава).
+	values.merge(Platform.setting_defaults(), true)
+	var defaults := values.duplicate()
 	var cfg := ConfigFile.new()
 	if cfg.load(PATH) == OK:
 		for key: String in DEFAULTS:
-			values[key] = cfg.get_value("settings", key, DEFAULTS[key])
+			values[key] = cfg.get_value("settings", key, defaults[key])
 
 
 func get_value(key: String) -> Variant:

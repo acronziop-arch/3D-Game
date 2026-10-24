@@ -106,7 +106,7 @@ void fragment() {
 	vec2 refl_uv = vec2(SCREEN_UV.x, 1.0 - SCREEN_UV.y) + slope * 0.06;
 	vec3 refl = mix(sky_fallback * mix(1.0, 0.12, night), texture(reflection_tex, refl_uv).rgb, reflection_enabled);
 	// Отражения чуть сильнее физических: вода — главная красота, её видно сверху.
-	vec3 col = mix(under, refl, clamp(0.2 + fres * 1.3, 0.0, 0.95));
+	vec3 col = mix(under, refl, clamp(0.14 + fres * 1.3, 0.0, 0.95));
 
 	// 4. Пена у берега: тонкая полоса, дышит со временем.
 	float foam_band = smoothstep(0.5, 0.0, depth_v) * smoothstep(0.0, 0.06, depth_v);

@@ -1,8 +1,8 @@
 class_name Atmosphere
 extends Node3D
 ## Всё, что видно от погоды и времени суток: солнце и луна, небо с облаками,
-## туман, дождь, снег, молнии и глобальные параметры шейдеров (ветер, влага, снег,
-## листва). Логика времени и погоды — в автозагрузке Weather.
+## туман, дождь, снег, листопад, молнии и глобальные параметры шейдеров (ветер,
+## влага, снег, листва). Логика времени и погоды — в автозагрузке Weather.
 
 const RAIN_LAYER := 4
 
@@ -15,8 +15,13 @@ var camera_rig: CameraRig
 var _sky_material: ShaderMaterial
 var _rain: GPUParticles3D
 var _snow: GPUParticles3D
+var _leaves: GPUParticles3D
 var _rain_material: ParticleProcessMaterial
 var _snow_material: ParticleProcessMaterial
+var _leaves_material: ParticleProcessMaterial
+## Доля лиственного леса вокруг камеры: листья падают там, где есть деревья.
+var _forest := 0.0
+var _forest_timer := 0.0
 var _cloud_offset := Vector2.ZERO
 var _flash := 0.0
 var _next_lightning := 6.0
@@ -43,6 +48,7 @@ func _ready() -> void:
 	world_environment.environment.sky = sky
 	_rain = _make_rain()
 	_snow = _make_snow()
+	_leaves = _make_leaves()
 	Settings.changed.connect(func(key: String) -> void:
 		if key == "shadows":
 			sun.shadow_enabled = Settings.get_value("shadows"))
@@ -51,7 +57,7 @@ func _ready() -> void:
 
 func _make_rain() -> GPUParticles3D:
 	var p := GPUParticles3D.new()
-	p.amount = 7000
+	p.amount = roundi(7000 * Platform.particle_scale())
 	p.lifetime = 1.1
 	p.preprocess = 1.0
 	p.visibility_aabb = AABB(Vector3(-60, -40, -60), Vector3(120, 60, 120))
@@ -82,7 +88,7 @@ func _make_rain() -> GPUParticles3D:
 
 func _make_snow() -> GPUParticles3D:
 	var p := GPUParticles3D.new()
-	p.amount = 6000
+	p.amount = roundi(6000 * Platform.particle_scale())
 	p.lifetime = 9.0
 	p.preprocess = 6.0
 	p.visibility_aabb = AABB(Vector3(-60, -40, -60), Vector3(120, 60, 120))
@@ -116,6 +122,78 @@ func _make_snow() -> GPUParticles3D:
 	return p
 
 
+## Осенний листопад: листья кружатся и сносятся ветром.
+func _make_leaves() -> GPUParticles3D:
+	var p := GPUParticles3D.new()
+	p.amount = roundi(900 * Platform.particle_scale())
+	p.lifetime = 10.0
+	p.preprocess = 6.0
+	p.visibility_aabb = AABB(Vector3(-50, -30, -50), Vector3(100, 45, 100))
+	p.layers = RAIN_LAYER
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_leaves_material = ParticleProcessMaterial.new()
+	_leaves_material.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	_leaves_material.emission_box_extents = Vector3(34, 5, 34)
+	_leaves_material.direction = Vector3(0, -1, 0)
+	_leaves_material.spread = 35.0
+	_leaves_material.initial_velocity_min = 0.3
+	_leaves_material.initial_velocity_max = 0.9
+	_leaves_material.gravity = Vector3(0, -0.5, 0)
+	_leaves_material.turbulence_enabled = true
+	_leaves_material.turbulence_noise_strength = 2.2
+	_leaves_material.turbulence_noise_scale = 5.0
+	_leaves_material.turbulence_noise_speed_random = 0.6
+	_leaves_material.angle_min = -180.0
+	_leaves_material.angle_max = 180.0
+	_leaves_material.angular_velocity_min = -160.0
+	_leaves_material.angular_velocity_max = 160.0
+	_leaves_material.scale_min = 1.0
+	_leaves_material.scale_max = 1.7
+	var colors := Gradient.new()
+	colors.offsets = PackedFloat32Array([0.0, 0.3, 0.55, 0.8, 1.0])
+	colors.colors = PackedColorArray([Color(0.86, 0.46, 0.12), Color(0.93, 0.72, 0.22), Color(0.74, 0.24, 0.1),
+		Color(0.55, 0.36, 0.16), Color(0.8, 0.6, 0.2)])
+	var ramp := GradientTexture1D.new()
+	ramp.gradient = colors
+	_leaves_material.color_initial_ramp = ramp
+	# Исчезают в конце жизни (уменьшаются), а не пропадают разом.
+	var fade := Curve.new()
+	fade.add_point(Vector2(0, 0))
+	fade.add_point(Vector2(0.08, 1))
+	fade.add_point(Vector2(0.85, 1))
+	fade.add_point(Vector2(1, 0))
+	var fade_tex := CurveTexture.new()
+	fade_tex.curve = fade
+	_leaves_material.scale_curve = fade_tex
+	p.process_material = _leaves_material
+	p.draw_pass_1 = _leaf_mesh()
+	p.emitting = false
+	add_child(p)
+	return p
+
+
+static func _leaf_mesh() -> ArrayMesh:
+	var verts := PackedVector3Array([Vector3(0, -0.11, 0), Vector3(0.06, 0, 0.01), Vector3(0, 0.11, 0),
+		Vector3(0, -0.11, 0), Vector3(0, 0.11, 0), Vector3(-0.06, 0, 0.01)])
+	var normals := PackedVector3Array()
+	normals.resize(verts.size())
+	normals.fill(Vector3.BACK)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.roughness = 0.85
+	mat.backlight_enabled = true
+	mat.backlight = Color(0.5, 0.35, 0.15)
+	mesh.surface_set_material(0, mat)
+	return mesh
+
+
 func _process(delta: float) -> void:
 	var daylight := Weather.daylight()
 	var sun_angle := (Weather.hour - 6.0) / 12.0 * PI
@@ -143,7 +221,9 @@ func _process(delta: float) -> void:
 	env.ambient_light_color = Color(0.2, 0.25, 0.4).lerp(Color(0.74, 0.8, 0.88), daylight).lerp(Color(0.62, 0.64, 0.68), Weather.overcast * daylight * 0.5)
 	env.ambient_light_energy = lerpf(0.55, 0.95, daylight) + _flash * 2.0
 	env.fog_light_color = horizon
-	var far := lerpf(215.0, 80.0, Weather.fog) * (1.0 - Weather.rain * 0.25)
+	# Туман густеет к краю загруженного мира — чанки появляются незаметно.
+	var view_far := float(Settings.get_value("view_distance")) * WorldGen.CHUNK_SIZE - 12.0
+	var far := lerpf(view_far, 80.0, Weather.fog) * (1.0 - Weather.rain * 0.25)
 	env.fog_depth_end = far
 	env.fog_depth_begin = lerpf(far * 0.5, 8.0, Weather.fog)
 	env.tonemap_exposure = lerpf(1.35, 1.0, daylight)
@@ -158,7 +238,7 @@ func _process(delta: float) -> void:
 	_sky_material.set_shader_parameter("flash", _flash)
 
 	_lightning(delta)
-	_particles()
+	_particles(delta)
 
 	RenderingServer.global_shader_parameter_set("wind_dir", Weather.wind_dir)
 	RenderingServer.global_shader_parameter_set("wind_strength", Weather.wind)
@@ -189,10 +269,14 @@ func _lightning(delta: float) -> void:
 		tw.tween_property(self, "_flash", 0.9, 0.05)
 
 
-func _particles() -> void:
+func _particles(delta: float) -> void:
 	if camera_rig == null:
 		return
 	var focus := camera_rig.global_position
+	_forest_timer -= delta
+	if _forest_timer <= 0.0:
+		_forest_timer = 1.0
+		_forest = lerpf(_forest, _forest_around(focus), 0.35)
 	var wind := Vector3(Weather.wind_dir.x, 0, Weather.wind_dir.y) * Weather.wind
 	_rain.global_position = focus + Vector3(0, 26, 0) - wind * 8.0
 	_snow.global_position = focus + Vector3(0, 14, 0) - wind * 10.0
@@ -202,3 +286,22 @@ func _particles() -> void:
 	_snow.emitting = Weather.snow > 0.02
 	_snow.amount_ratio = clampf(Weather.snow, 0.0, 1.0)
 	_snow_material.gravity = Vector3(0, -0.6, 0) + wind * 3.0
+	# Листопад — осенью, пока на деревьях ещё есть листья, и в лиственном лесу.
+	var fall := Weather.autumn_amount() * smoothstep(0.02, 0.35, Weather.leaf_amount()) \
+		* (0.15 + _forest * 0.85) * (1.0 - Weather.snow)
+	_leaves.global_position = focus + Vector3(0, 9, 0) - wind * 6.0
+	_leaves.emitting = fall > 0.03
+	_leaves.amount_ratio = clampf(fall, 0.0, 1.0)
+	_leaves_material.gravity = Vector3(0, -0.5, 0) + wind * 2.5
+
+
+## Доля лиственного леса (дубы, берёзы, клёны) в пяти точках вокруг камеры.
+func _forest_around(focus: Vector3) -> float:
+	var cm := camera_rig.chunk_manager
+	if cm == null or cm.gen == null:
+		return 0.0
+	var n := 0.0
+	for o: Vector2 in [Vector2.ZERO, Vector2(18, 0), Vector2(-18, 0), Vector2(0, 18), Vector2(0, -18)]:
+		var info: Array = WorldGen.COVER.get(cm.gen.climate_biome(focus.x + o.x, focus.z + o.y), [0.0, false])
+		n += 1.0 if info[1] else 0.0
+	return n / 5.0

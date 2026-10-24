@@ -6,6 +6,9 @@ extends Node3D
 ##   3 Выравнивание — зажать ЛКМ: земля тянется к высоте точки, где нажали.
 ##   4 Снос — щелчок по зданию, возвращается половина ресурсов.
 ## Действия выполняются по одному, у каждого своё время (не больше 30 с).
+## На телефоне те же инструменты работают от касаний (см. TouchInput): нажатие —
+## действие, призрак здания тянется пальцем и ставится кнопкой «Построить», здание
+## для сноса сначала выбирается, потом сносится кнопкой.
 
 enum Tool { HARVEST, BUILD, FLATTEN, DEMOLISH }
 
@@ -39,6 +42,14 @@ var _ring_material: StandardMaterial3D
 var _ring_target := Vector3.ZERO
 var _ring_scale := 1.0
 var _time := 0.0
+## Касания: где «указатель» (последний палец), к какой точке привязан призрак здания,
+## какое здание выбрано для сноса и что сказать о том, на что нажали.
+var _touch_point := Vector2.ZERO
+var _touch_anchor: Variant = null
+var _ghost_offset := Vector3.ZERO
+var _touch_info := ""
+var _touch_info_timer := 0.0
+var selected_building: Building
 
 
 func _ready() -> void:
@@ -70,7 +81,9 @@ func set_tool(new_tool: Tool) -> void:
 	if tool == Tool.DEMOLISH and is_instance_valid(_hover_building):
 		_hover_building.set_highlight(false)
 	_hover_building = null
+	select_building(null)
 	_flattening = false
+	_touch_info = ""
 	tool = new_tool
 	tool_changed.emit(tool)
 
@@ -78,9 +91,17 @@ func set_tool(new_tool: Tool) -> void:
 func start_building(building_id: String) -> void:
 	set_tool(Tool.BUILD)
 	building_system.select(building_id)
+	if Platform.is_touch:
+		# Призрак появляется в центре экрана — дальше его можно тянуть пальцем.
+		var center := get_viewport().get_visible_rect().size * Vector2(0.5, 0.45)
+		_touch_anchor = _ground_at(center)
+	tool_changed.emit(tool)
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# В сенсорном режиме мышиные события — копии касаний (их разбирает TouchInput).
+	if Platform.is_touch and (event is InputEventMouseButton or event is InputEventMouseMotion):
+		return
 	if event.is_action_pressed("tool_harvest"):
 		set_tool(Tool.HARVEST)
 	elif event.is_action_pressed("tool_build"):
@@ -121,30 +142,151 @@ func _resize_brush(step: float) -> void:
 	brush_radius = clampf(brush_radius + step, 2.0, 14.0)
 
 
+func resize_brush(step: float) -> void:
+	_resize_brush(step)
+	Platform.haptic(0.15)
+
+
+## Ставит здание на место призрака (кнопка «Построить» на телефоне, ЛКМ на ПК).
+func confirm_build() -> void:
+	if building_system.selected_id == "":
+		message.emit("Выберите здание в меню снизу")
+		return
+	var reason := building_system.try_place()
+	if reason != "":
+		message.emit(reason)
+		Platform.haptic(0.2)
+	else:
+		Platform.haptic(0.7)
+
+
+func rotate_building() -> void:
+	building_system.rotate_ghost()
+	Platform.haptic(0.15)
+
+
+func select_building(b: Building) -> void:
+	if is_instance_valid(selected_building):
+		selected_building.set_highlight(false)
+	selected_building = b
+	if b:
+		b.set_highlight(true)
+
+
+## Сносит здание, выбранное касанием.
+func demolish_selected() -> void:
+	if not is_instance_valid(selected_building):
+		return
+	_demolish(selected_building)
+	selected_building = null
+
+
+func _demolish(b: Building) -> bool:
+	var blocked := building_system.can_demolish(b)
+	if blocked != "":
+		message.emit(blocked)
+		return false
+	var refund := building_system.demolish(b)
+	Fx.show_loot(self, b.global_position + Vector3(0, 2, 0), refund)
+	Platform.haptic(0.6)
+	return true
+
+
+# --- Касания (вызывает TouchInput) ------------------------------------------------------
+
+func _ground_at(screen: Vector2) -> Variant:
+	var cam := camera_rig.camera
+	return chunk_manager.raycast(cam.project_ray_origin(screen), cam.project_ray_normal(screen))
+
+
+func touch_tap(screen: Vector2) -> void:
+	_touch_point = screen
+	var cam := camera_rig.camera
+	var from := cam.project_ray_origin(screen)
+	var dir := cam.project_ray_normal(screen)
+	var ground: Variant = chunk_manager.raycast(from, dir)
+	var ground_t: float = from.distance_to(ground) if ground != null else 700.0
+	match tool:
+		Tool.HARVEST:
+			# Палец толще курсора — цель можно задеть чуть мимо.
+			var slack := ground_t * 2.0 * tan(deg_to_rad(cam.fov) * 0.5) / get_viewport().get_visible_rect().size.y * 14.0
+			var target := chunk_manager.pick(from, dir, ground_t + 1.0, slack)
+			if target.is_empty():
+				_set_touch_info("")
+				return
+			var info := _target_info(target)
+			var queued := _toggle_job(target)
+			_set_touch_info("%s — %s%s" % [info["name"], info["hint"], "" if queued else " · убрано из очереди"])
+			Platform.haptic(0.25)
+		Tool.BUILD:
+			if building_system.selected_id == "":
+				message.emit("Выберите здание в меню снизу")
+			elif ground != null:
+				_touch_anchor = ground
+		Tool.FLATTEN:
+			pass
+		Tool.DEMOLISH:
+			var b := building_system.pick(from, dir)
+			select_building(null if b == selected_building else b)
+			if b:
+				Platform.haptic(0.2)
+
+
+## Палец начал движение: true — инструмент забирает жест себе, иначе это движение камеры.
+func touch_drag_begin(screen: Vector2) -> bool:
+	match tool:
+		Tool.BUILD:
+			if building_system.selected_id == "" or _touch_anchor == null:
+				return false
+			var cam := camera_rig.camera
+			var from := cam.project_ray_origin(screen)
+			var dir := cam.project_ray_normal(screen)
+			var ground: Variant = chunk_manager.raycast(from, dir)
+			if ground == null or not building_system.ghost_hit(from, dir):
+				return false
+			_ghost_offset = (_touch_anchor as Vector3) - (ground as Vector3)
+			return true
+		Tool.FLATTEN:
+			var ground: Variant = _ground_at(screen)
+			if ground == null:
+				return false
+			_touch_point = screen
+			_flattening = true
+			_flatten_target = snappedf(maxf((ground as Vector3).y, WorldGen.WATER_LEVEL), 0.25)
+			return true
+	return false
+
+
+func touch_drag(screen: Vector2) -> void:
+	_touch_point = screen
+	if tool == Tool.BUILD:
+		var ground: Variant = _ground_at(screen)
+		if ground != null:
+			_touch_anchor = (ground as Vector3) + _ghost_offset
+
+
+func touch_drag_end() -> void:
+	_flattening = false
+
+
+func _set_touch_info(text: String) -> void:
+	_touch_info = text
+	_touch_info_timer = 3.5
+
+
 func _primary_action() -> void:
 	match tool:
 		Tool.HARVEST:
 			if not _hover.is_empty():
 				_toggle_job(_hover)
 		Tool.BUILD:
-			if building_system.selected_id == "":
-				message.emit("Выберите здание в меню снизу")
-				return
-			var reason := building_system.try_place()
-			if reason != "":
-				message.emit(reason)
+			confirm_build()
 		Tool.FLATTEN:
 			if _ground != null:
 				_flattening = true
 				_flatten_target = snappedf(maxf(_ground.y, WorldGen.WATER_LEVEL), 0.25)
 		Tool.DEMOLISH:
-			if is_instance_valid(_hover_building):
-				var blocked := building_system.can_demolish(_hover_building)
-				if blocked != "":
-					message.emit(blocked)
-					return
-				var refund := building_system.demolish(_hover_building)
-				Fx.show_loot(self, _hover_building.global_position + Vector3(0, 2, 0), refund)
+			if is_instance_valid(_hover_building) and _demolish(_hover_building):
 				_hover_building = null
 
 
@@ -152,17 +294,29 @@ func _primary_action() -> void:
 
 func _process(delta: float) -> void:
 	_time += delta
+	var touch := Platform.is_touch
 	var camera := camera_rig.camera
-	var mouse := get_viewport().get_mouse_position()
-	var over_ui := get_viewport().gui_get_hovered_control() != null
-	var from := camera.project_ray_origin(mouse)
-	var dir := camera.project_ray_normal(mouse)
-	_ground = null if over_ui else chunk_manager.raycast(from, dir)
+	var pointer := _touch_point if touch else get_viewport().get_mouse_position()
+	var over_ui := not touch and get_viewport().gui_get_hovered_control() != null
+	var from := camera.project_ray_origin(pointer)
+	var dir := camera.project_ray_normal(pointer)
+	if touch:
+		# Под пальцем землю ищем, только пока им ровняют.
+		_ground = chunk_manager.raycast(from, dir) if _flattening else null
+	else:
+		_ground = null if over_ui else chunk_manager.raycast(from, dir)
 	var ground_t: float = from.distance_to(_ground) if _ground != null else 700.0
+	_touch_info_timer -= delta
+	if _touch_info_timer <= 0.0:
+		_touch_info = ""
 
 	var text := ""
 	var ring_visible := false
 	match tool:
+		Tool.HARVEST when touch:
+			text = _touch_info
+			if text == "" and jobs.is_empty():
+				text = "Нажмите на дерево, камень, руду или сундук"
 		Tool.HARVEST:
 			_hover = {} if over_ui else chunk_manager.pick(from, dir, ground_t + 1.0)
 			if not _hover.is_empty():
@@ -173,7 +327,7 @@ func _process(delta: float) -> void:
 				_ring_material.albedo_color = RING_COLOR
 				text = "%s — %s" % [info["name"], info["hint"]]
 		Tool.BUILD:
-			building_system.update_ghost(_ground, delta)
+			building_system.update_ghost(_touch_anchor if touch else _ground, delta)
 			var id := building_system.selected_id
 			if id == "":
 				text = "Выберите здание в меню снизу"
@@ -182,6 +336,8 @@ func _process(delta: float) -> void:
 				text = "%s · %d с · %s" % [def["name"], def["time"], GameData.cost_text(def["cost"])]
 				if not building_system.is_valid and building_system.invalid_reason != "":
 					text += "\n" + building_system.invalid_reason
+				elif touch:
+					text += "\nТяните здание пальцем или нажмите, куда поставить"
 				else:
 					text += "\nЛКМ — построить · R — повернуть · ПКМ — отмена"
 		Tool.FLATTEN:
@@ -192,7 +348,18 @@ func _process(delta: float) -> void:
 				_ring_material.albedo_color = BRUSH_COLOR
 				if _flattening:
 					chunk_manager.flatten(_ground, brush_radius, _flatten_target, flatten_speed * delta)
-			text = "Зажмите ЛКМ — выровнять по высоте точки нажатия · [ ] или Shift+колесо — размер (%d м)" % roundi(brush_radius)
+			if touch:
+				text = "Проведите пальцем — выровнять по высоте точки касания · кисть %d м\nКамера — двумя пальцами" % roundi(brush_radius)
+			else:
+				text = "Зажмите ЛКМ — выровнять по высоте точки нажатия · [ ] или Shift+колесо — размер (%d м)" % roundi(brush_radius)
+		Tool.DEMOLISH when touch:
+			if not is_instance_valid(selected_building) or selected_building.is_queued_for_deletion():
+				selected_building = null
+			if selected_building:
+				text = "Снести: %s (вернётся %s)" % [GameData.BUILDINGS[selected_building.id]["name"],
+					"половина ресурсов" if selected_building.is_complete else "всё"]
+			else:
+				text = "Нажмите на здание, чтобы выбрать его для сноса"
 		Tool.DEMOLISH:
 			var b: Building = null if over_ui else building_system.pick(from, dir)
 			if b != _hover_building:
@@ -238,7 +405,7 @@ func _target_info(target: Dictionary) -> Dictionary:
 	var chunk: Chunk = target["chunk"]
 	var pdef: Dictionary = GameData.PROPS[p["id"]]
 	return {"name": pdef["name"], "pos": chunk.to_global(p["pos"]), "radius": float(pdef["radius"]) * float(p["scale"]),
-		"time": pdef["time"], "hint": "%d с → %s" % [pdef["time"], GameData.cost_text(pdef["drops"])]}
+		"time": pdef["time"], "hint": "%d с · даёт %s" % [pdef["time"], GameData.cost_text(pdef["drops"])]}
 
 
 # --- Очередь действий -----------------------------------------------------------------
@@ -249,16 +416,17 @@ func _same_target(job: Dictionary, target: Dictionary) -> bool:
 	return is_same(job.get("prop"), target.get("prop"))
 
 
-func _toggle_job(target: Dictionary) -> void:
+## true — цель добавлена в очередь, false — убрана из неё (или очередь полна).
+func _toggle_job(target: Dictionary) -> bool:
 	for i in jobs.size():
 		if _same_target(jobs[i], target):
 			_cancel_job(jobs[i])
 			jobs.remove_at(i)
 			jobs_changed.emit()
-			return
+			return false
 	if jobs.size() >= MAX_JOBS:
 		message.emit("Очередь заполнена (максимум %d)" % MAX_JOBS)
-		return
+		return false
 	var info := _target_info(target)
 	var job := target.duplicate()
 	job["kind"] = "chest" if target.has("chest") else "prop"
@@ -273,6 +441,7 @@ func _toggle_job(target: Dictionary) -> void:
 	job["marker"] = marker
 	jobs.append(job)
 	jobs_changed.emit()
+	return true
 
 
 func cancel_all_jobs() -> void:
@@ -333,6 +502,7 @@ func _process_jobs(delta: float) -> void:
 		marker.queue_free()
 		_complete_job(job)
 		jobs_changed.emit()
+		Platform.haptic(0.45)
 
 
 func _animate_job(job: Dictionary, f: float) -> void:

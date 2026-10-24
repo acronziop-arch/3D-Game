@@ -1,0 +1,189 @@
+extends Node
+## Где запущена игра: ПК, телефон или планшет — в приложении или в браузере.
+## Отсюда берутся способ управления (мышь или касания), размер интерфейса,
+## безопасная зона экрана (вырез, «чёлка» и полоска «домой» на iPhone) и облегчённые
+## настройки графики для телефонов и браузера.
+## iPhone — главный мобильный ориентир: размеры интерфейса подобраны в пунктах iOS.
+##
+## Проверка на ПК: `-- --phone` или `-- --tablet` включают сенсорный режим
+## (мышь превращается в касания), `--notch` добавляет поля как у iPhone с вырезом.
+
+signal layout_changed
+
+enum Form { DESKTOP, PHONE, TABLET }
+
+## Высота интерфейса в его единицах. На iPhone в альбомной ориентации это почти
+## один пункт iOS на единицу: кнопки получаются не меньше 44 pt, текст — 13–17 pt.
+const PHONE_UI_HEIGHT := 420
+const TABLET_UI_HEIGHT := 640
+## Отступ от краёв экрана, если вырезов нет.
+const EDGE := 14.0
+
+var form := Form.DESKTOP
+## Управление касаниями (на ПК мышь при этом имитирует один палец).
+var is_touch := false
+var is_ios := false
+var is_android := false
+## Браузерная версия (WebGL 2, без потоков).
+var is_web := false
+
+## Насколько облегчать графику: 0 — ПК, 1 — браузер на ПК, 2 — телефон и планшет.
+var _tier := 0
+
+var _emulated_notch := false
+var _margins := {"left": EDGE, "top": EDGE, "right": EDGE, "bottom": EDGE}
+
+
+func _init() -> void:
+	var args := OS.get_cmdline_user_args()
+	is_ios = OS.has_feature("ios")
+	is_android = OS.has_feature("android")
+	is_web = OS.has_feature("web")
+	# Safari на iPad представляется macOS — узнаём его по сенсорному экрану.
+	var web_mobile := OS.has_feature("web_ios") or OS.has_feature("web_android") \
+		or (OS.has_feature("web_macos") and DisplayServer.is_touchscreen_available())
+	if OS.has_feature("mobile") or is_ios or is_android or web_mobile:
+		form = Form.TABLET if _looks_like_tablet() else Form.PHONE
+	if "--phone" in args:
+		form = Form.PHONE
+	elif "--tablet" in args:
+		form = Form.TABLET
+	is_touch = form != Form.DESKTOP or "--touch" in args
+	_emulated_notch = "--notch" in args
+	_tier = 2 if is_mobile() else (1 if is_web else 0)
+
+
+func _ready() -> void:
+	if is_touch and not (OS.has_feature("mobile") or is_web):
+		# Проверка на ПК: мышь работает как один палец.
+		Input.emulate_touch_from_mouse = true
+	if is_mobile():
+		# 60 кадров хватает с запасом, а iPhone с ProMotion не греется на 120 Гц.
+		Engine.max_fps = 60
+	get_tree().root.size_changed.connect(_update_layout)
+	_update_layout()
+
+
+func is_mobile() -> bool:
+	return form != Form.DESKTOP
+
+
+func is_phone() -> bool:
+	return form == Form.PHONE
+
+
+## Планшет — iPad по модели, иначе — если экран не вытянутый (4:3, 3:2) или большой.
+static func _looks_like_tablet() -> bool:
+	if OS.has_feature("ios"):
+		return OS.get_model_name().begins_with("iPad")
+	# Safari на iPhone честно называет iOS, а на iPad — macOS.
+	if OS.has_feature("web_ios"):
+		return false
+	if OS.has_feature("web_macos"):
+		return true
+	var size := Vector2(DisplayServer.screen_get_size())
+	if size.x <= 0.0 or size.y <= 0.0:
+		return false
+	var ratio := maxf(size.x, size.y) / maxf(minf(size.x, size.y), 1.0)
+	# В браузере DPI выдуман, поэтому там судим только по пропорциям экрана.
+	var dpi := 0.0 if OS.has_feature("web") else float(DisplayServer.screen_get_dpi())
+	var diagonal := size.length() / dpi if dpi > 0.0 else 0.0
+	return ratio < 1.6 or diagonal > 7.5
+
+
+## Значения настроек по умолчанию, которые на телефоне и в браузере отличаются от ПК.
+func setting_defaults() -> Dictionary:
+	match _tier:
+		1:
+			return {"view_distance": 5, "grass": 0.8}
+		2:
+			var phone_scale := 0.65 if is_web else 0.75
+			return {"view_distance": 4 if is_web else 5, "render_scale": phone_scale if is_phone() else 0.7, "grass": 0.8}
+	return {}
+
+
+# --- Интерфейс --------------------------------------------------------------------------------------
+
+func _update_layout() -> void:
+	var root := get_tree().root
+	if is_mobile():
+		var window := Vector2(root.size)
+		var target := PHONE_UI_HEIGHT if is_phone() else TABLET_UI_HEIGHT
+		var aspect := maxf(window.x / maxf(window.y, 1.0), 1.0)
+		root.content_scale_size = Vector2i(roundi(target * aspect), target)
+	_margins = _safe_margins()
+	layout_changed.emit()
+
+
+## Сколько единиц интерфейса на один пиксель экрана.
+func ui_scale() -> float:
+	var root := get_tree().root
+	var visible := root.get_visible_rect().size
+	return visible.y / maxf(float(root.size.y), 1.0)
+
+
+## Поля безопасной зоны в единицах интерфейса: {left, top, right, bottom}.
+func safe_margins() -> Dictionary:
+	return _margins
+
+
+func _safe_margins() -> Dictionary:
+	var m := {"left": EDGE, "top": EDGE, "right": EDGE, "bottom": EDGE}
+	if not is_mobile():
+		return m
+	var k := ui_scale()
+	if _emulated_notch:
+		# Как у iPhone с вырезом в альбомной ориентации: 47 pt по бокам, 21 pt снизу.
+		var visible := get_tree().root.get_visible_rect().size
+		var pt := visible.y / 390.0
+		m["left"] = 47.0 * pt
+		m["right"] = 47.0 * pt
+		m["bottom"] = maxf(EDGE, 21.0 * pt)
+		return m
+	# В браузере страницу и так держит внутри безопасной зоны сам Safari.
+	if is_web:
+		return m
+	var screen := Vector2(DisplayServer.screen_get_size())
+	var safe := DisplayServer.get_display_safe_area()
+	if safe.size.x <= 0 or safe.size.y <= 0:
+		return m
+	# Ограничиваем поля: странные значения не должны увести панели за край экрана.
+	var visible := get_tree().root.get_visible_rect().size
+	m["left"] = clampf(safe.position.x * k, EDGE, visible.x * 0.12)
+	m["top"] = clampf(safe.position.y * k, EDGE, visible.y * 0.15)
+	m["right"] = clampf((screen.x - safe.end.x) * k, EDGE, visible.x * 0.12)
+	m["bottom"] = clampf((screen.y - safe.end.y) * k, EDGE, visible.y * 0.15)
+	return m
+
+
+## Лёгкий отклик вибрацией (на iPhone — Taptic Engine).
+func haptic(strength := 0.5) -> void:
+	if is_mobile() and Settings.get_value("haptics"):
+		Input.vibrate_handheld(int(lerpf(12.0, 40.0, strength)), clampf(strength, 0.1, 1.0))
+
+
+# --- Графика --------------------------------------------------------------------------------------
+
+## Дальность травы и листьев на земле, м.
+func grass_distance() -> float:
+	return [70.0, 55.0, 45.0][_tier]
+
+
+## Доля травы от полной густоты (на телефоне пучков меньше).
+func grass_density_scale() -> float:
+	return [1.0, 0.7, 0.5][_tier]
+
+
+## Доля капель дождя и снежинок.
+func particle_scale() -> float:
+	return [1.0, 0.6, 0.4][_tier]
+
+
+## Разрешение отражений на воде относительно окна (в пикселях).
+func reflection_scale() -> float:
+	return [0.5, 0.4, 0.35][_tier]
+
+
+## Дальность мелочи (цветы, камешки), м.
+func decor_distance() -> float:
+	return [110.0, 90.0, 75.0][_tier]

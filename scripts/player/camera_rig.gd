@@ -4,6 +4,8 @@ extends Node3D
 ## Все движения сглажены экспоненциально — камера никогда не дёргается.
 ##   WASD / стрелки — движение, Shift — быстрее, Q/E — поворот,
 ##   колесо — приближение, ПКМ (зажать) — вращение, СКМ (зажать) — перетаскивание.
+## На телефоне камерой управляет TouchInput: земля «прилипает» к пальцу, щипок
+## приближает, поворот двух пальцев вращает; после броска камера плавно докатывается.
 
 @export var min_distance := 9.0
 @export var max_distance := 150.0
@@ -23,6 +25,11 @@ var _target_tilt_offset := 0.0
 var _rotating := false
 var _panning := false
 var _drag_moved := 0.0
+## Касания: пока палец на экране, камера следует за ним плотнее.
+var _touching := false
+var _inertia := Vector3.ZERO
+var _touch_velocity := Vector3.ZERO
+var _last_pan_msec := 0
 
 @onready var _pitch: Node3D = $Pitch
 @onready var camera: Camera3D = $Pitch/Camera3D
@@ -51,6 +58,10 @@ func was_right_click() -> bool:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	# В сенсорном режиме мышиные события — копии касаний, их разбирает TouchInput.
+	if Platform.is_touch and (event is InputEventMouseMotion or (event is InputEventMouseButton
+			and (event as InputEventMouseButton).button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE])):
+		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		match mb.button_index:
@@ -81,17 +92,75 @@ func _flat_basis() -> Basis:
 	return Basis(Vector3.UP, _target_yaw)
 
 
+# --- Касания ------------------------------------------------------------------------------------
+
+func touch_begin() -> void:
+	_touching = true
+	_inertia = Vector3.ZERO
+	_touch_velocity = Vector3.ZERO
+	_last_pan_msec = Time.get_ticks_msec()
+
+
+## Палец поднят: если камеру «бросили», она ещё немного катится.
+func touch_end(fling: bool) -> void:
+	_touching = false
+	var idle := Time.get_ticks_msec() - _last_pan_msec
+	if fling and idle < 80:
+		_inertia = _touch_velocity.limit_length(_target_distance * 3.0)
+	_touch_velocity = Vector3.ZERO
+
+
+## Сдвигает камеру так, чтобы точка земли под пальцем осталась под ним.
+func touch_pan(from_screen: Vector2, to_screen: Vector2) -> void:
+	var a: Variant = _point_on_ground_plane(from_screen)
+	var b: Variant = _point_on_ground_plane(to_screen)
+	if a == null or b == null:
+		return
+	var step: Vector3 = (a as Vector3) - (b as Vector3)
+	step.y = 0.0
+	step = step.limit_length(_target_distance * 0.5)
+	_target += step
+	var now := Time.get_ticks_msec()
+	var dt := maxf((now - _last_pan_msec) / 1000.0, 1.0 / 120.0)
+	_last_pan_msec = now
+	_touch_velocity = _touch_velocity.lerp(step / dt, 0.5)
+
+
+func touch_zoom(factor: float) -> void:
+	_target_distance = clampf(_target_distance * factor, min_distance, max_distance)
+
+
+func touch_rotate(angle: float) -> void:
+	_target_yaw += angle
+
+
+## Наклон камеры двумя пальцами вверх-вниз.
+func touch_tilt(pixels: float) -> void:
+	_target_tilt_offset = clampf(_target_tilt_offset + pixels * 0.004, -0.35, 0.35)
+
+
+func _point_on_ground_plane(screen: Vector2) -> Variant:
+	var from := camera.project_ray_origin(screen)
+	var dir := camera.project_ray_normal(screen)
+	if dir.y > -0.02:
+		return null
+	return Plane(Vector3.UP, _target.y).intersects_ray(from, dir)
+
+
 func _process(delta: float) -> void:
 	var input := Input.get_vector("cam_left", "cam_right", "cam_forward", "cam_back")
 	var speed := pan_speed * (12.0 + _target_distance) * (2.5 if Input.is_action_pressed("cam_fast") else 1.0)
 	_target += _flat_basis() * Vector3(input.x, 0, input.y) * speed * delta
+	if _inertia.length_squared() > 0.0001:
+		_target += _inertia * delta
+		_inertia *= exp(-4.0 * delta)
 	_target_yaw += (Input.get_action_strength("cam_rotate_left") - Input.get_action_strength("cam_rotate_right")) * rotate_speed * delta
 
 	if chunk_manager:
 		_target.y = maxf(chunk_manager.get_height(_target.x, _target.z), WorldGen.WATER_LEVEL)
 		chunk_manager.focus = _target
 
-	var k := 1.0 - exp(-smoothing * delta)
+	var k := 1.0 - exp(-(smoothing * 2.2 if _touching else smoothing) * delta)
 	position = position.lerp(_target, k)
 	_yaw = lerp_angle(_yaw, _target_yaw, k)
 	_distance = lerpf(_distance, _target_distance, k)

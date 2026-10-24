@@ -1,7 +1,8 @@
 class_name BuildingSystem
 extends Node3D
-## Размещение зданий: полупрозрачный «призрак» следует за мышью (сетка 1 м),
-## поворачивается на R и подсвечивается зелёным или красным.
+## Размещение зданий: полупрозрачный «призрак» следует за мышью (на телефоне —
+## за пальцем), стоит на сетке 1 м, поворачивается на R и подсвечивается зелёным
+## или красным.
 ## Режимы размещения (GameData.BUILDINGS[id].place):
 ##   land   — суша или деревянный настил; над водой показывается красный крестик;
 ##   water  — только на воде (настил), сетка 4 м, чтобы блоки стыковались;
@@ -131,6 +132,16 @@ func update_ghost(hit: Variant, delta: float) -> void:
 		_cross.visible = false
 
 
+## Попадает ли луч в призрак здания (чтобы тянуть его пальцем).
+func ghost_hit(from: Vector3, dir: Vector3) -> bool:
+	if _ghost == null or not _has_target:
+		return false
+	var rect := Building.footprint_for(selected_id, _ghost_target, _ghost_steps).grow(1.0)
+	var top: float = (ModelLibrary.building(selected_id)["bounds"] as AABB).end.y
+	var box := AABB(Vector3(rect.position.x, _ghost_target.y - 1.0, rect.position.y), Vector3(rect.size.x, top + 1.5, rect.size.y))
+	return box.intersects_ray(from, dir) != null
+
+
 func platform_top(x: float, z: float) -> float:
 	var cell := Vector2i(floori(x / PLATFORM_GRID), floori(z / PLATFORM_GRID))
 	return platforms.get(cell, -INF)
@@ -165,7 +176,7 @@ func _validate(target: Vector3) -> Dictionary:
 			if ha < WorldGen.WATER_LEVEL + 0.2 or hb < WorldGen.WATER_LEVEL + 0.2:
 				result["reason"] = "Оба конца моста должны стоять на берегу"
 			elif hm > WorldGen.WATER_LEVEL - 0.2:
-				result["reason"] = "Мост строится над водой — поверните его поперёк реки [R]"
+				result["reason"] = "Мост строится над водой — поверните его поперёк реки" + _key("R")
 			elif absf(ha - hb) > 1.4:
 				result["reason"] = "Берега на разной высоте"
 		_:
@@ -188,10 +199,10 @@ func _validate(target: Vector3) -> Dictionary:
 					else "Здесь вода — сначала постройте деревянный настил"
 			result["y"] = PLATFORM_TOP if any_platform and hi <= PLATFORM_TOP + 0.01 else hi - 0.1
 			if result["reason"] == "" and hi - lo > MAX_UNEVENNESS:
-				result["reason"] = "Слишком неровно — выровняйте землю [3]"
+				result["reason"] = "Слишком неровно — выровняйте землю" + _key("3")
 	if result["reason"] == "":
 		if not chunk_manager.props_in_rect(rect.grow(-0.2), true).is_empty():
-			result["reason"] = "Мешают деревья или камни — добудьте их [1]"
+			result["reason"] = "Мешают деревья или камни — добудьте их" + _key("1")
 		elif chunk_manager.has_chest_in_rect(rect):
 			result["reason"] = "Здесь лежит сундук"
 		elif _overlaps(rect, mode):
@@ -199,6 +210,11 @@ func _validate(target: Vector3) -> Dictionary:
 		elif not Inventory.has_all(cost):
 			result["reason"] = "Не хватает: %s" % GameData.cost_text(Inventory.missing(cost))
 	return result
+
+
+## Подсказка клавиши — только на ПК.
+static func _key(k: String) -> String:
+	return "" if Platform.is_touch else " [%s]" % k
 
 
 static func _samples(rect: Rect2, n: int) -> Array[Vector2]:
@@ -251,6 +267,14 @@ func spawn(building_id: String, pos: Vector3, steps: int, instant: bool) -> Buil
 	if building_id == "platform":
 		platforms[Vector2i(floori(pos.x / PLATFORM_GRID), floori(pos.z / PLATFORM_GRID))] = PLATFORM_TOP
 	return b
+
+
+## Чанк загрузился заново — под зданиями снова убираем траву и листья.
+func on_chunk_loaded(chunk: Chunk) -> void:
+	var area := Rect2(chunk.position.x, chunk.position.z, WorldGen.CHUNK_SIZE, WorldGen.CHUNK_SIZE)
+	for b in buildings:
+		if is_instance_valid(b) and b.footprint.intersects(area):
+			chunk.clear_cover(b.footprint)
 
 
 func restore_from_save() -> void:

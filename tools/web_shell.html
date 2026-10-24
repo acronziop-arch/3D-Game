@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="mobile-web-app-capable" content="yes">
+		<meta name="theme-color" content="#F5F3EF">
+		<title>$GODOT_PROJECT_NAME</title>
+		<style>
+html, body, #canvas {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+body {
+	color: #3E342B;
+	background-color: #F5F3EF;
+	overflow: hidden;
+	touch-action: none;
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-touch-callout: none;
+}
+
+#canvas {
+	display: block;
+}
+
+#canvas:focus {
+	outline: none;
+}
+
+#status {
+	position: absolute;
+	inset: 0;
+	background-color: #F5F3EF;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	gap: 14px;
+	visibility: hidden;
+	font-family: 'Nunito', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+#status-title {
+	font-size: clamp(30px, 7vw, 54px);
+	font-weight: 900;
+	letter-spacing: 0.01em;
+}
+
+#status-line {
+	width: 220px;
+	height: 3px;
+	background: #C9B8A6;
+	border-radius: 2px;
+}
+
+#status-sub {
+	font-size: clamp(15px, 2.6vw, 20px);
+	font-weight: 700;
+	color: #8C7A68;
+}
+
+#status-progress {
+	display: none;
+	width: min(60vw, 420px);
+	height: 12px;
+	margin-top: 10px;
+	-webkit-appearance: none;
+	appearance: none;
+	border: 2px solid #C9B8A6;
+	border-radius: 8px;
+	background: #EDE8E1;
+	overflow: hidden;
+}
+
+#status-progress::-webkit-progress-bar {
+	background: #EDE8E1;
+}
+
+#status-progress::-webkit-progress-value {
+	background: #8C7A68;
+	border-radius: 6px;
+}
+
+#status-progress::-moz-progress-bar {
+	background: #8C7A68;
+	border-radius: 6px;
+}
+
+#status-notice {
+	display: none;
+	max-width: 520px;
+	margin: 0 2rem;
+	padding: 1rem 1.2rem;
+	border: 2px solid #C9B8A6;
+	border-radius: 14px;
+	background: #FFFFFF;
+	color: #C4554A;
+	line-height: 1.35;
+	text-align: center;
+}
+		</style>
+		$GODOT_HEAD_INCLUDE
+	</head>
+	<body>
+		<canvas id="canvas">
+			Ваш браузер не поддерживает canvas.
+		</canvas>
+
+		<noscript>
+			Для игры нужен JavaScript.
+		</noscript>
+
+		<div id="status">
+			<div id="status-title">Тихие Земли</div>
+			<div id="status-line"></div>
+			<div id="status-sub">Загружаем игру…</div>
+			<progress id="status-progress"></progress>
+			<div id="status-notice"></div>
+		</div>
+
+		<script src="$GODOT_URL"></script>
+		<script>
+const GODOT_CONFIG = $GODOT_CONFIG;
+const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+const engine = new Engine(GODOT_CONFIG);
+
+(function () {
+	const statusOverlay = document.getElementById('status');
+	const statusProgress = document.getElementById('status-progress');
+	const statusNotice = document.getElementById('status-notice');
+
+	let initializing = true;
+	let statusMode = '';
+
+	function setStatusMode(mode) {
+		if (statusMode === mode || !initializing) {
+			return;
+		}
+		if (mode === 'hidden') {
+			statusOverlay.remove();
+			initializing = false;
+			return;
+		}
+		statusOverlay.style.visibility = 'visible';
+		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
+		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
+		statusMode = mode;
+	}
+
+	function setStatusNotice(text) {
+		while (statusNotice.lastChild) {
+			statusNotice.removeChild(statusNotice.lastChild);
+		}
+		text.split('\n').forEach((line) => {
+			statusNotice.appendChild(document.createTextNode(line));
+			statusNotice.appendChild(document.createElement('br'));
+		});
+	}
+
+	function displayFailureNotice(err) {
+		console.error(err);
+		if (err instanceof Error) {
+			setStatusNotice(err.message);
+		} else if (typeof err === 'string') {
+			setStatusNotice(err);
+		} else {
+			setStatusNotice('Не удалось запустить игру.');
+		}
+		setStatusMode('notice');
+		initializing = false;
+	}
+
+	const missing = Engine.getMissingFeatures({
+		threads: GODOT_THREADS_ENABLED,
+	});
+
+	if (missing.length !== 0) {
+		displayFailureNotice('Браузер не поддерживает то, что нужно игре:\n' + missing.join('\n')
+			+ '\nПопробуйте свежий Safari, Chrome или Firefox.');
+	} else {
+		setStatusMode('progress');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+				}
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+		}, displayFailureNotice);
+	}
+}());
+		</script>
+	</body>
+</html>

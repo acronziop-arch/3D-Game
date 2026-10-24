@@ -5,12 +5,16 @@ extends Node3D
 ## выравнивание рельефа (правки сохраняются в WorldState.terrain_edits).
 
 signal initial_area_ready
+## Новый чанк добавлен в сцену (здания убирают под собой траву).
+signal chunk_loaded(chunk: Chunk)
 
 @export var view_radius := 7
 @export var max_tasks_in_flight := 4
 ## Сколько готовых чанков добавлять в сцену за кадр — чтобы не было рывков.
 @export var finalize_per_frame := 2
 @export var initial_radius := 3
+## false — чанки генерируются прямо в главном потоке (браузер без потоков).
+var use_threads := true
 
 var gen: WorldGen
 var chunks := {}
@@ -23,6 +27,11 @@ var _center := Vector2i(1 << 30, 1 << 30)
 var _dirty := {}
 var _rebuild_timer := 0.0
 var _initial_done := false
+
+
+## Стартовая область мира загружена.
+func is_ready() -> bool:
+	return _initial_done
 
 
 func start(world_seed: int) -> void:
@@ -80,10 +89,13 @@ func _dispatch() -> void:
 		if chunks.has(c) or _pending.has(c):
 			continue
 		var out := {}
-		var edits := _edits_for_chunk(c)
-		var task := WorkerThreadPool.add_task(gen.generate_chunk.bind(
-			c, edits, WorldState.removed_in_chunk(c), WorldState.opened_chests.has(c), out))
-		_pending[c] = {"task": task, "out": out}
+		var args := [c, _edits_for_chunk(c), WorldState.removed_in_chunk(c), WorldState.opened_chests.has(c), out,
+			float(Settings.get_value("grass")) * Platform.grass_density_scale()]
+		if use_threads:
+			_pending[c] = {"task": WorkerThreadPool.add_task(gen.generate_chunk.bindv(args)), "out": out}
+		else:
+			gen.generate_chunk.callv(args)
+			_pending[c] = {"task": -1, "out": out}
 
 
 func _finalize() -> void:
@@ -92,9 +104,10 @@ func _finalize() -> void:
 		if done >= finalize_per_frame:
 			break
 		var job: Dictionary = _pending[c]
-		if not WorkerThreadPool.is_task_completed(job["task"]):
-			continue
-		WorkerThreadPool.wait_for_task_completion(job["task"])
+		if job["task"] >= 0:
+			if not WorkerThreadPool.is_task_completed(job["task"]):
+				continue
+			WorkerThreadPool.wait_for_task_completion(job["task"])
 		_pending.erase(c)
 		if (c - _center).length_squared() > (view_radius + 2) * (view_radius + 2):
 			continue
@@ -102,23 +115,28 @@ func _finalize() -> void:
 		chunk.setup(c, job["out"])
 		add_child(chunk)
 		chunks[c] = chunk
+		chunk_loaded.emit(chunk)
 		done += 1
 	if not _initial_done and _initial_area_loaded():
 		_initial_done = true
 		initial_area_ready.emit()
 
 
+## Стартовый круг загружен. Он не больше круга прорисовки: чанки за ним не грузятся,
+## и при малой дальности ожидание угловых чанков квадрата не закончилось бы никогда.
 func _initial_area_loaded() -> bool:
-	for dz in range(-initial_radius, initial_radius + 1):
-		for dx in range(-initial_radius, initial_radius + 1):
-			if not chunks.has(_center + Vector2i(dx, dz)):
+	var r := mini(initial_radius, view_radius)
+	for dz in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			if dx * dx + dz * dz <= r * r and not chunks.has(_center + Vector2i(dx, dz)):
 				return false
 	return true
 
 
 func _exit_tree() -> void:
 	for c: Vector2i in _pending:
-		WorkerThreadPool.wait_for_task_completion(_pending[c]["task"])
+		if _pending[c]["task"] >= 0:
+			WorkerThreadPool.wait_for_task_completion(_pending[c]["task"])
 	_pending.clear()
 
 
@@ -126,8 +144,8 @@ func _edits_for_chunk(c: Vector2i) -> Dictionary:
 	var result := {}
 	if WorldState.terrain_edits.is_empty():
 		return result
-	for j in WorldGen.RES + 1:
-		for i in WorldGen.RES + 1:
+	for j in range(-1, WorldGen.RES + 2):
+		for i in range(-1, WorldGen.RES + 2):
 			var key := Vector2i(c.x * WorldGen.RES + i, c.y * WorldGen.RES + j)
 			if WorldState.terrain_edits.has(key):
 				result[key] = WorldState.terrain_edits[key]
@@ -176,7 +194,8 @@ func raycast(from: Vector3, dir: Vector3, max_distance := 700.0) -> Variant:
 
 
 ## Ближайший добываемый объект или сундук под лучом мыши.
-func pick(from: Vector3, dir: Vector3, max_t: float) -> Dictionary:
+## slack — запас радиуса, м (палец на телефоне менее точен, чем курсор).
+func pick(from: Vector3, dir: Vector3, max_t: float, slack := 0.0) -> Dictionary:
 	var best := {}
 	var to := from + dir * max_t
 	var a := chunk_of(minf(from.x, to.x), minf(from.z, to.z))
@@ -186,7 +205,7 @@ func pick(from: Vector3, dir: Vector3, max_t: float) -> Dictionary:
 			var chunk: Chunk = chunks.get(Vector2i(cx, cz))
 			if chunk == null:
 				continue
-			var hit := chunk.pick(from, dir)
+			var hit := chunk.pick(from, dir, slack)
 			if not hit.is_empty() and hit["t"] < max_t and (best.is_empty() or hit["t"] < best["t"]):
 				best = hit
 	return best
@@ -212,11 +231,21 @@ func _chunks_in_rect(rect: Rect2) -> Array[Chunk]:
 	return result
 
 
-## Убирает траву и цветы под новым зданием.
+## Убирает траву, цветы и опавшие листья под новым зданием.
 func clear_decor(rect: Rect2) -> void:
 	for p in props_in_rect(rect, false):
 		if GameData.PROPS[p["id"]]["kind"] == "decor":
 			p["chunk"].remove_prop(p)
+	for chunk in _chunks_in_rect(rect):
+		chunk.clear_cover(rect)
+
+
+## Пересоздаёт все чанки (например, после смены густоты травы).
+func reload_all() -> void:
+	for c: Vector2i in chunks:
+		chunks[c].queue_free()
+	chunks.clear()
+	_center = Vector2i(1 << 30, 1 << 30)
 
 
 func has_chest_in_rect(rect: Rect2) -> bool:
@@ -242,15 +271,15 @@ func vertex_height(vx: int, vz: int) -> float:
 
 func set_vertex_height(vx: int, vz: int, h: float) -> void:
 	WorldState.terrain_edits[Vector2i(vx, vz)] = h
-	# Вершина на границе принадлежит сразу нескольким чанкам.
+	# Вершина хранится и в соседних чанках (в их запасе по краю).
 	var cx := floori(float(vx) / WorldGen.RES)
 	var cz := floori(float(vz) / WorldGen.RES)
-	for oz in [0, -1]:
-		for ox in [0, -1]:
+	for oz in [-1, 0, 1]:
+		for ox in [-1, 0, 1]:
 			var c := Vector2i(cx + ox, cz + oz)
 			var i := vx - c.x * WorldGen.RES
 			var j := vz - c.y * WorldGen.RES
-			if i > WorldGen.RES or j > WorldGen.RES:
+			if i < -1 or j < -1 or i > WorldGen.RES + 1 or j > WorldGen.RES + 1:
 				continue
 			if chunks.has(c):
 				chunks[c].set_vertex_height(i, j, h)

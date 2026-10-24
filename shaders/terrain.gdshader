@@ -18,6 +18,11 @@ void fragment() {
 	}
 	vec3 c = COLOR.rgb;
 	float green = clamp((c.g - max(c.r, c.b)) * 5.0, 0.0, 1.0);
+	// Мягкие пятна оттенков: крупные (десятки метров) и мелкие — земля не выглядит пластиковой.
+	float macro = w_noise(world_pos.xz * 0.045) * 0.6 + w_noise(world_pos.xz * 0.13 + 7.0) * 0.4;
+	float micro = w_noise(world_pos.xz * 0.9);
+	c *= 0.91 + macro * 0.15 + micro * 0.05;
+	c = mix(c, c * vec3(1.06, 1.0, 0.82), green * smoothstep(0.55, 0.8, macro) * 0.5);
 	vec3 golden = vec3(c.g * 0.95 + c.r * 0.3, c.g * 0.82, c.b * 0.55);
 	c = mix(c, golden, autumn * green * 0.8);
 	c = mix(c, c * vec3(0.9, 1.1, 0.88), spring * green);

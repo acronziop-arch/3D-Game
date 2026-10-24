@@ -83,8 +83,9 @@ func _process(_delta: float) -> void:
 	global_position = Vector3(snappedf(main_cam.global_position.x, 6.0), WorldGen.WATER_LEVEL, snappedf(main_cam.global_position.z, 6.0))
 	if _viewport.render_target_update_mode == SubViewport.UPDATE_DISABLED:
 		return
-	var size := get_viewport().get_visible_rect().size
-	var target := Vector2i(maxi(64, int(size.x * 0.5)), maxi(64, int(size.y * 0.5)))
+	# Размер окна в пикселях (интерфейс может быть растянут, а отражению важны пиксели).
+	var size := Vector2(get_tree().root.size) * Platform.reflection_scale()
+	var target := Vector2i(maxi(64, int(size.x)), maxi(64, int(size.y)))
 	if _viewport.size != target:
 		_viewport.size = target
 	_camera.fov = main_cam.fov

@@ -10,13 +10,21 @@ extends RefCounted
 const GameDataScript := preload("res://scripts/autoload/game_data.gd")
 
 const CHUNK_SIZE := 32.0
-const RES := 16
+## Клеток на сторону чанка. Мелкая сетка — плавные берега и русла без «ступенек».
+const RES := 24
 const CELL := CHUNK_SIZE / RES
+## Ширина массива высот с запасом в одну вершину вокруг чанка (для гладких нормалей).
+const EXT := RES + 3
+## Шаг грубой сетки, на которой смешиваются цвета биомов (переходы ~30 м).
+const BLEND_STEP := 8.0
 const WATER_LEVEL := 0.0
 const PROP_GRID := 10
 const CHEST_CHANCE := 0.05
-const ROCK_COLOR := Color(0.5, 0.49, 0.47)
-const BED_COLOR := Color(0.55, 0.52, 0.4)
+const ROCK_COLOR := Color(0.52, 0.51, 0.49)
+const BED_COLOR := Color(0.6, 0.56, 0.42)
+const DEEP_BED_COLOR := Color(0.36, 0.36, 0.31)
+const SAND_COLOR := Color(0.86, 0.8, 0.6)
+const SNOW_COLOR := Color(0.95, 0.97, 1.0)
 ## Глубже этого под водой живут рыбы.
 const FISH_DEPTH := 1.2
 
@@ -29,16 +37,16 @@ const BIOMES := {
 	Biome.RIVER: {"name": "Река", "ground": Color(0.56, 0.54, 0.46), "density": 0.35, "props": {"reeds": 5.0, "lily": 1.5}},
 	Biome.SHORE: {"name": "Берег", "ground": Color(0.86, 0.8, 0.6), "density": 0.32,
 		"props": {"reeds": 6.0, "sand": 4.0, "clay": 4.0, "rock": 1.5, "grass": 4.0}},
-	Biome.PLAINS: {"name": "Равнины", "ground": Color(0.55, 0.74, 0.33), "density": 0.45,
-		"props": {"grass": 40.0, "flowers": 20.0, "bush": 9.0, "tree_oak": 3.0, "tree_birch": 2.0, "rock": 2.5, "clay": 1.0}},
-	Biome.OAK_FOREST: {"name": "Дубрава", "ground": Color(0.41, 0.6, 0.26), "density": 0.62,
-		"props": {"tree_oak": 46.0, "tree_birch": 5.0, "bush": 16.0, "grass": 16.0, "flowers": 4.0, "rock": 3.0}},
-	Biome.BIRCH_GROVE: {"name": "Берёзовая роща", "ground": Color(0.52, 0.71, 0.31), "density": 0.56,
-		"props": {"tree_birch": 46.0, "tree_oak": 4.0, "grass": 22.0, "flowers": 12.0, "bush": 7.0, "rock": 2.0}},
-	Biome.PINE_FOREST: {"name": "Хвойный лес", "ground": Color(0.34, 0.5, 0.3), "density": 0.62,
-		"props": {"tree_pine": 28.0, "tree_spruce": 26.0, "rock": 6.0, "bush": 5.0, "grass": 8.0, "ore_coal": 1.5, "ore_iron": 0.8}},
-	Biome.MAPLE_FOREST: {"name": "Кленовый лес", "ground": Color(0.5, 0.64, 0.28), "density": 0.58,
-		"props": {"tree_maple": 44.0, "tree_birch": 8.0, "tree_oak": 4.0, "bush": 9.0, "grass": 10.0, "rock": 3.0}},
+	Biome.PLAINS: {"name": "Равнины", "ground": Color(0.55, 0.74, 0.33), "density": 0.4,
+		"props": {"grass": 14.0, "flowers": 22.0, "bush": 10.0, "tree_oak": 3.0, "tree_birch": 2.0, "rock": 2.5, "clay": 1.0}},
+	Biome.OAK_FOREST: {"name": "Дубрава", "ground": Color(0.41, 0.6, 0.26), "density": 0.66,
+		"props": {"tree_oak": 46.0, "tree_birch": 5.0, "bush": 28.0, "grass": 8.0, "flowers": 4.0, "rock": 3.0}},
+	Biome.BIRCH_GROVE: {"name": "Берёзовая роща", "ground": Color(0.52, 0.71, 0.31), "density": 0.6,
+		"props": {"tree_birch": 46.0, "tree_oak": 4.0, "grass": 10.0, "flowers": 12.0, "bush": 16.0, "rock": 2.0}},
+	Biome.PINE_FOREST: {"name": "Хвойный лес", "ground": Color(0.34, 0.5, 0.3), "density": 0.66,
+		"props": {"tree_pine": 28.0, "tree_spruce": 26.0, "rock": 6.0, "bush": 13.0, "grass": 4.0, "ore_coal": 1.5, "ore_iron": 0.8}},
+	Biome.MAPLE_FOREST: {"name": "Кленовый лес", "ground": Color(0.5, 0.64, 0.28), "density": 0.62,
+		"props": {"tree_maple": 44.0, "tree_birch": 8.0, "tree_oak": 4.0, "bush": 20.0, "grass": 5.0, "rock": 3.0}},
 	Biome.DESERT: {"name": "Пустыня", "ground": Color(0.92, 0.79, 0.53), "density": 0.14,
 		"props": {"sand": 10.0, "tree_dead": 3.0, "rock": 4.0, "ore_copper": 1.5, "clay": 1.0}},
 	Biome.TUNDRA: {"name": "Тундра", "ground": Color(0.87, 0.91, 0.93), "density": 0.25,
@@ -131,14 +139,20 @@ func biome_at(x: float, z: float, h: float) -> int:
 	if h < WATER_LEVEL - 0.15:
 		var w := water_mask(x, z)
 		return Biome.LAKE if w.x >= w.y else Biome.RIVER
-	var t := _temperature.get_noise_2d(x, z) * 1.6 - maxf(h - 12.0, 0.0) * 0.012
-	var m := _moisture.get_noise_2d(x, z) * 1.6
 	if h > 46.0:
 		return Biome.SNOW
 	if h > 26.0:
 		return Biome.MOUNTAIN
+	var climate := climate_biome(x, z, h)
 	if h < WATER_LEVEL + 0.9:
-		return Biome.SHORE if t > -0.35 else Biome.TUNDRA
+		return Biome.TUNDRA if climate == Biome.TUNDRA else Biome.SHORE
+	return climate
+
+
+## Биом только по климату (температура и влажность), без воды и гор.
+func climate_biome(x: float, z: float, h := 0.0) -> int:
+	var t := _temperature.get_noise_2d(x, z) * 1.6 - maxf(h - 12.0, 0.0) * 0.012
+	var m := _moisture.get_noise_2d(x, z) * 1.6
 	if t > 0.32 and m < 0.0:
 		return Biome.DESERT
 	if t < -0.38:
@@ -184,30 +198,19 @@ func find_spawn() -> Vector3:
 
 # --- Генерация чанка (рабочий поток) ---------------------------------------------
 
-func generate_chunk(coord: Vector2i, edits: Dictionary, removed: Dictionary, chest_opened: bool, out: Dictionary) -> void:
-	var n := RES + 1
+## cover_density — густота травы 0..1 (из настроек; на телефоне меньше).
+func generate_chunk(coord: Vector2i, edits: Dictionary, removed: Dictionary, chest_opened: bool, out: Dictionary,
+		cover_density := 1.0) -> void:
+	# Высоты с запасом в одну вершину вокруг — по ним считаются гладкие нормали на краях.
 	var heights := PackedFloat32Array()
-	heights.resize(n * n)
-	var colors := PackedColorArray()
-	colors.resize(n * n)
-	var biomes := PackedByteArray()
-	biomes.resize(n * n)
-	for j in n:
-		for i in n:
+	heights.resize(EXT * EXT)
+	for j in range(-1, RES + 2):
+		for i in range(-1, RES + 2):
 			var key := Vector2i(coord.x * RES + i, coord.y * RES + j)
-			var wx := key.x * CELL
-			var wz := key.y * CELL
-			var h: float = edits[key] if edits.has(key) else height_at(wx, wz)
-			var biome := biome_at(wx, wz, h)
-			var ground: Color = BIOMES[biome]["ground"]
-			var tint := 1.0 + (hash01(key.x, key.y, world_seed) - 0.5) * 0.08
-			heights[j * n + i] = h
-			biomes[j * n + i] = biome
-			colors[j * n + i] = Color(ground.r * tint, ground.g * tint, ground.b * tint)
-
+			heights[hidx(i, j)] = edits[key] if edits.has(key) else height_at(key.x * CELL, key.y * CELL)
 	out["heights"] = heights
-	out["colors"] = colors
-	out["terrain"] = build_terrain(heights, colors, coord)
+	out["colors"] = climate_colors(coord)
+	out["terrain"] = build_terrain(heights, out["colors"], coord)
 
 	var origin := Vector2(coord.x, coord.y) * CHUNK_SIZE
 	var chest_pos := Vector3.INF
@@ -246,7 +249,8 @@ func generate_chunk(coord: Vector2i, edits: Dictionary, removed: Dictionary, che
 			if chest_pos != Vector3.INF and Vector2(lx - chest_pos.x, lz - chest_pos.z).length() < 2.5:
 				continue
 			var h := sample_height(heights, coord, lx, lz)
-			var biome: int = biomes[roundi(lz / CELL) * n + roundi(lx / CELL)]
+			# На границе биомов деревья перемешиваются: биом берётся со сдвигом до 9 м.
+			var biome := biome_at(origin.x + lx + sin(rot) * 9.0, origin.y + lz + cos(rot) * 9.0, h)
 			var def: Dictionary = BIOMES[biome]
 			var forest := _forest.get_noise_2d(origin.x + lx, origin.y + lz)
 			if roll > float(def["density"]) * clampf(0.45 + forest * 1.6, 0.15, 1.4):
@@ -279,13 +283,78 @@ func generate_chunk(coord: Vector2i, edits: Dictionary, removed: Dictionary, che
 
 	# Места для рыб — глубокие клетки; стаи плавают между ними.
 	var fish_spots: Array[Vector3] = []
-	for j in RES:
-		for i in RES:
-			var hc := (heights[j * n + i] + heights[j * n + i + 1] + heights[(j + 1) * n + i] + heights[(j + 1) * n + i + 1]) * 0.25
+	for j in range(0, RES, 2):
+		for i in range(0, RES, 2):
+			var hc := (heights[hidx(i, j)] + heights[hidx(i + 2, j)] + heights[hidx(i, j + 2)] + heights[hidx(i + 2, j + 2)]) * 0.25
 			if hc < WATER_LEVEL - FISH_DEPTH:
-				fish_spots.append(Vector3((i + 0.5) * CELL, hc, (j + 0.5) * CELL))
+				fish_spots.append(Vector3((i + 1.0) * CELL, hc, (j + 1.0) * CELL))
 	out["fish_spots"] = fish_spots
 	out["has_water"] = not fish_spots.is_empty()
+	_scatter_cover(coord, heights, out["colors"], cover_density, out)
+
+
+## Насколько густая трава в биоме (0 — нет) и лежат ли там опавшие листья.
+const COVER := {
+	Biome.PLAINS: [1.0, false], Biome.BIRCH_GROVE: [0.85, true], Biome.OAK_FOREST: [0.7, true],
+	Biome.MAPLE_FOREST: [0.7, true], Biome.PINE_FOREST: [0.5, false],
+}
+
+
+func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: PackedColorArray, density: float, out: Dictionary) -> void:
+	var grass := PackedFloat32Array()
+	var litter := PackedFloat32Array()
+	out["grass"] = grass
+	out["litter"] = litter
+	if density <= 0.0:
+		return
+	var origin := Vector2(coord.x, coord.y) * CHUNK_SIZE
+	# Биом на грубой сетке 8 м — дёшево и достаточно точно для травы.
+	var biomes := PackedByteArray()
+	biomes.resize(25)
+	for gz in 5:
+		for gx in 5:
+			biomes[gz * 5 + gx] = climate_biome(origin.x + gx * 8.0, origin.y + gz * 8.0)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([world_seed, coord.x, coord.y, "cover"])
+	var cells := int(CHUNK_SIZE / lerpf(1.8, 0.85, clampf(density, 0.0, 1.0)))
+	var step := CHUNK_SIZE / cells
+	for gj in cells:
+		for gi in cells:
+			var lx := (gi + rng.randf()) * step
+			var lz := (gj + rng.randf()) * step
+			var angle := rng.randf() * TAU
+			var scale := rng.randf_range(0.75, 1.3)
+			var roll := rng.randf()
+			var info: Array = COVER.get(biomes[roundi(lz / 8.0) * 5 + roundi(lx / 8.0)], [0.0, false])
+			if roll > float(info[0]):
+				continue
+			var h := sample_height(heights, coord, lx, lz)
+			if h < WATER_LEVEL + 0.6 or _slope(heights, coord, lx, lz) > 0.55:
+				continue
+			var k := clampi(roundi(lz / CELL), 0, RES) * (RES + 1) + clampi(roundi(lx / CELL), 0, RES)
+			var ground := ground_color(colors[k], h, 1.0)
+			if ground.g - maxf(ground.r, ground.b) < 0.06:
+				continue
+			var tint := rng.randf_range(0.93, 1.07)
+			GroundCover.write_instance(grass, Vector3(lx, h, lz), angle, scale, Color(ground.r * tint, ground.g * tint, ground.b * tint))
+	# Опавшие листья — в лиственных лесах.
+	var lcells := 10
+	var lstep := CHUNK_SIZE / lcells
+	for gj in lcells:
+		for gi in lcells:
+			var lx := (gi + rng.randf()) * lstep
+			var lz := (gj + rng.randf()) * lstep
+			var angle := rng.randf() * TAU
+			var litter_seed := rng.randf()
+			var info: Array = COVER.get(biomes[roundi(lz / 8.0) * 5 + roundi(lx / 8.0)], [0.0, false])
+			if not info[1]:
+				continue
+			var h := sample_height(heights, coord, lx, lz)
+			if h < WATER_LEVEL + 0.5 or _slope(heights, coord, lx, lz) > 0.5:
+				continue
+			GroundCover.write_instance(litter, Vector3(lx, h, lz), angle, rng.randf_range(0.8, 1.3), Color.WHITE, litter_seed)
+	out["grass"] = grass
+	out["litter"] = litter
 
 
 static func roll_chest_rarity(r: float, distance: float) -> String:
@@ -325,55 +394,112 @@ static func _slope(heights: PackedFloat32Array, coord: Vector2i, lx: float, lz: 
 
 # --- Сетка рельефа -----------------------------------------------------------------
 
-## Строит плоско-затенённый меш рельефа (массивы для ArrayMesh). Диагональ
-## каждой клетки выбирается псевдослучайно — сетка не выглядит «по линейке».
+static func hidx(i: int, j: int) -> int:
+	return (j + 1) * EXT + (i + 1)
+
+
+## Цвет почвы по климату для каждой вершины чанка. Считается на грубой сетке
+## (шаг 8 м), размывается и плавно интерполируется — биомы перетекают друг
+## в друга на десятках метров, без резкой границы и «лесенки» треугольников.
+func climate_colors(coord: Vector2i) -> PackedColorArray:
+	var base := Vector2i(floori(coord.x * CHUNK_SIZE / BLEND_STEP), floori(coord.y * CHUNK_SIZE / BLEND_STEP))
+	var w := 12
+	var raw := PackedColorArray()
+	raw.resize(w * w)
+	for gz in w:
+		for gx in w:
+			var b := climate_biome((base.x + gx - 3) * BLEND_STEP, (base.y + gz - 3) * BLEND_STEP)
+			raw[gz * w + gx] = BIOMES[b]["ground"]
+	# Размытие 5×5 с весами 1-4-6-4-1.
+	var kernel := [1.0, 4.0, 6.0, 4.0, 1.0]
+	var blurred := PackedColorArray()
+	blurred.resize(w * w)
+	for gz in range(2, w - 2):
+		for gx in range(2, w - 2):
+			var acc := Color(0, 0, 0)
+			var total := 0.0
+			for dz in 5:
+				for dx in 5:
+					var k: float = kernel[dz] * kernel[dx]
+					acc += raw[(gz + dz - 2) * w + gx + dx - 2] * k
+					total += k
+			blurred[gz * w + gx] = acc / total
+	var colors := PackedColorArray()
+	colors.resize((RES + 1) * (RES + 1))
+	for j in RES + 1:
+		for i in RES + 1:
+			var fx := (coord.x * CHUNK_SIZE + i * CELL) / BLEND_STEP - base.x + 3.0
+			var fz := (coord.y * CHUNK_SIZE + j * CELL) / BLEND_STEP - base.y + 3.0
+			var gx := floori(fx)
+			var gz := floori(fz)
+			var tx := smoothstep(0.0, 1.0, fx - gx)
+			var tz := smoothstep(0.0, 1.0, fz - gz)
+			var c0 := blurred[gz * w + gx].lerp(blurred[gz * w + gx + 1], tx)
+			var c1 := blurred[(gz + 1) * w + gx].lerp(blurred[(gz + 1) * w + gx + 1], tx)
+			colors[j * (RES + 1) + i] = c0.lerp(c1, tz)
+	return colors
+
+
+## Итоговый цвет вершины: климат + плавные полосы берега, дна, гор, снега и склонов.
+static func ground_color(climate: Color, h: float, up: float) -> Color:
+	var c := climate
+	var pale := clampf((climate.b - 0.7) * 4.0, 0.0, 1.0)
+	c = c.lerp(SAND_COLOR, smoothstep(1.5, 0.3, h) * 0.85 * (1.0 - pale))
+	c = c.lerp(ROCK_COLOR, smoothstep(20.0, 32.0, h) * 0.85)
+	c = c.lerp(SNOW_COLOR, smoothstep(40.0, 52.0, h))
+	if h > WATER_LEVEL + 0.3:
+		c = c.lerp(ROCK_COLOR, smoothstep(0.9, 0.68, up) * (1.0 - smoothstep(40.0, 52.0, h) * 0.6))
+	var bed := BED_COLOR.lerp(DEEP_BED_COLOR, smoothstep(-0.6, -3.5, h))
+	return c.lerp(bed, smoothstep(0.25, -0.9, h))
+
+
+## Меш рельефа с гладкими нормалями и цветами по вершинам (индексный).
 static func build_terrain(heights: PackedFloat32Array, colors: PackedColorArray, coord: Vector2i) -> Array:
+	var n := RES + 1
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 	var cols := PackedColorArray()
-	var n := RES + 1
+	verts.resize(n * n)
+	normals.resize(n * n)
+	cols.resize(n * n)
+	for j in n:
+		for i in n:
+			var h := heights[hidx(i, j)]
+			var normal := Vector3(heights[hidx(i - 1, j)] - heights[hidx(i + 1, j)], 2.0 * CELL,
+				heights[hidx(i, j - 1)] - heights[hidx(i, j + 1)]).normalized()
+			var k := j * n + i
+			verts[k] = Vector3(i * CELL, h, j * CELL)
+			normals[k] = normal
+			cols[k] = ground_color(colors[k], h, normal.y)
+	var indices := PackedInt32Array()
+	indices.resize(RES * RES * 6)
+	var t := 0
 	for j in RES:
 		for i in RES:
 			var k := j * n + i
-			var p00 := Vector3(i * CELL, heights[k], j * CELL)
-			var p10 := Vector3((i + 1) * CELL, heights[k + 1], j * CELL)
-			var p01 := Vector3(i * CELL, heights[k + n], (j + 1) * CELL)
-			var p11 := Vector3((i + 1) * CELL, heights[k + n + 1], (j + 1) * CELL)
-			var vx := coord.x * RES + i
-			var vz := coord.y * RES + j
-			if cell_flip(vx, vz):
-				_terrain_face(verts, normals, cols, p00, p10, p01, (colors[k] + colors[k + 1] + colors[k + n]) / 3.0, vx * 2, vz)
-				_terrain_face(verts, normals, cols, p10, p11, p01, (colors[k + 1] + colors[k + n + 1] + colors[k + n]) / 3.0, vx * 2 + 1, vz)
+			# Лицевая сторона в Godot — обход по часовой стрелке (если смотреть сверху).
+			if cell_flip(coord.x * RES + i, coord.y * RES + j):
+				indices[t] = k
+				indices[t + 1] = k + 1
+				indices[t + 2] = k + n
+				indices[t + 3] = k + 1
+				indices[t + 4] = k + n + 1
+				indices[t + 5] = k + n
 			else:
-				_terrain_face(verts, normals, cols, p00, p10, p11, (colors[k] + colors[k + 1] + colors[k + n + 1]) / 3.0, vx * 2, vz)
-				_terrain_face(verts, normals, cols, p00, p11, p01, (colors[k] + colors[k + n + 1] + colors[k + n]) / 3.0, vx * 2 + 1, vz)
+				indices[t] = k
+				indices[t + 1] = k + 1
+				indices[t + 2] = k + n + 1
+				indices[t + 3] = k
+				indices[t + 4] = k + n + 1
+				indices[t + 5] = k + n
+			t += 6
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
 	arrays[Mesh.ARRAY_NORMAL] = normals
 	arrays[Mesh.ARRAY_COLOR] = cols
+	arrays[Mesh.ARRAY_INDEX] = indices
 	return arrays
-
-
-static func _terrain_face(verts: PackedVector3Array, normals: PackedVector3Array, cols: PackedColorArray,
-		a: Vector3, b: Vector3, c: Vector3, color: Color, hx: int, hz: int) -> void:
-	# В Godot лицевая сторона — обход по часовой стрелке: нормаль = (c - a) × (b - a).
-	var normal := (c - a).cross(b - a).normalized()
-	if normal.y < 0.0:
-		var t := b
-		b = c
-		c = t
-		normal = -normal
-	var avg_h := (a.y + b.y + c.y) / 3.0
-	if normal.y < 0.8 and avg_h > WATER_LEVEL + 0.5:
-		color = color.lerp(ROCK_COLOR, clampf((0.8 - normal.y) * 5.0, 0.0, 1.0))
-	if avg_h < WATER_LEVEL:
-		color = color.lerp(BED_COLOR, clampf(-avg_h * 0.3, 0.3, 0.8))
-	var jitter := 1.0 + (hash01(hx, hz, 7) - 0.5) * 0.07
-	var col := Color(color.r * jitter, color.g * jitter, color.b * jitter)
-	verts.append_array([a, b, c])
-	normals.append_array([normal, normal, normal])
-	cols.append_array([col, col, col])
 
 
 static func cell_flip(vx: int, vz: int) -> bool:
@@ -393,13 +519,11 @@ static func interp_cell(h00: float, h10: float, h01: float, h11: float, tx: floa
 
 
 static func sample_height(heights: PackedFloat32Array, coord: Vector2i, lx: float, lz: float) -> float:
-	var n := RES + 1
 	var fx := clampf(lx / CELL, 0.0, RES - 0.0001)
 	var fz := clampf(lz / CELL, 0.0, RES - 0.0001)
 	var i := int(fx)
 	var j := int(fz)
-	var k := j * n + i
-	return interp_cell(heights[k], heights[k + 1], heights[k + n], heights[k + n + 1],
+	return interp_cell(heights[hidx(i, j)], heights[hidx(i + 1, j)], heights[hidx(i, j + 1)], heights[hidx(i + 1, j + 1)],
 		fx - i, fz - j, cell_flip(coord.x * RES + i, coord.y * RES + j))
 
 
