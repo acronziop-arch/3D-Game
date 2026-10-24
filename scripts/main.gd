@@ -110,7 +110,7 @@ func _notification(what: int) -> void:
 	match what:
 		NOTIFICATION_WM_CLOSE_REQUEST:
 			WorldState.save_game()
-		NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT:
+		NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_WM_WINDOW_FOCUS_OUT:
 			# Телефон может закрыть свёрнутую игру, а браузер — вкладку без предупреждения.
 			if (Platform.is_mobile() or Platform.is_web) and chunk_manager.is_ready():
 				WorldState.save_game()

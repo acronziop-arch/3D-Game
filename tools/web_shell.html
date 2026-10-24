@@ -14,6 +14,10 @@ html, body, #canvas {
 	border: 0;
 }
 
+html, body {
+	overscroll-behavior: none;
+}
+
 body {
 	color: #3E342B;
 	background-color: #F5F3EF;
@@ -91,6 +95,17 @@ body {
 	border-radius: 6px;
 }
 
+#status-tip {
+	display: none;
+	max-width: 440px;
+	margin: 14px 2rem 0;
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 1.4;
+	color: #8A7D70;
+	text-align: center;
+}
+
 #status-notice {
 	display: none;
 	max-width: 520px;
@@ -121,6 +136,7 @@ body {
 			<div id="status-sub">Загружаем игру…</div>
 			<progress id="status-progress"></progress>
 			<div id="status-notice"></div>
+			<div id="status-tip">Совет: в Safari нажмите «Поделиться» → «На экран „Домой“» — игра будет открываться во весь экран, как приложение.</div>
 		</div>
 
 		<script src="$GODOT_URL"></script>
@@ -133,6 +149,13 @@ const engine = new Engine(GODOT_CONFIG);
 	const statusOverlay = document.getElementById('status');
 	const statusProgress = document.getElementById('status-progress');
 	const statusNotice = document.getElementById('status-notice');
+
+	// iPhone и iPad: подсказываем, как запускать игру во весь экран (полноэкранного режима в Safari нет).
+	const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
+		|| (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+	if (isIOS && !navigator.standalone) {
+		document.getElementById('status-tip').style.display = 'block';
+	}
 
 	let initializing = true;
 	let statusMode = '';
