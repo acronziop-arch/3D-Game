@@ -1,0 +1,93 @@
+[gd_scene load_steps=13 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/world/chunk_manager.gd" id="2_chunks"]
+[ext_resource type="Script" path="res://scripts/player/camera_rig.gd" id="3_camera"]
+[ext_resource type="Script" path="res://scripts/building/building_system.gd" id="4_build"]
+[ext_resource type="Script" path="res://scripts/player/interaction.gd" id="5_interact"]
+[ext_resource type="Script" path="res://scripts/ui/hud.gd" id="6_hud"]
+[ext_resource type="Shader" path="res://shaders/water.gdshader" id="7_water"]
+
+[sub_resource type="ProceduralSkyMaterial" id="SkyMaterial_main"]
+sky_top_color = Color(0.36, 0.58, 0.86, 1)
+sky_horizon_color = Color(0.72, 0.84, 0.92, 1)
+ground_bottom_color = Color(0.5, 0.6, 0.66, 1)
+ground_horizon_color = Color(0.72, 0.84, 0.92, 1)
+sun_angle_max = 20.0
+
+[sub_resource type="Sky" id="Sky_main"]
+sky_material = SubResource("SkyMaterial_main")
+
+[sub_resource type="Environment" id="Environment_main"]
+background_mode = 2
+sky = SubResource("Sky_main")
+ambient_light_source = 3
+ambient_light_color = Color(0.75, 0.82, 0.9, 1)
+ambient_light_energy = 0.9
+tonemap_mode = 2
+tonemap_white = 6.0
+ssao_enabled = true
+ssao_radius = 1.5
+ssao_intensity = 1.6
+glow_enabled = true
+glow_intensity = 0.4
+glow_bloom = 0.05
+fog_enabled = true
+fog_mode = 1
+fog_light_color = Color(0.72, 0.84, 0.92, 1)
+fog_sky_affect = 0.0
+fog_depth_begin = 110.0
+fog_depth_end = 215.0
+adjustment_enabled = true
+adjustment_saturation = 1.08
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_water"]
+render_priority = 0
+shader = ExtResource("7_water")
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_water"]
+material = SubResource("ShaderMaterial_water")
+size = Vector2(900, 900)
+subdivide_width = 149
+subdivide_depth = 149
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_main")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.7880108, 0.48514786, -0.37903908, 0, 0.6156615, 0.7880107, 0.6156615, -0.62096095, 0.4851479, 0, 30, 0)
+light_color = Color(1, 0.95, 0.86, 1)
+light_energy = 1.15
+shadow_enabled = true
+shadow_blur = 1.5
+directional_shadow_max_distance = 200.0
+
+[node name="ChunkManager" type="Node3D" parent="."]
+script = ExtResource("2_chunks")
+
+[node name="Water" type="MeshInstance3D" parent="."]
+cast_shadow = 0
+mesh = SubResource("PlaneMesh_water")
+
+[node name="BuildingSystem" type="Node3D" parent="."]
+script = ExtResource("4_build")
+
+[node name="CameraRig" type="Node3D" parent="."]
+script = ExtResource("3_camera")
+
+[node name="Pitch" type="Node3D" parent="CameraRig"]
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig/Pitch"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 45)
+fov = 50.0
+near = 0.3
+far = 900.0
+
+[node name="Interaction" type="Node3D" parent="."]
+script = ExtResource("5_interact")
+
+[node name="Hud" type="CanvasLayer" parent="."]
+script = ExtResource("6_hud")
