@@ -139,6 +139,10 @@ func _primary_action() -> void:
 				_flatten_target = snappedf(maxf(_ground.y, WorldGen.WATER_LEVEL), 0.25)
 		Tool.DEMOLISH:
 			if is_instance_valid(_hover_building):
+				var blocked := building_system.can_demolish(_hover_building)
+				if blocked != "":
+					message.emit(blocked)
+					return
 				var refund := building_system.demolish(_hover_building)
 				Fx.show_loot(self, _hover_building.global_position + Vector3(0, 2, 0), refund)
 				_hover_building = null
@@ -312,7 +316,8 @@ func _process_jobs(delta: float) -> void:
 			# Вместо экземпляра MultiMesh анимируем отдельную копию модели.
 			var chunk: Chunk = job["chunk"]
 			var proxy := MeshInstance3D.new()
-			proxy.mesh = PropMeshes.get_mesh(job["prop"]["id"])
+			proxy.mesh = ModelLibrary.prop_mesh(job["prop"]["id"], job["prop"].get("variant", 0))
+			proxy.material_override = ModelLibrary.foliage_material()
 			add_child(proxy)
 			proxy.global_transform = chunk.world_prop_transform(job["prop"])
 			job["proxy"] = proxy
@@ -382,6 +387,22 @@ func _complete_job(job: Dictionary) -> void:
 		tw.tween_interval(0.3)
 		tw.tween_property(proxy, "scale", Vector3.ONE * 0.01, 0.45).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
 	else:
-		Fx.burst(self, base.origin + Vector3(0, 0.6, 0), PropMeshes.burst_color(p["id"]), 18)
+		Fx.burst(self, base.origin + Vector3(0, 0.6, 0), _burst_color(p["id"]), 18)
 		tw.tween_property(proxy, "scale", Vector3.ONE * 0.01, 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
 	tw.tween_callback(proxy.queue_free)
+
+
+## Цвет «осколков» при добыче.
+static func _burst_color(id: String) -> Color:
+	match id:
+		"ore_coal":
+			return Color(0.15, 0.15, 0.16)
+		"ore_copper":
+			return Color(0.9, 0.52, 0.25)
+		"ore_iron":
+			return Color(0.66, 0.4, 0.32)
+		"clay":
+			return Color(0.7, 0.44, 0.3)
+		"sand":
+			return Color(0.94, 0.85, 0.6)
+	return Color(0.55, 0.55, 0.56)

@@ -1,4 +1,4 @@
-[gd_scene load_steps=13 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/world/chunk_manager.gd" id="2_chunks"]
@@ -6,50 +6,33 @@
 [ext_resource type="Script" path="res://scripts/building/building_system.gd" id="4_build"]
 [ext_resource type="Script" path="res://scripts/player/interaction.gd" id="5_interact"]
 [ext_resource type="Script" path="res://scripts/ui/hud.gd" id="6_hud"]
-[ext_resource type="Shader" path="res://shaders/water.gdshader" id="7_water"]
-
-[sub_resource type="ProceduralSkyMaterial" id="SkyMaterial_main"]
-sky_top_color = Color(0.36, 0.58, 0.86, 1)
-sky_horizon_color = Color(0.72, 0.84, 0.92, 1)
-ground_bottom_color = Color(0.5, 0.6, 0.66, 1)
-ground_horizon_color = Color(0.72, 0.84, 0.92, 1)
-sun_angle_max = 20.0
-
-[sub_resource type="Sky" id="Sky_main"]
-sky_material = SubResource("SkyMaterial_main")
+[ext_resource type="Script" path="res://scripts/world/atmosphere.gd" id="7_atmosphere"]
+[ext_resource type="Script" path="res://scripts/world/water.gd" id="8_water"]
 
 [sub_resource type="Environment" id="Environment_main"]
 background_mode = 2
-sky = SubResource("Sky_main")
-ambient_light_source = 3
-ambient_light_color = Color(0.75, 0.82, 0.9, 1)
-ambient_light_energy = 0.9
+ambient_light_source = 2
+ambient_light_color = Color(0.74, 0.8, 0.88, 1)
+ambient_light_energy = 0.95
+reflected_light_source = 2
 tonemap_mode = 2
 tonemap_white = 6.0
+ssr_enabled = true
+ssr_max_steps = 48
 ssao_enabled = true
 ssao_radius = 1.5
 ssao_intensity = 1.6
 glow_enabled = true
-glow_intensity = 0.4
-glow_bloom = 0.05
+glow_intensity = 0.45
+glow_bloom = 0.06
 fog_enabled = true
 fog_mode = 1
-fog_light_color = Color(0.72, 0.84, 0.92, 1)
+fog_light_color = Color(0.74, 0.85, 0.93, 1)
 fog_sky_affect = 0.0
 fog_depth_begin = 110.0
 fog_depth_end = 215.0
 adjustment_enabled = true
 adjustment_saturation = 1.08
-
-[sub_resource type="ShaderMaterial" id="ShaderMaterial_water"]
-render_priority = 0
-shader = ExtResource("7_water")
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_water"]
-material = SubResource("ShaderMaterial_water")
-size = Vector2(900, 900)
-subdivide_width = 149
-subdivide_depth = 149
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
@@ -63,14 +46,24 @@ light_color = Color(1, 0.95, 0.86, 1)
 light_energy = 1.15
 shadow_enabled = true
 shadow_blur = 1.5
-directional_shadow_max_distance = 200.0
+directional_shadow_max_distance = 160.0
+
+[node name="Moon" type="DirectionalLight3D" parent="."]
+light_color = Color(0.62, 0.72, 1, 1)
+light_energy = 0.2
+sky_mode = 0
+
+[node name="Atmosphere" type="Node3D" parent="." node_paths=PackedStringArray("sun", "moon", "world_environment")]
+script = ExtResource("7_atmosphere")
+sun = NodePath("../Sun")
+moon = NodePath("../Moon")
+world_environment = NodePath("../WorldEnvironment")
 
 [node name="ChunkManager" type="Node3D" parent="."]
 script = ExtResource("2_chunks")
 
 [node name="Water" type="MeshInstance3D" parent="."]
-cast_shadow = 0
-mesh = SubResource("PlaneMesh_water")
+script = ExtResource("8_water")
 
 [node name="BuildingSystem" type="Node3D" parent="."]
 script = ExtResource("4_build")

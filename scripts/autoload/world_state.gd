@@ -4,7 +4,7 @@ extends Node
 ## Мир бесконечный, поэтому храним только изменения, а не сам мир.
 
 const SAVE_PATH := "user://world.save"
-const SAVE_VERSION := 1
+const SAVE_VERSION := 2
 
 var world_seed: int = 0
 ## Vector2i(вершина сетки) -> высота.
@@ -67,6 +67,7 @@ func save_game() -> bool:
 		"buildings": buildings,
 		"inventory": Inventory.items,
 		"camera": camera_state,
+		"weather": Weather.save_state(),
 	})
 	return true
 
@@ -87,6 +88,7 @@ func load_game() -> bool:
 	opened_chests = data["chests"]
 	buildings = data["buildings"]
 	camera_state = data["camera"]
+	Weather.load_state(data.get("weather", {}))
 	completed_counts.clear()
 	Inventory.items = data["inventory"]
 	Inventory.changed.emit("")

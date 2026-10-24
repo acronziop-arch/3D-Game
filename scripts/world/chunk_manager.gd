@@ -29,6 +29,11 @@ func start(world_seed: int) -> void:
 	gen = WorldGen.new(world_seed)
 
 
+func set_view_radius(radius: int) -> void:
+	view_radius = radius
+	_center = Vector2i(1 << 30, 1 << 30)
+
+
 static func chunk_of(x: float, z: float) -> Vector2i:
 	return Vector2i(floori(x / WorldGen.CHUNK_SIZE), floori(z / WorldGen.CHUNK_SIZE))
 

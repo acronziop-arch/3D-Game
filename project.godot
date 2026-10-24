@@ -19,10 +19,12 @@ config/icon="res://icon.svg"
 [autoload]
 
 Controls="*res://scripts/autoload/controls.gd"
+Settings="*res://scripts/autoload/settings.gd"
 GameData="*res://scripts/autoload/game_data.gd"
 WorldState="*res://scripts/autoload/world_state.gd"
 Inventory="*res://scripts/autoload/inventory.gd"
 Crafting="*res://scripts/autoload/crafting.gd"
+Weather="*res://scripts/autoload/weather.gd"
 
 [display]
 
@@ -40,4 +42,47 @@ common/physics_ticks_per_second=60
 anti_aliasing/quality/msaa_3d=2
 lights_and_shadows/directional_shadow/size=4096
 lights_and_shadows/directional_shadow/soft_shadow_filter_quality=3
-environment/defaults/default_clear_color=Color(0.68, 0.82, 0.92, 1)
+environment/defaults/default_clear_color=Color(0.96, 0.95, 0.94, 1)
+
+[shader_globals]
+
+wind_dir={
+"type": "vec2",
+"value": Vector2(1, 0.35)
+}
+wind_strength={
+"type": "float",
+"value": 0.25
+}
+wetness={
+"type": "float",
+"value": 0.0
+}
+snow_cover={
+"type": "float",
+"value": 0.0
+}
+leaf_amount={
+"type": "float",
+"value": 1.0
+}
+autumn={
+"type": "float",
+"value": 0.0
+}
+spring={
+"type": "float",
+"value": 0.0
+}
+night={
+"type": "float",
+"value": 0.0
+}
+rain={
+"type": "float",
+"value": 0.0
+}
+water_level={
+"type": "float",
+"value": 0.0
+}

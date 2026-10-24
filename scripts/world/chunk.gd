@@ -1,7 +1,7 @@
 class_name Chunk
 extends Node3D
 ## Квадрат мира 32×32 м: рельеф, объекты (через MultiMesh — тысячи
-## деревьев рисуются дёшево) и, иногда, сундук.
+## деревьев рисуются дёшево), рыбы в глубоких местах и, иногда, сундук.
 
 const DECOR_VISIBLE_DISTANCE := 110.0
 
@@ -11,6 +11,8 @@ var colors := PackedColorArray()
 ## [{"id", "index", "pos": Vector3 (локально), "rot", "scale", "mm": id типа, "mm_i": int, "hidden": bool}]
 var props: Array[Dictionary] = []
 var chest: Chest
+var has_water := false
+var fish: FishSchool
 
 var _terrain_mesh: MeshInstance3D
 var _multimeshes := {}
@@ -40,51 +42,60 @@ func setup(chunk_coord: Vector2i, data: Dictionary) -> void:
 		chest.rotation.y = c["rot"]
 		add_child(chest)
 
+	has_water = data.get("has_water", false)
+	if has_water and Settings.get_value("fish"):
+		fish = FishSchool.new()
+		add_child(fish)
+		fish.setup(data["fish_spots"], coord)
+
 
 func _apply_terrain(arrays: Array) -> void:
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	mesh.surface_set_material(0, MeshKit.vertex_color_material())
+	mesh.surface_set_material(0, ModelLibrary.terrain_material())
 	_terrain_mesh.mesh = mesh
 
 
 func _build_props() -> void:
 	var by_type := {}
 	for p in props:
-		if not by_type.has(p["id"]):
-			by_type[p["id"]] = []
-		by_type[p["id"]].append(p)
-	for id: String in by_type:
-		var list: Array = by_type[id]
+		var key := "%s_%d" % [p["id"], p.get("variant", 0)]
+		if not by_type.has(key):
+			by_type[key] = []
+		by_type[key].append(p)
+	for key: String in by_type:
+		var list: Array = by_type[key]
+		var id: String = list[0]["id"]
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
 		mm.use_colors = true
-		mm.mesh = PropMeshes.get_mesh(id)
+		mm.mesh = ModelLibrary.prop_mesh(id, list[0].get("variant", 0))
 		mm.instance_count = list.size()
 		for i in list.size():
 			var p: Dictionary = list[i]
-			p["mm"] = id
+			p["mm"] = key
 			p["mm_i"] = i
 			p["hidden"] = false
 			mm.set_instance_transform(i, prop_transform(p))
 			mm.set_instance_color(i, _instance_tint(id, p["index"]))
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
+		mmi.material_override = ModelLibrary.foliage_material()
 		if GameData.PROPS[id]["kind"] == "decor":
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			mmi.visibility_range_end = DECOR_VISIBLE_DISTANCE
 			mmi.visibility_range_end_margin = 20.0
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		add_child(mmi)
-		_multimeshes[id] = mm
+		_multimeshes[key] = mm
 
 
 func _instance_tint(id: String, index: int) -> Color:
 	var h := WorldGen.hash01(coord.x * 131 + index, coord.y, 3)
-	var v := 0.88 + h * 0.24
+	var v := 0.9 + h * 0.2
 	if id == "tree_maple":
-		return Color(v, v * (0.85 + h * 0.3), v * 0.9)
-	return Color(v, v, v)
+		return Color(v, v * (0.9 + h * 0.15), v * 0.92)
+	return Color(v, v, v * (0.96 + h * 0.08))
 
 
 static func prop_transform(p: Dictionary) -> Transform3D:
@@ -187,8 +198,10 @@ func set_vertex_height(i: int, j: int, h: float) -> void:
 
 ## Перестраивает рельеф после выравнивания и ставит объекты на новую высоту.
 func rebuild_terrain() -> void:
-	_apply_terrain(WorldGen.build_terrain(heights, colors, coord).get_arrays())
+	_apply_terrain(WorldGen.build_terrain(heights, colors, coord))
 	for p in props:
+		if p.get("float", false):
+			continue
 		var pos: Vector3 = p["pos"]
 		pos.y = height_local(pos.x, pos.z)
 		p["pos"] = pos

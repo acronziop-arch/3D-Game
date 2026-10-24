@@ -1,7 +1,6 @@
 extends Node3D
 ## Точка входа: связывает системы между собой, загружает или создаёт мир.
-## Новый мир: запустите игру с аргументом `-- --new-world` или удалите
-## user://world.save (Project → Open User Data Folder).
+## Новый мир — кнопка в настройках или запуск с аргументом `-- --new-world`.
 
 const AUTOSAVE_INTERVAL := 60.0
 
@@ -12,7 +11,8 @@ var _autosave := AUTOSAVE_INTERVAL
 @onready var building_system: BuildingSystem = $BuildingSystem
 @onready var interaction: Interaction = $Interaction
 @onready var hud: Hud = $Hud
-@onready var water: MeshInstance3D = $Water
+@onready var water: Water = $Water
+@onready var atmosphere: Atmosphere = $Atmosphere
 
 
 func _ready() -> void:
@@ -22,13 +22,19 @@ func _ready() -> void:
 	if not loaded:
 		WorldState.new_world()
 
+	chunk_manager.view_radius = Settings.get_value("view_distance")
 	chunk_manager.start(WorldState.world_seed)
 	camera_rig.chunk_manager = chunk_manager
 	building_system.chunk_manager = chunk_manager
 	interaction.camera_rig = camera_rig
 	interaction.chunk_manager = chunk_manager
 	interaction.building_system = building_system
+	water.camera_rig = camera_rig
+	water.chunk_manager = chunk_manager
+	atmosphere.camera_rig = camera_rig
 	hud.bind(interaction)
+	hud.new_world_requested.connect(_new_world)
+	Settings.changed.connect(_on_setting_changed)
 
 	if loaded and not WorldState.camera_state.is_empty():
 		camera_rig.set_state(WorldState.camera_state)
@@ -44,9 +50,18 @@ func _on_world_ready() -> void:
 	hud.show_message("Добро пожаловать! Срубите пару деревьев и постройте лесопилку.")
 
 
+func _on_setting_changed(key: String) -> void:
+	if key == "view_distance":
+		chunk_manager.set_view_radius(Settings.get_value("view_distance"))
+
+
+func _new_world() -> void:
+	WorldState.new_world()
+	WorldState.save_game()
+	get_tree().reload_current_scene()
+
+
 func _process(delta: float) -> void:
-	# Вода — одна большая плоскость, которая едет за камерой (с шагом сетки, чтобы волны не «плыли»).
-	water.global_position = Vector3(snappedf(camera_rig.position.x, 6.0), WorldGen.WATER_LEVEL, snappedf(camera_rig.position.z, 6.0))
 	WorldState.camera_state = camera_rig.get_state()
 	_autosave -= delta
 	if _autosave <= 0.0:

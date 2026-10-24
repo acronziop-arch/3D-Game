@@ -15,6 +15,7 @@ func _init() -> void:
 	_check_times()
 	_check_references()
 	_check_material_rule()
+	_check_icons()
 	_check_sources()
 	_check_progression()
 	_check_determinism()
@@ -74,16 +75,36 @@ func _check_references() -> void:
 
 
 ## Главное правило: из чего выглядит — из того и построено.
+## Материалы берутся прямо из моделей models/buildings/*.glb.
 func _check_material_rule() -> void:
 	for id: String in GD.BUILDINGS:
+		if not ResourceLoader.exists("res://models/buildings/%s.glb" % id):
+			_fail("нет модели models/buildings/%s.glb — запустите tools/export_models.gd" % id)
 		var cost: Dictionary = GD.BUILDINGS[id]["cost"]
-		for mat in Blueprints.materials_used(id):
+		for mat: String in ModelLibrary.building(id)["materials"]:
 			if not GD.MATERIALS.has(mat):
 				_fail("здание %s: неизвестный материал %s" % [id, mat])
 				continue
 			var res: String = GD.MATERIALS[mat]["res"]
 			if not cost.has(res):
 				_fail("здание %s: на модели есть «%s», но в стоимости нет «%s»" % [id, mat, GD.RESOURCES[res]["name"]])
+		if not GD.BUILDING_CATEGORIES.has(GD.BUILDINGS[id]["category"]):
+			_fail("здание %s: неизвестная категория" % id)
+		if not GD.BUILDINGS[id].get("place", "land") in ["land", "water", "bridge"]:
+			_fail("здание %s: неизвестный режим размещения" % id)
+
+
+func _check_icons() -> void:
+	var names: Array = GD.RESOURCES.keys()
+	for w: String in GD.WEATHERS:
+		names.append("weather_" + w)
+	for s: Dictionary in GD.SEASONS:
+		names.append("season_" + s["id"])
+	for c: String in GD.BUILDING_CATEGORIES:
+		names.append("cat_" + c)
+	for n: String in names:
+		if not ResourceLoader.exists("res://assets/icons/%s.svg" % n):
+			_fail("нет иконки assets/icons/%s.svg — запустите tools/make_icons.py" % n)
 
 
 func _check_sources() -> void:

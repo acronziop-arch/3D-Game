@@ -6,11 +6,12 @@ extends RefCounted
 static func floating_text(parent: Node, world_pos: Vector3, text: String, color := Color.WHITE, delay := 0.0) -> void:
 	var label := Label3D.new()
 	label.text = text
+	label.font = UiStyle.font(800)
 	label.modulate = Color(color, 0.0)
-	label.outline_modulate = Color(0, 0, 0, 0.0)
+	label.outline_modulate = Color(UiStyle.BASE, 0.0)
 	label.font_size = 56
-	label.outline_size = 14
-	label.pixel_size = 0.006
+	label.outline_size = 16
+	label.pixel_size = 0.0007
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
 	label.fixed_size = true
@@ -20,7 +21,7 @@ static func floating_text(parent: Node, world_pos: Vector3, text: String, color 
 	var tw := label.create_tween()
 	tw.tween_interval(delay)
 	tw.tween_property(label, "modulate:a", 1.0, 0.15)
-	tw.parallel().tween_property(label, "outline_modulate:a", 0.8, 0.15)
+	tw.parallel().tween_property(label, "outline_modulate:a", 0.95, 0.15)
 	tw.parallel().tween_property(label, "global_position", world_pos + Vector3(0, 1.6, 0), 1.3) \
 		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.tween_property(label, "modulate:a", 0.0, 0.35)
@@ -29,10 +30,13 @@ static func floating_text(parent: Node, world_pos: Vector3, text: String, color 
 
 
 static func show_loot(parent: Node, world_pos: Vector3, loot: Dictionary) -> void:
+	# Надписи постоянного экранного размера: шаг между строками зависит от расстояния до камеры.
+	var cam := parent.get_viewport().get_camera_3d()
+	var step := 0.5 if cam == null else cam.global_position.distance_to(world_pos) * 0.04
 	var i := 0
 	for id: String in loot:
-		floating_text(parent, world_pos + Vector3(0, i * 0.5, 0), "+%d %s" % [loot[id], GameData.res_name(id)],
-			GameData.res_color(id).lightened(0.35), i * 0.18)
+		floating_text(parent, world_pos + Vector3(0, i * step, 0), "+%d %s" % [loot[id], GameData.res_name(id)],
+			GameData.res_color(id).darkened(0.35), i * 0.18)
 		i += 1
 
 

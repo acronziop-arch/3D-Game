@@ -33,45 +33,53 @@ const RESOURCES := {
 	"cloth": {"name": "Ткань", "group": "processed", "color": Color(0.9, 0.86, 0.78)},
 }
 
+# Ресурсы, которые всегда видны в левом верхнем углу. Остальные — в списке «…».
+const MAIN_RESOURCES := ["log", "plank", "stone", "stone_block", "brick", "glass"]
+
 # --- Материалы деталей зданий ------------------------------------------------
 # res — какой ресурс обязан быть в стоимости здания, если деталь из этого материала.
 const MATERIALS := {
-	"log": {"color": Color(0.46, 0.3, 0.17), "res": "log"},
-	"log_dark": {"color": Color(0.33, 0.21, 0.12), "res": "log"},
-	"plank": {"color": Color(0.74, 0.55, 0.34), "res": "plank"},
-	"plank_dark": {"color": Color(0.48, 0.32, 0.2), "res": "plank"},
-	"stone": {"color": Color(0.56, 0.56, 0.57), "res": "stone"},
-	"stone_block": {"color": Color(0.7, 0.68, 0.63), "res": "stone_block"},
-	"clay": {"color": Color(0.7, 0.44, 0.3), "res": "clay"},
-	"brick": {"color": Color(0.66, 0.3, 0.22), "res": "brick"},
-	"roof_tile": {"color": Color(0.58, 0.2, 0.15), "res": "brick"},
-	"glass": {"color": Color(0.62, 0.86, 0.96), "res": "glass"},
-	"iron": {"color": Color(0.27, 0.28, 0.31), "res": "iron_ingot"},
+	"log": {"color": Color(0.52, 0.34, 0.2), "res": "log"},
+	"log_dark": {"color": Color(0.38, 0.24, 0.14), "res": "log"},
+	"plank": {"color": Color(0.8, 0.55, 0.31), "res": "plank"},
+	"plank_dark": {"color": Color(0.56, 0.37, 0.22), "res": "plank"},
+	"stone": {"color": Color(0.56, 0.55, 0.54), "res": "stone"},
+	"stone_block": {"color": Color(0.6, 0.58, 0.58), "res": "stone_block"},
+	"slate": {"color": Color(0.46, 0.46, 0.49), "res": "stone_block"},
+	"clay": {"color": Color(0.72, 0.46, 0.32), "res": "clay"},
+	"brick": {"color": Color(0.68, 0.34, 0.25), "res": "brick"},
+	"roof_tile": {"color": Color(0.64, 0.26, 0.18), "res": "brick"},
+	"glass": {"color": Color(0.38, 0.58, 0.85), "res": "glass"},
+	"iron": {"color": Color(0.26, 0.27, 0.3), "res": "iron_ingot"},
 	"copper": {"color": Color(0.36, 0.66, 0.58), "res": "copper_ingot"},
-	"cloth": {"color": Color(0.94, 0.9, 0.82), "res": "cloth"},
-	"leather": {"color": Color(0.62, 0.43, 0.27), "res": "leather"},
-	"wax": {"color": Color(1.0, 0.92, 0.7), "res": "wax"},
+	"cloth": {"color": Color(0.95, 0.9, 0.8), "res": "cloth"},
+	"leather": {"color": Color(0.64, 0.45, 0.28), "res": "leather"},
+	"wax": {"color": Color(1.0, 0.93, 0.75), "res": "wax"},
 }
 
 # --- Объекты мира, которые можно добыть -------------------------------------
 # time — секунд на добычу (не больше MAX_ACTION_TIME), drops — что выпадает.
-# Объекты с time = 0 — просто декор (трава, цветы), их нельзя добыть.
+# Объекты с time = 0 — просто декор (трава, цветы, кусты), их нельзя добыть.
+# place: "land" (по умолчанию), "shallow" — мелководье у берега, "float" — на воде.
 const PROPS := {
-	"tree_oak": {"name": "Дуб", "kind": "tree", "time": 7.0, "drops": {"log": 5}, "radius": 1.6, "height": 6.5},
-	"tree_birch": {"name": "Берёза", "kind": "tree", "time": 4.0, "drops": {"log": 3}, "radius": 1.1, "height": 6.0},
-	"tree_pine": {"name": "Сосна", "kind": "tree", "time": 5.0, "drops": {"log": 4}, "radius": 1.3, "height": 7.0},
-	"tree_snowpine": {"name": "Ель в снегу", "kind": "tree", "time": 6.0, "drops": {"log": 4}, "radius": 1.3, "height": 6.5},
-	"tree_maple": {"name": "Клён", "kind": "tree", "time": 6.0, "drops": {"log": 4}, "radius": 1.5, "height": 6.0},
-	"tree_dead": {"name": "Сухое дерево", "kind": "tree", "time": 3.0, "drops": {"log": 2}, "radius": 0.8, "height": 4.0},
-	"rock": {"name": "Валун", "kind": "rock", "time": 6.0, "drops": {"stone": 4}, "radius": 1.2, "height": 1.4},
-	"clay": {"name": "Залежь глины", "kind": "mound", "time": 5.0, "drops": {"clay": 3}, "radius": 1.1, "height": 0.6, "max_height": 5.0},
-	"sand": {"name": "Песчаная куча", "kind": "mound", "time": 3.0, "drops": {"sand": 4}, "radius": 1.1, "height": 0.8},
-	"ore_coal": {"name": "Угольная жила", "kind": "rock", "time": 9.0, "drops": {"coal": 3}, "radius": 1.2, "height": 1.4},
-	"ore_copper": {"name": "Медная жила", "kind": "rock", "time": 12.0, "drops": {"copper_ore": 3}, "radius": 1.2, "height": 1.4},
-	"ore_iron": {"name": "Железная жила", "kind": "rock", "time": 15.0, "drops": {"iron_ore": 3}, "radius": 1.2, "height": 1.4},
+	"tree_oak": {"name": "Дуб", "kind": "tree", "time": 7.0, "drops": {"log": 5}, "radius": 1.7, "height": 7.0},
+	"tree_birch": {"name": "Берёза", "kind": "tree", "time": 4.0, "drops": {"log": 3}, "radius": 1.2, "height": 7.0},
+	"tree_pine": {"name": "Сосна", "kind": "tree", "time": 5.0, "drops": {"log": 4}, "radius": 1.4, "height": 7.6},
+	"tree_spruce": {"name": "Ель", "kind": "tree", "time": 5.0, "drops": {"log": 4}, "radius": 1.6, "height": 7.2},
+	"tree_snowpine": {"name": "Ель в снегу", "kind": "tree", "time": 6.0, "drops": {"log": 4}, "radius": 1.6, "height": 7.2},
+	"tree_maple": {"name": "Клён", "kind": "tree", "time": 6.0, "drops": {"log": 4}, "radius": 1.6, "height": 6.5},
+	"tree_dead": {"name": "Сухое дерево", "kind": "tree", "time": 3.0, "drops": {"log": 2}, "radius": 0.9, "height": 4.5},
+	"rock": {"name": "Валун", "kind": "rock", "time": 6.0, "drops": {"stone": 4}, "radius": 1.3, "height": 1.3},
+	"clay": {"name": "Залежь глины", "kind": "mound", "time": 5.0, "drops": {"clay": 3}, "radius": 1.2, "height": 0.6, "max_height": 5.0},
+	"sand": {"name": "Песчаная куча", "kind": "mound", "time": 3.0, "drops": {"sand": 4}, "radius": 1.2, "height": 0.7},
+	"ore_coal": {"name": "Угольная жила", "kind": "rock", "time": 9.0, "drops": {"coal": 3}, "radius": 1.3, "height": 1.4},
+	"ore_copper": {"name": "Медная жила", "kind": "rock", "time": 12.0, "drops": {"copper_ore": 3}, "radius": 1.3, "height": 1.4},
+	"ore_iron": {"name": "Железная жила", "kind": "rock", "time": 15.0, "drops": {"iron_ore": 3}, "radius": 1.3, "height": 1.4},
 	"bush": {"name": "Куст", "kind": "decor", "time": 0.0},
 	"grass": {"name": "Трава", "kind": "decor", "time": 0.0},
 	"flowers": {"name": "Цветы", "kind": "decor", "time": 0.0},
+	"reeds": {"name": "Камыш", "kind": "decor", "time": 0.0, "place": "shallow"},
+	"lily": {"name": "Кувшинки", "kind": "decor", "time": 0.0, "place": "float"},
 }
 
 # --- Рецепты мастерских ------------------------------------------------------
@@ -89,12 +97,16 @@ const RECIPES := {
 }
 
 # --- Здания ------------------------------------------------------------------
-# Внешний вид каждого здания описан в scripts/building/blueprints.gd.
+# Внешний вид каждого здания — модель models/buildings/<id>.glb
+# (её создаёт tools/export_models.gd из scripts/models/building_factory.gd).
+# place: "land" — только на суше или на настиле, "water" — только на воде,
+#        "bridge" — концы на берегах, середина над водой.
 const BUILDING_CATEGORIES := {
 	"production": "Мастерские",
 	"housing": "Жильё",
 	"special": "Особые",
 	"defense": "Оборона",
+	"water": "На воде",
 }
 
 const BUILDINGS := {
@@ -117,11 +129,11 @@ const BUILDINGS := {
 	"hut": {"name": "Хижина", "category": "housing", "time": 6.0,
 		"cost": {"log": 12}, "desc": "Простой сруб из брёвен."},
 	"wood_house": {"name": "Деревянный дом", "category": "housing", "time": 12.0,
-		"cost": {"plank": 16, "log": 6, "stone": 4}, "desc": "Дощатый дом на каменном основании."},
+		"cost": {"plank": 16, "log": 6, "stone": 4}, "desc": "Дощатый дом со ставнями на каменном цоколе."},
 	"stone_house": {"name": "Каменный дом", "category": "housing", "time": 18.0,
 		"cost": {"stone_block": 16, "plank": 8, "glass": 2}, "desc": "Крепкий дом из тёсаного камня."},
 	"brick_house": {"name": "Кирпичный дом", "category": "housing", "time": 20.0,
-		"cost": {"brick": 20, "stone_block": 4, "plank": 6, "glass": 4}, "desc": "Дом под черепичной крышей."},
+		"cost": {"brick": 20, "stone_block": 4, "plank": 6, "glass": 4}, "desc": "Двухэтажный дом под черепицей."},
 	"barn": {"name": "Амбар", "category": "housing", "time": 15.0,
 		"cost": {"plank": 18, "log": 8, "stone": 4}, "desc": "Большой амбар для запасов."},
 	"tent": {"name": "Шатёр", "category": "housing", "time": 6.0,
@@ -130,22 +142,63 @@ const BUILDINGS := {
 	"well": {"name": "Колодец", "category": "special", "time": 6.0,
 		"cost": {"stone": 8, "plank": 4, "iron_ingot": 1}, "desc": "Каменный колодец с воротом."},
 	"market": {"name": "Торговая лавка", "category": "special", "time": 8.0,
-		"cost": {"plank": 8, "log": 2, "cloth": 3}, "desc": "Прилавок под тканевым навесом."},
+		"cost": {"plank": 8, "log": 2, "cloth": 3}, "desc": "Прилавок под полосатым навесом."},
 	"chapel": {"name": "Деревянная часовня", "category": "special", "time": 20.0,
-		"cost": {"log": 16, "plank": 20, "wax": 2}, "desc": "Целиком деревянная часовня."},
+		"cost": {"log": 16, "plank": 20, "wax": 2}, "desc": "Целиком деревянная часовня со звонницей."},
 	"church": {"name": "Каменная церковь", "category": "special", "time": 30.0,
 		"cost": {"stone_block": 30, "plank": 12, "glass": 8, "copper_ingot": 4, "wax": 4},
-		"desc": "Каменный храм с медным куполом и витражами."},
+		"desc": "Храм с медными куполами и витражами."},
 	"windmill": {"name": "Ветряная мельница", "category": "special", "time": 25.0,
-		"cost": {"stone_block": 10, "plank": 20, "log": 4, "cloth": 6}, "desc": "Мельница с тканевыми крыльями."},
+		"cost": {"stone_block": 12, "plank": 20, "log": 4, "cloth": 6, "glass": 2},
+		"desc": "Каменная мельница. Крылья крутятся быстрее на ветру."},
 	# Оборона
 	"cannon": {"name": "Пушка", "category": "defense", "time": 12.0,
 		"cost": {"iron_ingot": 6, "plank": 4, "log": 2}, "desc": "Чугунная пушка на лафете."},
 	"watchtower": {"name": "Сторожевая башня", "category": "defense", "time": 20.0,
-		"cost": {"stone_block": 20, "plank": 8, "log": 6}, "desc": "Каменная башня с деревянным верхом."},
+		"cost": {"stone_block": 20, "plank": 8, "log": 6}, "desc": "Каменная башня с деревянной площадкой."},
 	"palisade": {"name": "Частокол", "category": "defense", "time": 2.0,
 		"cost": {"log": 3}, "desc": "Секция забора из заострённых брёвен."},
+	"keep": {"name": "Крепость", "category": "defense", "time": 30.0,
+		"cost": {"stone_block": 40, "plank": 6, "glass": 6}, "desc": "Двухэтажная каменная крепость с зубцами."},
+	# На воде
+	"platform": {"name": "Деревянный настил", "category": "water", "time": 4.0, "place": "water",
+		"cost": {"plank": 6, "log": 4}, "desc": "Блок 4×4 м на сваях. На нём можно строить, как на суше."},
+	"bridge_wood": {"name": "Деревянный мост", "category": "water", "time": 10.0, "place": "bridge",
+		"cost": {"plank": 14, "log": 8}, "desc": "Мост длиной 14 м: концы ставятся на берега."},
+	"bridge_stone": {"name": "Каменный мост", "category": "water", "time": 18.0, "place": "bridge",
+		"cost": {"stone_block": 24, "stone": 8}, "desc": "Арочный каменный мост длиной 14 м."},
 }
+
+# --- Погода и времена года ------------------------------------------------------
+# Значения 0..1: облака, серость неба, ветер, дождь, снег, туман, гроза.
+# Связки задаются прямо здесь: дождь всегда с тучами и ветром, гроза — ливень
+# с молниями, метель — снег с ураганным ветром и туманом.
+const SEASONS := [
+	{"id": "spring", "name": "Весна"},
+	{"id": "summer", "name": "Лето"},
+	{"id": "autumn", "name": "Осень"},
+	{"id": "winter", "name": "Зима"},
+]
+
+const WEATHERS := {
+	"clear": {"name": "Ясно", "clouds": 0.12, "overcast": 0.0, "wind": 0.18, "rain": 0.0, "snow": 0.0, "fog": 0.0, "storm": 0.0},
+	"cloudy": {"name": "Облачно", "clouds": 0.55, "overcast": 0.15, "wind": 0.32, "rain": 0.0, "snow": 0.0, "fog": 0.0, "storm": 0.0},
+	"overcast": {"name": "Пасмурно", "clouds": 0.9, "overcast": 0.6, "wind": 0.3, "rain": 0.0, "snow": 0.0, "fog": 0.15, "storm": 0.0},
+	"windy": {"name": "Ветрено", "clouds": 0.4, "overcast": 0.1, "wind": 0.92, "rain": 0.0, "snow": 0.0, "fog": 0.0, "storm": 0.0},
+	"rain": {"name": "Дождь", "clouds": 0.88, "overcast": 0.65, "wind": 0.4, "rain": 0.65, "snow": 0.0, "fog": 0.25, "storm": 0.0},
+	"storm": {"name": "Гроза", "clouds": 1.0, "overcast": 0.92, "wind": 0.95, "rain": 1.0, "snow": 0.0, "fog": 0.35, "storm": 1.0},
+	"snow": {"name": "Снегопад", "clouds": 0.85, "overcast": 0.55, "wind": 0.25, "rain": 0.0, "snow": 0.7, "fog": 0.3, "storm": 0.0},
+	"blizzard": {"name": "Метель", "clouds": 1.0, "overcast": 0.8, "wind": 1.0, "rain": 0.0, "snow": 1.0, "fog": 0.65, "storm": 0.0},
+	"fog": {"name": "Туман", "clouds": 0.5, "overcast": 0.45, "wind": 0.05, "rain": 0.0, "snow": 0.0, "fog": 1.0, "storm": 0.0},
+}
+
+## Насколько часто бывает погода в каждом сезоне (режим «Авто»).
+const SEASON_WEIGHTS := [
+	{"clear": 3.0, "cloudy": 3.0, "rain": 3.0, "windy": 1.0, "fog": 1.5, "storm": 0.8, "overcast": 1.0},
+	{"clear": 5.0, "cloudy": 2.5, "storm": 1.5, "rain": 1.0, "windy": 1.0},
+	{"cloudy": 3.0, "overcast": 2.0, "rain": 3.0, "windy": 2.0, "fog": 2.0, "storm": 0.5, "clear": 1.5},
+	{"clear": 2.0, "overcast": 2.0, "snow": 4.0, "blizzard": 1.5, "fog": 1.0, "cloudy": 1.0},
+]
 
 # --- Сундуки -----------------------------------------------------------------
 # Животные ресурсы появляются только здесь. Чем дальше от старта, тем чаще

@@ -21,27 +21,39 @@ func setup(chest_rarity: String, chunk_coord: Vector2i) -> void:
 	coord = chunk_coord
 	var def: Dictionary = GameData.CHESTS[rarity]
 	var trim: Color = def["color"]
-	var wood := Color(0.55, 0.35, 0.2)
+	var wood := Color(0.6, 0.38, 0.21)
 
-	var body := MeshKit.new()
-	body.add_primitive(MeshKit.box(Vector3(1.0, 0.55, 0.7)), MeshKit.at(Vector3(0, 0.28, 0)), wood)
-	for x in [-0.36, 0.36]:
-		body.add_primitive(MeshKit.box(Vector3(0.1, 0.57, 0.72)), MeshKit.at(Vector3(x, 0.28, 0)), trim)
+	var body := Geo.new()
+	body.with_uv2 = false
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(rarity)
+	# Корпус из досок и металлические полосы цвета редкости.
+	for i in 4:
+		body.box("plank", Vector3(0, 0.08 + i * 0.13, 0), Vector3(1.0, 0.12, 0.66), wood.lightened(rng.randf_range(-0.06, 0.06)), 0.02)
+	body.box("plank", Vector3(0, 0.3, 0), Vector3(0.94, 0.56, 0.6), wood.darkened(0.35))
+	for x: float in [-0.36, 0.36]:
+		body.box("iron", Vector3(x, 0.28, 0), Vector3(0.09, 0.58, 0.7), trim, 0.02)
+	for x: float in [-0.5, 0.5]:
+		body.box("iron", Vector3(x, 0.28, 0), Vector3(0.06, 0.6, 0.7), trim.darkened(0.15), 0.015)
 	var body_mesh := MeshInstance3D.new()
-	body_mesh.mesh = body.build()
+	body_mesh.mesh = body.build_mesh()
+	ModelLibrary.apply_building_materials(body_mesh)
 	add_child(body_mesh)
 
-	# Крышка вращается вокруг заднего верхнего ребра.
+	# Полукруглая крышка вращается вокруг заднего верхнего ребра.
 	_lid = Node3D.new()
-	_lid.position = Vector3(0, 0.55, -0.35)
+	_lid.position = Vector3(0, 0.56, -0.33)
 	add_child(_lid)
-	var lid := MeshKit.new()
-	lid.add_primitive(MeshKit.box(Vector3(1.02, 0.24, 0.72)), MeshKit.at(Vector3(0, 0.12, 0.35)), wood.lightened(0.08))
-	for x in [-0.36, 0.36]:
-		lid.add_primitive(MeshKit.box(Vector3(0.1, 0.26, 0.74)), MeshKit.at(Vector3(x, 0.12, 0.35)), trim)
-	lid.add_primitive(MeshKit.box(Vector3(0.16, 0.2, 0.06)), MeshKit.at(Vector3(0, 0.0, 0.73)), trim.darkened(0.2))
+	var lid := Geo.new()
+	lid.with_uv2 = false
+	var arc := Basis(Vector3.BACK, -PI * 0.5)
+	lid.cylinder("plank", Vector3(-0.51, 0.0, 0.33), 0.33, 0.33, 1.02, 10, wood.lightened(0.06), true, true, 0.0, arc)
+	for x: float in [-0.36, 0.36]:
+		lid.cylinder("iron", Vector3(x - 0.05, 0.0, 0.33), 0.35, 0.35, 0.1, 10, trim, true, true, 0.0, arc)
+	lid.box("iron", Vector3(0, -0.02, 0.68), Vector3(0.18, 0.22, 0.06), trim.darkened(0.25), 0.02)
 	var lid_mesh := MeshInstance3D.new()
-	lid_mesh.mesh = lid.build()
+	lid_mesh.mesh = lid.build_mesh()
+	ModelLibrary.apply_building_materials(lid_mesh)
 	_lid.add_child(lid_mesh)
 
 	_light = OmniLight3D.new()
