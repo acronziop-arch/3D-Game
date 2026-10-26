@@ -18,6 +18,8 @@ uniform float emission_day = 0.0;
 uniform float emission_night = 0.0;
 uniform float flutter = 0.0;
 uniform float glass = 0.0;
+// 1 — за проёмом (стекло или открытое окно) видна комната.
+uniform float interior = 0.0;
 uniform float build_progress = 1.0;
 
 varying vec3 world_pos;
@@ -60,6 +62,81 @@ float glass_drops(vec2 plane, out vec2 spark) {
 	return smoothstep(0.08 + h * 0.2, 0.03, d) * step(0.4, h);
 }
 
+// Комната за окном без лишней геометрии (interior mapping): луч взгляда продолжается
+// внутрь здания и упирается в пол, потолок, стены или стол воображаемой комнаты.
+// uv — точка на стекле (0..1), rd — луч в осях окна (x вдоль стены, y вверх, z внутрь),
+// seed — своё у каждого окна: цвет стен, картина, стол.
+vec3 room_color(vec2 uv, vec3 rd, float seed) {
+	const float D = 0.95;
+	// Окно — середина передней стены: комната шире и выше проёма.
+	vec3 p = vec3(0.2 + uv.x * 0.6, 0.16 + uv.y * 0.62, 0.0);
+	rd.z = max(rd.z, 0.08);
+	vec3 safe = vec3(abs(rd.x) < 1e-4 ? 1e-4 : rd.x, abs(rd.y) < 1e-4 ? 1e-4 : rd.y, rd.z);
+	float tx = ((safe.x > 0.0 ? 1.0 : 0.0) - p.x) / safe.x;
+	float ty = ((safe.y > 0.0 ? 1.0 : 0.0) - p.y) / safe.y;
+	float tz = D / safe.z;
+	float t = min(tx, min(ty, tz));
+	vec3 hp = p + rd * t;
+	float h1 = fract(seed * 7.13);
+	float h2 = fract(seed * 13.7);
+	vec3 plaster = mix(vec3(0.86, 0.78, 0.64), vec3(0.74, 0.62, 0.5), h1);
+	plaster = mix(plaster, vec3(0.66, 0.74, 0.7), step(0.82, h2) * 0.6);
+	vec3 wood = vec3(0.5, 0.33, 0.2);
+	vec3 col;
+	float shade;
+	if (t == ty) {
+		if (rd.y < 0.0) {
+			// Дощатый пол с половиком.
+			float plank = smoothstep(0.02, 0.06, abs(fract(hp.x * 7.0) - 0.5) * 2.0);
+			col = wood * (0.8 + 0.2 * plank) * (0.92 + 0.08 * w_hash(vec2(floor(hp.x * 7.0), 2.0)));
+			vec2 rug = abs(hp.xz - vec2(0.5, D * 0.55)) - vec2(0.24, 0.22);
+			if (max(rug.x, rug.y) < 0.0) {
+				col = mix(vec3(0.62, 0.22, 0.18), vec3(0.78, 0.6, 0.3), step(max(rug.x, rug.y), -0.05) * step(-0.07, max(rug.x, rug.y)));
+			}
+			shade = 0.85;
+		} else {
+			// Потолок с балками.
+			float beam = step(0.72, fract(hp.z * 3.2));
+			col = mix(plaster * 0.9, wood * 0.8, beam);
+			shade = 0.55;
+		}
+	} else if (t == tx) {
+		// Боковая стена: снизу деревянная панель.
+		col = mix(wood * 0.95, plaster, step(0.3, hp.y));
+		shade = 0.72;
+	} else {
+		// Задняя стена: картина или полка, у пола — шкаф.
+		col = mix(wood * 0.95, plaster, step(0.28, hp.y));
+		vec2 pic = abs(hp.xy - vec2(0.5 + (h2 - 0.5) * 0.3, 0.6)) - vec2(0.13, 0.1);
+		if (max(pic.x, pic.y) < 0.0) {
+			vec3 art = mix(vec3(0.3, 0.5, 0.35), vec3(0.35, 0.45, 0.7), h1) * (0.8 + 0.3 * step(0.5, hp.y - 0.55 + hp.x * 0.3));
+			col = max(pic.x, pic.y) > -0.025 ? vec3(0.42, 0.28, 0.12) : art;
+		}
+		vec2 cab = abs(hp.xy - vec2(h1 < 0.5 ? 0.14 : 0.86, 0.26)) - vec2(0.1, 0.26);
+		if (max(cab.x, cab.y) < 0.0) {
+			col = wood * (0.7 + 0.15 * step(0.3, fract(hp.y * 4.0)));
+		}
+		shade = 0.95;
+	}
+	// Стол посреди комнаты (луч против коробки).
+	vec3 bmin = vec3(0.34, 0.0, D * 0.42);
+	vec3 bmax = vec3(0.66, 0.3, D * 0.7);
+	vec3 t0 = (bmin - p) / safe;
+	vec3 t1 = (bmax - p) / safe;
+	vec3 tmin = min(t0, t1);
+	vec3 tmax = max(t0, t1);
+	float tn = max(max(tmin.x, tmin.y), tmin.z);
+	float tf = min(min(tmax.x, tmax.y), tmax.z);
+	if (tn < tf && tn > 0.0 && tn < t) {
+		bool top = tn == tmin.y;
+		col = wood * (top ? 1.05 : 0.7);
+		shade = top ? 0.9 : 0.7;
+		hp = p + rd * tn;
+	}
+	// Вглубь комнаты темнее.
+	return col * shade * mix(1.0, 0.6, clamp(hp.z / D, 0.0, 1.0));
+}
+
 void fragment() {
 	if (clip_for_reflection(CAMERA_POSITION_WORLD, world_pos)) {
 		discard;
@@ -75,6 +152,21 @@ void fragment() {
 	vec3 side = normalize(cross(vec3(0.0, 1.0, 0.0), n) + vec3(0.0001, 0.0, 0.0001));
 	vec2 plane = vec2(dot(world_pos, side), world_pos.y);
 	float wet_k = porosity;
+	// Комната за проёмом (на высоком качестве): только на лицевой стороне стекла.
+	bool has_room = interior > 0.5 && interiors > 0.5 && (UV2.x > 0.0001 || UV2.y > 0.0001) && abs(n.y) < 0.3;
+	vec3 room = vec3(0.0);
+	if (has_room) {
+		// Старое стекло чуть волнистое — комната за ним немного «плывёт».
+		vec2 wobble = (vec2(w_noise(plane * 6.0), w_noise(plane * 6.0 + 7.3)) - 0.5) * 0.035 * glass;
+		vec3 rd = -v;
+		vec3 rt = vec3(dot(rd, side), rd.y, dot(rd, -n));
+		float seed = fract(dot(COLOR.rgb, vec3(17.31, 31.7, 7.93)) + dot(floor(MODEL_MATRIX[3].xz), vec2(0.37, 0.71)));
+		room = room_color(clamp(UV2 + wobble, 0.0, 1.0), rt, seed);
+		// Днём в комнате сумрачно; вечером горит тёплый свет.
+		vec3 lamp = vec3(1.0, 0.72, 0.42);
+		room *= mix(0.92, 0.16, night);
+		emit = room * lamp * night * 4.2;
+	}
 
 	if (glass > 0.5) {
 		// Небо в стекле: светлее к горизонту, ночью тёмно-синее.
@@ -85,7 +177,12 @@ void fragment() {
 		// Полоса блика скользит по стеклу, когда камера движется.
 		float band = dot(plane, vec2(0.7, 0.55)) * 1.7 + dot(v, side) * 2.4;
 		float gleam = smoothstep(0.86, 1.0, sin(band)) * (1.0 - night * 0.75);
-		c = mix(c * 0.5, sky, 0.38 + fres * 0.5) + vec3(gleam) * 0.5;
+		if (has_room) {
+			// Сквозь стекло видна комната, поверх — отражение неба (сильнее под острым углом).
+			c = mix(room, sky, 0.1 + fres * 0.55) + vec3(gleam) * 0.45;
+		} else {
+			c = mix(c * 0.5, sky, 0.38 + fres * 0.5) + vec3(gleam) * 0.5;
+		}
 		rough = 0.04;
 		spec = 1.0;
 		float wet_glass = max(rain, wetness * 0.5);
@@ -122,19 +219,39 @@ void fragment() {
 			emit *= 1.0 - m * 0.4;
 		}
 		wet_k = 0.0;
+	} else if (has_room) {
+		// Открытое окно без стекла — комната видна прямо.
+		c = room;
+		rough = 0.9;
+		wet_k = 0.0;
 	} else if (porosity > 0.0) {
-		// Струйки дождя на стенах: тёмные мокрые дорожки и бегущие по ним капли.
+		// Дождь на стенах: мокрые дорожки, по ним сбегают капли, а на шершавой
+		// поверхности висят бусины воды с бликами.
 		float vertical = 1.0 - smoothstep(0.35, 0.65, abs(n.y));
 		float flow = max(rain, wetness * 0.45) * vertical;
 		if (flow > 0.01) {
 			float u = plane.x * 6.0;
 			float h = w_hash(vec2(floor(u), 9.1));
-			float line = (1.0 - smoothstep(0.04, 0.15, abs(fract(u) - 0.5))) * step(0.5, h);
-			float runs = smoothstep(0.82, 1.0, fract(plane.y * 0.9 + TIME * (0.35 + h * 0.6) + h * 13.0));
-			float streak = clamp(line * (0.45 + runs) * flow, 0.0, 1.0);
-			c *= 1.0 - streak * 0.3;
-			rough = mix(rough, 0.12, streak);
-			spec = mix(spec, 0.9, streak * 0.6);
+			float line = (1.0 - smoothstep(0.04, 0.15, abs(fract(u) - 0.5))) * step(0.45, h);
+			float runs = smoothstep(0.8, 1.0, fract(plane.y * 0.9 + TIME * (0.35 + h * 0.6) + h * 13.0));
+			float streak = clamp(line * (0.5 + runs * 1.2) * flow, 0.0, 1.0);
+			c *= 1.0 - streak * 0.35;
+			rough = mix(rough, 0.1, streak);
+			spec = mix(spec, 1.0, streak * 0.7);
+			vec2 spark;
+			float bead = glass_drops(plane * 0.7, spark) * flow;
+			c = mix(c, c * 0.6, bead * 0.7);
+			c += vec3(smoothstep(0.07, 0.0, length(spark))) * bead * 0.55;
+			rough = mix(rough, 0.08, bead);
+			spec = mix(spec, 1.0, bead);
+		}
+		// На крышах и карнизах — всплески падающих капель.
+		float up = smoothstep(0.3, 0.6, n.y);
+		if (rain > 0.05 && up > 0.0) {
+			vec2 q = world_pos.xz * 3.0 + n.xz * 2.0;
+			float splash = length(rain_drops(q, TIME * 1.3) + rain_drops(q + 5.3, TIME * 1.1 + 0.4));
+			c += vec3(0.5) * clamp(splash, 0.0, 1.0) * rain * up * 0.45;
+			rough = mix(rough, 0.15, rain * up * 0.6);
 		}
 	}
 	c = apply_wet(c, wetness * wet_k, rough);

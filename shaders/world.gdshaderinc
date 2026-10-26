@@ -14,6 +14,8 @@ global uniform float rain;
 global uniform float water_level;
 // Мороз: зима и снег. Стёкла покрываются изморозью.
 global uniform float frost;
+// 1 — за окнами видны комнаты (высокое качество графики), 0 — простое стекло.
+global uniform float interiors;
 // Лёд на озёрах (0..1): копится зимой и сходит весной.
 global uniform float ice;
 // Сила снегопада прямо сейчас.

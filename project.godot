@@ -107,6 +107,10 @@ frost={
 "type": "float",
 "value": 0.0
 }
+interiors={
+"type": "float",
+"value": 1.0
+}
 ice={
 "type": "float",
 "value": 0.0

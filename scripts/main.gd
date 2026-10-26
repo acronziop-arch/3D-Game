@@ -188,6 +188,7 @@ func _on_setting_changed(key: String) -> void:
 			_apply_graphics()
 		"quality":
 			_perf_grace = 10.0
+			_apply_graphics()
 
 
 ## Разрешение 3D-картинки и качество теней.
@@ -199,6 +200,8 @@ func _apply_graphics() -> void:
 	var forward_plus := RenderingServer.get_current_rendering_method() == "forward_plus"
 	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR if render_scale < 0.99 and forward_plus and not Platform.is_mobile() \
 		else Viewport.SCALING_3D_MODE_BILINEAR
+	# Комнаты за окнами — только на высоком и наивысшем качестве.
+	RenderingServer.global_shader_parameter_set("interiors", 1.0 if Settings.quality_level() >= 2 else 0.0)
 	# Тени: размер карты теней, мягкость краёв и дальность.
 	var q: String = Settings.get_value("shadow_quality")
 	sun.shadow_enabled = q != "off"

@@ -61,6 +61,8 @@ const MATERIALS := {
 	# Земля и урожай — тоже не ресурсы: их не нужно добывать.
 	"soil": {"color": Color(0.42, 0.3, 0.2), "res": ""},
 	"crop": {"color": Color(0.4, 0.62, 0.24), "res": ""},
+	"hay": {"color": Color(0.8, 0.66, 0.38), "res": ""},
+	"water": {"color": Color(0.32, 0.5, 0.62), "res": ""},
 }
 
 # --- Объекты мира, которые можно добыть -------------------------------------
@@ -131,6 +133,7 @@ const BUILDING_CATEGORIES := {
 	"water": "На воде",
 	"yard": "Двор",
 	"garden": "Сад",
+	"decor": "Декор",
 }
 
 const BUILDINGS := {
@@ -221,6 +224,48 @@ const BUILDINGS := {
 	"vegetable_garden": {"name": "Огород", "category": "garden", "time": 6.0, "ground_only": true,
 		"cost": {"plank": 6, "log": 2}, "desc": "Три гряды за штакетником. Культуру можно выбрать и сменить.",
 		"crops": [Rect2(-2.45, -2.3, 1.1, 4.4), Rect2(-0.55, -2.3, 1.1, 4.4), Rect2(1.35, -2.3, 1.1, 4.4)], "crop_top": 0.17},
+	# Поселение: дома, ремесленные и общественные здания.
+	"tavern": {"name": "Таверна", "category": "special", "time": 22.0,
+		"cost": {"stone": 14, "plank": 26, "log": 8, "glass": 4}, "desc": "Двухэтажная таверна с вывеской и бочками у входа."},
+	"bakery": {"name": "Пекарня", "category": "special", "time": 18.0,
+		"cost": {"stone_block": 16, "plank": 10, "brick": 8, "log": 4, "glass": 2}, "desc": "Каменная пекарня с хлебной печью-куполом."},
+	"stable": {"name": "Конюшня", "category": "housing", "time": 16.0,
+		"cost": {"plank": 22, "log": 10, "stone": 4}, "desc": "Длинная конюшня на три стойла, с сеновалом и поилкой."},
+	"town_hall": {"name": "Ратуша", "category": "special", "time": 30.0,
+		"cost": {"stone_block": 28, "plank": 22, "brick": 12, "glass": 8}, "desc": "Сердце поселения: зал на два этажа и башня с часами."},
+	"storehouse": {"name": "Склад", "category": "production", "time": 14.0,
+		"cost": {"stone": 8, "plank": 22, "log": 6}, "desc": "Амбар на каменных столбиках с пандусом — для припасов."},
+	"dovecote": {"name": "Голубятня", "category": "special", "time": 14.0,
+		"cost": {"stone": 16, "plank": 8}, "desc": "Круглая каменная башенка с летками для голубей."},
+	"bathhouse": {"name": "Баня", "category": "housing", "time": 12.0,
+		"cost": {"log": 14, "plank": 4, "stone": 4}, "desc": "Бревенчатая баня с печной трубой, лавкой и кадушкой."},
+	"manor": {"name": "Усадьба", "category": "housing", "time": 30.0,
+		"cost": {"stone_block": 24, "brick": 20, "plank": 14, "glass": 10}, "desc": "Большой дом на два этажа с крыльцом и слуховыми окнами."},
+	"guardhouse": {"name": "Караульня", "category": "defense", "time": 18.0,
+		"cost": {"stone_block": 20, "plank": 6, "log": 2, "stone": 2}, "desc": "Каменный пост стражи с бойницами и дозорной будкой."},
+	"gatehouse": {"name": "Надвратная башня", "category": "defense", "time": 28.0,
+		"cost": {"stone_block": 30, "plank": 10, "log": 4, "stone": 4}, "desc": "Две башни и проезд с воротами — вход в поселение."},
+	# Декор двора: мелочи для уюта, ставятся сразу и вплотную друг к другу.
+	"haystack": {"name": "Стог сена", "category": "decor", "time": 1.0, "light": true, "group": "decor",
+		"cost": {"log": 1}, "desc": "Высокий стог на жерди."},
+	"woodpile": {"name": "Поленница", "category": "decor", "time": 1.5, "light": true, "group": "decor",
+		"cost": {"log": 6, "plank": 2}, "desc": "Дрова под навесом."},
+	"barrels": {"name": "Бочки", "category": "decor", "time": 1.0, "light": true, "group": "decor",
+		"cost": {"plank": 3}, "desc": "Три дубовые бочки."},
+	"crates": {"name": "Ящики", "category": "decor", "time": 1.0, "light": true, "group": "decor",
+		"cost": {"plank": 3}, "desc": "Штабель ящиков с яблоками."},
+	"cart": {"name": "Телега", "category": "decor", "time": 2.0, "light": true, "group": "decor",
+		"cost": {"plank": 6, "log": 2}, "desc": "Телега с сеном."},
+	"scarecrow": {"name": "Пугало", "category": "decor", "time": 1.0, "light": true, "group": "decor",
+		"cost": {"log": 2, "plank": 1}, "desc": "Пугало в шляпе — сторож огорода."},
+	"beehives": {"name": "Ульи", "category": "decor", "time": 1.5, "light": true, "group": "decor",
+		"cost": {"plank": 3}, "desc": "Соломенные ульи на скамье."},
+	"trough": {"name": "Поилка", "category": "decor", "time": 1.0, "light": true, "group": "decor",
+		"cost": {"log": 2, "plank": 3}, "desc": "Корыто с водой и бочка рядом."},
+	"bench": {"name": "Скамейка", "category": "decor", "time": 0.5, "light": true, "group": "decor",
+		"cost": {"plank": 2}, "desc": "Скамейка со спинкой."},
+	"signpost": {"name": "Указатель", "category": "decor", "time": 0.5, "light": true, "group": "decor",
+		"cost": {"log": 1, "plank": 2, "stone": 1}, "desc": "Столб со стрелками-указателями."},
 	# Саженец: ставится как постройка, а вырастает настоящим деревом.
 	"apple_tree": {"name": "Яблоня", "category": "garden", "time": 0.0, "plant": "tree_apple",
 		"cost": {}, "desc": "Саженец яблони. Сразу ставится и потихоньку вырастает."},

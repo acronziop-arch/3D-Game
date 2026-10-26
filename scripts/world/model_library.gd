@@ -5,9 +5,9 @@ extends RefCounted
 ## на лету тем же кодом, что и в tools/export_models.gd.
 
 const BUILDING_MATERIALS := {
-	"glass": {"roughness_base": 0.06, "specular_base": 0.8, "porosity": 0.0, "glass": 1.0,
+	"glass": {"roughness_base": 0.06, "specular_base": 0.8, "porosity": 0.0, "glass": 1.0, "interior": 1.0,
 		"emission_color": Color(1.0, 0.72, 0.38), "emission_night": 1.8},
-	"opening": {"roughness_base": 0.95, "specular_base": 0.1, "porosity": 0.0,
+	"opening": {"roughness_base": 0.95, "specular_base": 0.1, "porosity": 0.0, "interior": 1.0,
 		"emission_color": Color(1.0, 0.66, 0.32), "emission_night": 0.9},
 	"wax": {"roughness_base": 0.6, "emission_color": Color(1.0, 0.78, 0.45), "emission_day": 0.35, "emission_night": 2.4},
 	"iron": {"roughness_base": 0.42, "metallic_base": 0.6, "porosity": 0.3},
@@ -16,6 +16,8 @@ const BUILDING_MATERIALS := {
 	"leather": {"roughness_base": 0.8, "flutter": 0.4},
 	"slate": {"roughness_base": 0.7},
 	"roof_tile": {"roughness_base": 0.75},
+	"hay": {"roughness_base": 0.95, "specular_base": 0.25},
+	"water": {"roughness_base": 0.04, "specular_base": 0.9, "porosity": 0.0},
 }
 
 const GD := preload("res://scripts/autoload/game_data.gd")
