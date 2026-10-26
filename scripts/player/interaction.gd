@@ -273,7 +273,7 @@ func tree_species_name() -> String:
 ## Ставит здание на место призрака (кнопка «Построить» на телефоне, ЛКМ на ПК).
 func confirm_build() -> void:
 	if building_system.selected_id == "":
-		message.emit("Выберите здание в меню снизу")
+		message.emit("Выберите здание в меню стройки")
 		return
 	var was_moving := building_system.moving != null
 	var reason := building_system.try_place()
@@ -493,7 +493,7 @@ func touch_tap(screen: Vector2) -> void:
 			Platform.haptic(0.25)
 		Tool.BUILD:
 			if building_system.selected_id == "":
-				message.emit("Выберите здание в меню снизу")
+				message.emit("Выберите здание в меню стройки")
 			elif building_system.is_smooth_path():
 				message.emit("Ведите пальцем по земле — дорожка ляжет следом")
 			elif building_system.is_paintable() and ground != null:
@@ -683,7 +683,7 @@ func _process(delta: float) -> void:
 				_extend_smooth_path(_ground)
 			var id := building_system.selected_id
 			if id == "":
-				text = "Выберите здание в меню снизу"
+				text = "Выберите здание в меню стройки"
 			elif building_system.moving:
 				text = "Переносим: %s" % GameData.BUILDINGS[id]["name"]
 				if not building_system.is_valid and building_system.invalid_reason != "":
@@ -706,8 +706,8 @@ func _process(delta: float) -> void:
 					text += "\nНажмите, куда положить плитку, или ведите пальцем" if touch else "\nЛКМ — положить плитку, зажать и вести — несколько подряд"
 			else:
 				var def: Dictionary = GameData.BUILDINGS[id]
-				var time_text := "сразу" if GameMode.is_creative() else "%d с" % def["time"]
-				text = "%s · %s · %s" % [def["name"], time_text, GameData.cost_text(def["cost"])]
+				var time_text := "сразу" if GameMode.is_creative() or def["time"] <= 0.0 else "%d с" % def["time"]
+				text = "%s · %s · %s" % [def["name"], time_text, "бесплатно" if def["cost"].is_empty() else GameData.cost_text(def["cost"])]
 				if not building_system.is_valid and building_system.invalid_reason != "":
 					text += "\n" + building_system.invalid_reason
 				elif touch:

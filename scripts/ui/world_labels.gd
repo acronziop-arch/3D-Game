@@ -8,6 +8,10 @@ extends Control
 
 static var instance: WorldLabels
 
+## Где плашкам можно стоять: под верхней строкой и над нижней панелью
+## (задаёт HUD). Пустой — весь экран.
+var safe_rect := Rect2()
+
 var _tracked: Array[Dictionary] = []
 var _floating: Array[Dictionary] = []
 
@@ -95,6 +99,7 @@ func _process(delta: float) -> void:
 	if cam == null:
 		return
 	var view := get_viewport_rect().size
+	var area := safe_rect if safe_rect.size.x > 0.0 and safe_rect.size.y > 0.0 else Rect2(Vector2.ZERO, view)
 	for i in range(_tracked.size() - 1, -1, -1):
 		var e: Dictionary = _tracked[i]
 		var panel: PanelContainer = e["panel"]
@@ -105,7 +110,7 @@ func _process(delta: float) -> void:
 			if not cam.is_position_behind(p) and cam.global_position.distance_to(p) < e["far"]:
 				var sp := cam.unproject_position(p)
 				panel.reset_size()
-				panel.position = (sp - panel.size * Vector2(0.5, 1.0)).clamp(Vector2.ZERO, view - panel.size)
+				panel.position = (sp - panel.size * Vector2(0.5, 1.0)).clamp(area.position, (area.end - panel.size).max(area.position))
 				shown = true
 		var target := 1.0 if alive and shown else 0.0
 		e["alpha"] = move_toward(e["alpha"], target, delta * 5.0)

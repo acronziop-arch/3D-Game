@@ -25,6 +25,9 @@ var seed_value := 0.0
 var sway_height := 0.0
 ## Записывать ли UV2 (тип и зерно). Зданиям и рыбам не нужно — файлы меньше.
 var with_uv2 := true
+## Размер стекла окна: пока не ноль, UV2 = координаты точки внутри стекла 0..1
+## (от нижнего левого угла) — по ним шейдер растит изморозь от рам.
+var pane := Vector2.ZERO
 ## Пометка деталей: геометрия уходит в отдельную поверхность «материал__пометка».
 ## Так двери и окна («opening») можно выделить другим оттенком в превью стройки.
 var tag := ""
@@ -73,6 +76,7 @@ func _surface(mat: String) -> Dictionary:
 ## Треугольник в локальных координатах (с учётом xform). ref — желаемое направление
 ## нормали: по нему исправляется порядок вершин (в Godot лицевая сторона — по часовой).
 func tri(mat: String, a: Vector3, b: Vector3, c: Vector3, color: Color, ref := Vector3.ZERO) -> void:
+	var local := [a, b, c]
 	a = xform * a
 	b = xform * b
 	c = xform * c
@@ -87,19 +91,26 @@ func tri(mat: String, a: Vector3, b: Vector3, c: Vector3, color: Color, ref := V
 		b = c
 		c = t
 		normal = -normal
+		local = [local[0], local[2], local[1]]
 	begin()
 	var s := _surface(mat)
 	var key := mat if tag == "" else "%s__%s" % [mat, tag]
 	var start: int = s["v"].size()
-	for p in [a, b, c]:
-		var v: Vector3 = p
+	if pane != Vector2.ZERO:
+		s["pane"] = true
+	for i in 3:
+		var v: Vector3 = [a, b, c][i]
 		s["v"].append(v)
 		s["n"].append(normal)
 		var alpha := 0.0
 		if sway_height > 0.0:
 			alpha = pow(clampf(v.y / sway_height, 0.0, 1.0), 1.6)
 		s["c"].append(Color(color.r, color.g, color.b, alpha))
-		s["uv2"].append(Vector2(kind, seed_value))
+		if pane != Vector2.ZERO:
+			var lp: Vector3 = local[i]
+			s["uv2"].append(Vector2(lp.x / pane.x + 0.5, lp.y / pane.y + 0.5))
+		else:
+			s["uv2"].append(Vector2(kind, seed_value))
 		_piece["min_y"] = minf(_piece["min_y"], v.y)
 		_piece["max_y"] = maxf(_piece["max_y"], v.y)
 	var r: Array = _piece["ranges"].get(key, [start, start])
@@ -403,7 +414,7 @@ func _arrays(s: Dictionary, from: int, to: int) -> Array:
 	arrays[Mesh.ARRAY_VERTEX] = s["v"].slice(from, to)
 	arrays[Mesh.ARRAY_NORMAL] = s["n"].slice(from, to)
 	arrays[Mesh.ARRAY_COLOR] = s["c"].slice(from, to)
-	if with_uv2:
+	if with_uv2 or s.get("pane", false):
 		arrays[Mesh.ARRAY_TEX_UV2] = s["uv2"].slice(from, to)
 	return arrays
 

@@ -18,6 +18,8 @@ func _init() -> void:
 	for id: String in GD.BUILDINGS:
 		if not only.is_empty() and not id in only:
 			continue
+		if GD.BUILDINGS[id].has("plant"):
+			continue
 		total += _export_building(id)
 	for id: String in PropFactory.VARIANTS:
 		if not only.is_empty() and not id in only:

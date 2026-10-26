@@ -95,11 +95,29 @@ void fragment() {
 			c = mix(c, c * 0.55 + sky * 0.2, drop);
 			c += vec3(smoothstep(0.06, 0.0, length(spark))) * drop * 0.7;
 		}
-		// Изморозь зимой: узоры от краёв, стекло мутнеет, свет из окна рассеивается.
+		// Изморозь зимой: перистый узор растёт от рам к середине стёкол (снизу —
+		// раньше), середина остаётся прозрачной; стекло слегка запотевает.
 		if (frost > 0.01) {
 			float pattern = w_noise(plane * 9.0) * 0.6 + w_noise(plane * 24.0) * 0.4;
-			float m = clamp(smoothstep(0.78, 0.2, pattern - frost * 0.5) * frost * 1.3, 0.0, 0.85);
-			c = mix(c, vec3(0.86, 0.9, 0.95), m);
+			float m;
+			if (UV2.x > 0.0001 || UV2.y > 0.0001) {
+				// Окно с крестом рамы — четыре стекла, у каждого свои края.
+				vec2 sp = fract(clamp(UV2, 0.0, 1.0) * 2.0);
+				float edge = min(min(sp.x, 1.0 - sp.x), 1.0 - sp.y);
+				edge = min(edge, sp.y * 0.55) * 0.5;
+				float reach = frost * 0.13 + (pattern - 0.5) * 0.09;
+				m = smoothstep(reach, reach - 0.05, edge);
+				// Кристаллы-«перья» на кромке узора.
+				float fern = smoothstep(0.62, 0.95, w_noise(plane * vec2(46.0, 17.0) + pattern * 4.0));
+				m = max(m, fern * smoothstep(reach + 0.08, reach, edge));
+				m = clamp(m * min(frost * 1.6, 1.0), 0.0, 0.94) + frost * 0.12;
+			} else {
+				m = clamp(smoothstep(0.78, 0.2, pattern - frost * 0.5) * frost * 1.3, 0.0, 0.85);
+			}
+			// Чистая середина стекла темнее (за ней комната), изморозь — белая и зернистая.
+			vec3 frost_col = vec3(0.93, 0.96, 1.0) * (0.84 + 0.16 * w_noise(plane * vec2(52.0, 21.0)));
+			c = mix(c * (1.0 - frost * 0.22), frost_col, m);
+			c += vec3(smoothstep(0.9, 1.0, w_noise(plane * 70.0))) * m * 0.3 * (1.0 - night);
 			rough = mix(rough, 0.55, m);
 			emit *= 1.0 - m * 0.4;
 		}

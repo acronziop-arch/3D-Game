@@ -23,6 +23,7 @@ const FLOW_RES := 8
 const PROP_GRID := 10
 const CHEST_CHANCE := 0.05
 const ROCK_COLOR := Color(0.52, 0.51, 0.49)
+const BANK_COLOR := Color(0.6, 0.5, 0.36)
 const BED_COLOR := Color(0.6, 0.56, 0.42)
 const DEEP_BED_COLOR := Color(0.36, 0.36, 0.31)
 const SAND_COLOR := Color(0.86, 0.8, 0.6)
@@ -676,7 +677,9 @@ static func ground_color(climate: Color, h: float, up: float) -> Color:
 	c = c.lerp(ROCK_COLOR, smoothstep(20.0, 32.0, h) * 0.85)
 	c = c.lerp(SNOW_COLOR, smoothstep(40.0, 52.0, h))
 	if h > WATER_LEVEL + 0.3:
-		c = c.lerp(ROCK_COLOR, smoothstep(0.9, 0.68, up) * (1.0 - smoothstep(40.0, 52.0, h) * 0.6))
+		# Крутой склон — камень, а у самой воды — тёплый земляной обрыв, а не серо-лиловая скала.
+		var cliff := ROCK_COLOR.lerp(BANK_COLOR, smoothstep(3.5, 1.0, h))
+		c = c.lerp(cliff, smoothstep(0.9, 0.68, up) * (1.0 - smoothstep(40.0, 52.0, h) * 0.6))
 	var bed := BED_COLOR.lerp(DEEP_BED_COLOR, smoothstep(-0.6, -3.5, h))
 	return c.lerp(bed, smoothstep(0.25, -0.9, h))
 

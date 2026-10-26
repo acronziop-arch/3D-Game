@@ -39,6 +39,10 @@ void vertex() {
 				cos(t * 1.1 + VERTEX.y * 2.3)) * 0.03 * (0.2 + s * 1.5) * flex;
 		}
 	}
+	// Пучки травы и папоротники под глубоким снегом уходят под сугроб.
+	if (kind > 2.5) {
+		VERTEX.y = mix(VERTEX.y, origin.y - 0.12, smoothstep(0.45, 0.85, snow_cover));
+	}
 	world_pos = VERTEX;
 	world_normal = NORMAL;
 }

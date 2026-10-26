@@ -114,6 +114,21 @@ static func _trunk(g: Geo, rng: RandomNumberGenerator, height: float, radius: fl
 	return points
 
 
+## Тонкие веточки на конце ветки: зимой, без листвы, крона не обрывается «палкой».
+## droop — веточки свисают (берёза), иначе тянутся вверх.
+static func _twigs(g: Geo, rng: RandomNumberGenerator, from: Vector3, tip: Vector3, radius: float, color: Color, droop := false) -> void:
+	var dir := (tip - from).normalized()
+	var side := dir.cross(Vector3.UP).normalized()
+	if side == Vector3.ZERO:
+		side = Vector3.RIGHT
+	for k in 3:
+		var bend := side * rng.randf_range(0.5, 0.9) * (1.0 if k % 2 == 0 else -1.0)
+		var lift := Vector3(0, -0.55 if droop else 0.45, 0)
+		var d := (dir + bend + lift).normalized()
+		var length := rng.randf_range(0.35, 0.6)
+		g.rod(MAT, tip - dir * 0.05, tip + d * length, radius, radius * 0.35, 3, color, false)
+
+
 static func _leaf_cluster(g: Geo, rng: RandomNumberGenerator, center: Vector3, radii: Vector3, color: Color, kind := Geo.KIND_LEAF) -> void:
 	g.kind = kind
 	g.seed_value = rng.randf()
@@ -138,6 +153,7 @@ static func _broadleaf(g: Geo, rng: RandomNumberGenerator, trunk_h: float, radiu
 		var tip := start + dir * length
 		# Ветка начинается внутри ствола — стыка не видно.
 		g.rod(MAT, start - dir * radius * 0.5, tip, radius * 0.4, radius * 0.12, 5, bark, false)
+		_twigs(g, rng, start, tip, radius * 0.1, bark)
 		tips.append(tip)
 	# Сердцевина кроны: закрывает просветы между кучками листвы, крона цельная.
 	var center := Vector3.ZERO
@@ -165,9 +181,10 @@ static func _apple(g: Geo, rng: RandomNumberGenerator) -> void:
 	for i in 22:
 		var a := rng.randf() * TAU
 		var y := rng.randf_range(1.9, 3.6)
-		var r := rng.randf_range(0.9, 1.45) * (1.0 - absf(y - 2.7) * 0.25)
+		# Яблоки висят по краю кроны — их видно снаружи.
+		var r := rng.randf_range(1.3, 1.7) * (1.0 - absf(y - 2.7) * 0.25)
 		g.seed_value = rng.randf() * 0.3
-		g.blob(MAT, Vector3(cos(a) * r, y, sin(a) * r), Vector3.ONE * 0.1, reds[i % 3 if i % 5 != 0 else 2], rng, 0, 0.08, 0.2)
+		g.blob(MAT, Vector3(cos(a) * r, y, sin(a) * r), Vector3.ONE * 0.13, reds[i % 3 if i % 5 != 0 else 2], rng, 0, 0.08, 0.2)
 	g.kind = Geo.KIND_SOLID
 
 
@@ -185,9 +202,9 @@ static func _birch(g: Geo, rng: RandomNumberGenerator) -> void:
 		var c1 := lean * pow(y1 / height, 2.0)
 		var r0 := 0.17 * (1.0 - 0.5 * y0 / height)
 		var r1 := 0.17 * (1.0 - 0.5 * y1 / height)
-		for k in 6:
-			var a0 := TAU * k / 6.0
-			var a1 := TAU * (k + 1) / 6.0
+		for k in 8:
+			var a0 := TAU * k / 8.0
+			var a1 := TAU * (k + 1) / 8.0
 			var d0 := Vector3(cos(a0), 0, sin(a0))
 			var d1 := Vector3(cos(a1), 0, sin(a1))
 			var white := Color(0.9, 0.89, 0.84).darkened(rng.randf_range(0.0, 0.06))
@@ -203,6 +220,7 @@ static func _birch(g: Geo, rng: RandomNumberGenerator) -> void:
 		var reach := lerpf(1.0, 0.45, float(i) / 8.0)
 		var tip := base + Vector3(cos(a) * reach, rng.randf_range(0.2, 0.6), sin(a) * reach)
 		g.rod(MAT, base, tip, 0.05, 0.02, 4, Color(0.3, 0.27, 0.24))
+		_twigs(g, rng, base, tip, 0.018, Color(0.32, 0.26, 0.22), true)
 		_leaf_cluster(g, rng, tip + Vector3(0, -0.15, 0), Vector3(0.7, 0.95, 0.7) * rng.randf_range(0.85, 1.15) * lerpf(1.1, 0.75, float(i) / 8.0),
 			Color(0.5, 0.7, 0.27))
 	_leaf_cluster(g, rng, top + Vector3(0, 0.4, 0), Vector3(0.55, 0.9, 0.55), Color(0.54, 0.74, 0.29))

@@ -79,6 +79,10 @@ func _check_references() -> void:
 ## Материалы берутся прямо из моделей models/buildings/*.glb.
 func _check_material_rule() -> void:
 	for id: String in GD.BUILDINGS:
+		if GD.BUILDINGS[id].has("plant"):
+			if not GD.PROPS.has(GD.BUILDINGS[id]["plant"]):
+				_fail("саженец %s: неизвестное дерево" % id)
+			continue
 		if not ResourceLoader.exists("res://models/buildings/%s.glb" % id):
 			_fail("нет модели models/buildings/%s.glb — запустите tools/export_models.gd" % id)
 		var cost: Dictionary = GD.BUILDINGS[id]["cost"]

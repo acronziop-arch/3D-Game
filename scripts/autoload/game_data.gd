@@ -221,6 +221,9 @@ const BUILDINGS := {
 	"vegetable_garden": {"name": "Огород", "category": "garden", "time": 6.0, "ground_only": true,
 		"cost": {"plank": 6, "log": 2}, "desc": "Три гряды за штакетником. Культуру можно выбрать и сменить.",
 		"crops": [Rect2(-2.45, -2.3, 1.1, 4.4), Rect2(-0.55, -2.3, 1.1, 4.4), Rect2(1.35, -2.3, 1.1, 4.4)], "crop_top": 0.17},
+	# Саженец: ставится как постройка, а вырастает настоящим деревом.
+	"apple_tree": {"name": "Яблоня", "category": "garden", "time": 0.0, "plant": "tree_apple",
+		"cost": {}, "desc": "Саженец яблони. Сразу ставится и потихоньку вырастает."},
 	# На воде
 	"platform": {"name": "Деревянный настил", "category": "water", "time": 4.0, "place": "water",
 		"cost": {"plank": 6, "log": 4}, "desc": "Блок 4×4 м на сваях. На нём можно строить, как на суше."},

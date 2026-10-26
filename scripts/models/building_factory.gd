@@ -278,11 +278,15 @@ static func window(g: Geo, rng: RandomNumberGenerator, rect: Rect2, frame_mat: S
 		var ph := (rect.size.y - f) / rows
 		for r in rows:
 			for k in 2:
+				g.pane = Vector2(pw - 0.02, ph - 0.02)
 				g.box("glass", Vector3(x0 + f * 0.5 + (k + 0.5) * pw, y0 + f * 0.5 + (r + 0.5) * ph, -thickness * 0.35),
 					Vector3(pw - 0.02, ph - 0.02, 0.05), palette[rng.randi() % palette.size()])
+		g.pane = Vector2.ZERO
 	elif glass:
+		g.pane = Vector2(rect.size.x - f, rect.size.y - f)
 		g.box("glass", Vector3(cx, (y0 + y1) * 0.5, -thickness * 0.35), Vector3(rect.size.x - f, rect.size.y - f, 0.05),
 			col("glass", rng, 0.06))
+		g.pane = Vector2.ZERO
 	if glass:
 		g.box(frame_mat, Vector3(cx, (y0 + y1) * 0.5, -thickness * 0.3), Vector3(0.05, rect.size.y - f, 0.08), c)
 		if rect.size.y > 0.7:

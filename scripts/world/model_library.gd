@@ -18,6 +18,8 @@ const BUILDING_MATERIALS := {
 	"roof_tile": {"roughness_base": 0.75},
 }
 
+const GD := preload("res://scripts/autoload/game_data.gd")
+
 static var _meshes := {}
 static var _buildings := {}
 static var _materials := {}
@@ -94,6 +96,15 @@ static func building(id: String) -> Dictionary:
 	if _buildings.has(id):
 		return _buildings[id]
 	var data := {"mesh": null, "rotor_mesh": null, "pivot": Vector3.ZERO}
+	var plant: String = GD.BUILDINGS.get(id, {}).get("plant", "")
+	if plant != "":
+		# Саженец — это модель дерева, а не здания.
+		data["mesh"] = prop_mesh(plant, 0)
+		data["bounds"] = (data["mesh"] as Mesh).get_aabb()
+		data["materials"] = [] as Array[String]
+		data["plant"] = plant
+		_buildings[id] = data
+		return data
 	var path := "res://models/buildings/%s.glb" % id
 	if ResourceLoader.exists(path):
 		var node: Node = (load(path) as PackedScene).instantiate()

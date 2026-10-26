@@ -200,33 +200,36 @@ func update_ghost(hit: Variant, delta: float) -> void:
 		_cross.visible = false
 
 
-## Настил рядом с другим настилом прилипает к нему краем: та же сетка, тот же поворот.
+## Настил прилипает краем к соседнему, только если палец рядом со свободной
+## клеткой возле него (та же сетка и поворот); иначе ставится свободно.
 func _snap_platform(p: Vector3) -> Dictionary:
-	var best: Building = null
-	var best_d := PLATFORM_SIZE * 1.9
+	var free := {"pos": Vector3(snappedf(p.x, GRID), 0, snappedf(p.z, GRID)), "snapped": false}
+	var platforms: Array[Building] = []
 	for b in buildings:
-		if not is_instance_valid(b) or b.id != "platform" or b == moving:
+		if is_instance_valid(b) and b.id == "platform" and b != moving:
+			platforms.append(b)
+	var best := free
+	var best_d := PLATFORM_SIZE * 0.85
+	for b in platforms:
+		if Vector2(b.position.x - p.x, b.position.z - p.z).length() > PLATFORM_SIZE * 2.0:
 			continue
-		var d := Vector2(b.position.x - p.x, b.position.z - p.z).length()
-		if d < best_d:
+		var basis := Basis(Vector3.UP, b.yaw)
+		for side: Vector3 in [Vector3.RIGHT, Vector3.LEFT, Vector3.FORWARD, Vector3.BACK]:
+			var slot := b.position + basis * (side * PLATFORM_SIZE)
+			slot.y = 0.0
+			var d := Vector2(slot.x - p.x, slot.z - p.z).length()
+			if d >= best_d or _platform_at(slot, platforms):
+				continue
 			best_d = d
-			best = b
-	if best == null:
-		return {"pos": Vector3(snappedf(p.x, GRID), 0, snappedf(p.z, GRID)), "snapped": false}
-	var basis := Basis(Vector3.UP, best.yaw)
-	var local := basis.inverse() * (p - best.position)
-	local.x = snappedf(local.x, PLATFORM_SIZE)
-	local.z = snappedf(local.z, PLATFORM_SIZE)
-	local.y = 0.0
-	if is_zero_approx(local.x) and is_zero_approx(local.z):
-		# Палец над самим настилом — ставим к ближайшей стороне.
-		var away := basis.inverse() * (p - best.position)
-		if absf(away.x) > absf(away.z):
-			local.x = PLATFORM_SIZE * signf(away.x + 0.0001)
-		else:
-			local.z = PLATFORM_SIZE * signf(away.z + 0.0001)
-	var world := best.position + basis * local
-	return {"pos": Vector3(world.x, 0, world.z), "snapped": true, "yaw": best.yaw}
+			best = {"pos": slot, "snapped": true, "yaw": b.yaw}
+	return best
+
+
+static func _platform_at(slot: Vector3, platforms: Array[Building]) -> bool:
+	for o in platforms:
+		if Vector2(o.position.x - slot.x, o.position.z - slot.z).length() < PLATFORM_SIZE * 0.5:
+			return true
+	return false
 
 
 ## Ограды и дорожки: новая секция цепляется к ближайшему свободному концу такой же.
@@ -379,6 +382,10 @@ func _validate(target: Vector3, angle: float) -> Dictionary:
 	var box := Building.obb_for(selected_id, target, angle)
 	var cost: Dictionary = GameData.BUILDINGS[selected_id]["cost"]
 	var result := {"y": 0.0, "reason": ""}
+	if GameData.BUILDINGS[selected_id].has("plant"):
+		result["y"] = chunk_manager.get_height(target.x, target.z)
+		result["reason"] = chunk_manager.can_plant_tree(target)
+		return result
 	match mode:
 		"water":
 			var wet := 0
@@ -499,9 +506,16 @@ func try_place() -> String:
 	if moving:
 		_finish_move()
 		return ""
-	if not Inventory.spend(GameData.BUILDINGS[selected_id]["cost"]):
-		return "Не хватает ресурсов"
 	var def: Dictionary = GameData.BUILDINGS[selected_id]
+	if def.has("plant"):
+		# Саженец — не здание: в мире растёт настоящее дерево.
+		var reason := chunk_manager.plant_tree(_ghost_target, def["plant"])
+		if reason == "":
+			_ghost_scale = 0.85
+			Fx.burst(self, _ghost_target + Vector3(0, 0.3, 0), Color(0.5, 0.75, 0.35), 10, 0.12)
+		return reason
+	if not Inventory.spend(def["cost"]):
+		return "Не хватает ресурсов"
 	var extra := {}
 	if def.get("tilt", false):
 		extra["normal"] = ground_normal(_ghost_target.x, _ghost_target.z)

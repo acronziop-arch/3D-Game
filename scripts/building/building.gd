@@ -113,7 +113,12 @@ static func ghost_material(opening := false) -> ShaderMaterial:
 		_ghost_material = ShaderMaterial.new()
 		_ghost_material.shader = load("res://shaders/ghost.gdshader")
 		# Чертёж рисуется после воды, иначе вода «срезает» его у берега.
-		_ghost_material.render_priority = 2
+		# Перед цветом — проход глубины (приоритет ниже — рисуется раньше).
+		_ghost_material.render_priority = 3
+		var depth := ShaderMaterial.new()
+		depth.shader = load("res://shaders/ghost_depth.gdshader")
+		depth.render_priority = 2
+		_ghost_material.next_pass = depth
 		_ghost_opening_material = _ghost_material.duplicate()
 		_ghost_opening_material.set_shader_parameter("highlight", 1.0)
 	return _ghost_opening_material if opening else _ghost_material
@@ -127,6 +132,7 @@ static func apply_ghost_materials(mi: MeshInstance3D, own_copies: bool) -> Array
 		var m := ghost_material(ModelLibrary.surface_tag(mi.mesh, i) == "opening")
 		if own_copies:
 			m = m.duplicate()
+			m.next_pass = m.next_pass.duplicate()
 			made.append(m)
 		mi.set_surface_override_material(i, m)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -310,6 +316,8 @@ func build_time() -> float:
 func _set_progress(value: float) -> void:
 	for m in _progress_materials:
 		m.set_shader_parameter("build_progress", value)
+		if m.next_pass:
+			(m.next_pass as ShaderMaterial).set_shader_parameter("build_progress", value)
 
 
 func _process(delta: float) -> void:

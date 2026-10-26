@@ -298,20 +298,28 @@ func _refresh_cover(c: Vector2i) -> void:
 	building_hook.call(chunk)
 
 
-## Сажает дерево. Пустая строка — посажено; иначе причина, почему нельзя.
-func plant_tree(pos: Vector3, id: String) -> String:
-	var h := get_height(pos.x, pos.z)
-	if h < WorldGen.WATER_LEVEL + 0.3:
+## Можно ли посадить здесь дерево: пустая строка — можно; иначе причина.
+func can_plant_tree(pos: Vector3) -> String:
+	if get_height(pos.x, pos.z) < WorldGen.WATER_LEVEL + 0.3:
 		return "Дерево не растёт в воде"
-	var c := chunk_of(pos.x, pos.z)
-	var chunk: Chunk = chunks.get(c)
-	if chunk == null:
-		return ""
+	if not chunks.has(chunk_of(pos.x, pos.z)):
+		return "Слишком далеко"
 	if not props_in_rect(Rect2(pos.x - 1.6, pos.z - 1.6, 3.2, 3.2), true).filter(
 			func(p: Dictionary) -> bool: return GameData.blocks_building(p["id"])).is_empty():
 		return "Слишком близко к другому дереву или камню"
 	if blocked_by_building.call(Vector2(pos.x, pos.z)):
 		return "Здесь стоит здание"
+	return ""
+
+
+## Сажает дерево. Пустая строка — посажено; иначе причина, почему нельзя.
+func plant_tree(pos: Vector3, id: String) -> String:
+	var reason := can_plant_tree(pos)
+	if reason != "":
+		return reason
+	var h := get_height(pos.x, pos.z)
+	var c := chunk_of(pos.x, pos.z)
+	var chunk: Chunk = chunks[c]
 	var list: Array = WorldState.planted.get(c, [])
 	var entry := {"id": id, "x": pos.x - chunk.position.x, "z": pos.z - chunk.position.z,
 		"rot": randf() * TAU, "scale": randf_range(0.85, 1.15), "t": Time.get_unix_time_from_system()}

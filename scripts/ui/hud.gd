@@ -724,7 +724,7 @@ func _refresh_build_cards() -> void:
 		var affordable := Inventory.has_all(def["cost"])
 		var time_label: Label = card["time"]
 		# Чего не хватает — видно прямо на карточке, а выбрать её нельзя.
-		time_label.text = ("сразу" if creative else "%d с" % ceili(def["time"])) if affordable else "Не хватает"
+		time_label.text = ("сразу" if creative or def["time"] <= 0.0 else "%d с" % ceili(def["time"])) if affordable else "Не хватает"
 		time_label.add_theme_color_override("font_color", UiStyle.MUTED if affordable else UiStyle.BAD)
 		var selected := interaction != null and interaction.building_system.selected_id == id
 		b.disabled = not affordable
@@ -1189,6 +1189,7 @@ func _process(delta: float) -> void:
 		_map_frame.modulate.a = move_toward(_map_frame.modulate.a, 0.0 if covered else 1.0, delta * 6.0)
 		_map_frame.visible = _map_frame.modulate.a > 0.01
 	_place_notices()
+	_place_labels()
 	if _hint_panel.has_meta("flash"):
 		var left: float = _hint_panel.get_meta("flash") - delta
 		if left > 0.0:
@@ -1237,6 +1238,15 @@ func _place_notices() -> void:
 	_notices.max_width = clampf(right - left - 12.0, 200.0, 620.0)
 	var x := (left + right) * 0.5 - _notices.size.x * 0.5
 	_notices.position.x = lerpf(_notices.position.x, x, 0.35)
+
+
+## Плашки над зданиями не заходят под верхнюю строку и нижнюю панель.
+func _place_labels() -> void:
+	var m := Platform.safe_margins() if _touch else {"left": 16.0, "top": 16.0, "right": 16.0, "bottom": 16.0}
+	var vp := _root.get_viewport_rect().size
+	var top: float = m["top"] + maxf(_resource_bar.size.y, _clock_row.size.y) + 8.0
+	var bottom: float = _bottom.global_position.y - 8.0 if _bottom.visible else vp.y - m["bottom"]
+	_labels.safe_rect = Rect2(m["left"], top, vp.x - m["left"] - m["right"], maxf(bottom - top, 40.0))
 
 
 ## Раз в четверть секунды: не ушли ли мы далеко от мастерских (рецепты блокируются).

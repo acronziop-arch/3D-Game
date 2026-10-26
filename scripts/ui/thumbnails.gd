@@ -95,7 +95,10 @@ func _process(_delta: float) -> void:
 	var data := ModelLibrary.building(_current)
 	var mi := MeshInstance3D.new()
 	mi.mesh = data["mesh"]
-	ModelLibrary.apply_building_materials(mi)
+	if data.has("plant"):
+		mi.material_override = ModelLibrary.foliage_material()
+	else:
+		ModelLibrary.apply_building_materials(mi)
 	_pivot.add_child(mi)
 	if data["rotor_mesh"]:
 		var rotor := MeshInstance3D.new()

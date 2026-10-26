@@ -21,12 +21,14 @@ void vertex() {
 	vec3 origin = MODEL_MATRIX[3].xyz;
 	float fade = 1.0 - smoothstep(fade_end * 0.7, fade_end, distance(origin, CAMERA_POSITION_WORLD));
 	float squash = clamp(1.0 - snow_cover * 1.4, 0.0, 1.0) * fade;
-	VERTEX.y = mix(origin.y, VERTEX.y, squash);
+	// Под снегом пучок не ложится плашмя поверх сугроба, а уходит под него целиком.
+	VERTEX.y = mix(origin.y - 0.05, VERTEX.y, squash);
+	VERTEX.xz = mix(origin.xz, VERTEX.xz, mix(0.3, 1.0, squash));
 	vec2 d = normalize(wind_dir + vec2(0.0001));
 	// Волна ветра бежит по полю вдоль направления ветра.
 	float wave = sin(dot(origin.xz, d) * 0.18 - wind_phase * 1.2) * 0.5 + 0.5;
 	float flutter = sin(wind_phase * 2.5 + origin.x * 1.7 + origin.z * 1.3);
-	float bend = tip * tip * (0.08 + wind_strength * (0.25 + wave * 0.45));
+	float bend = tip * tip * (0.08 + wind_strength * (0.25 + wave * 0.45)) * squash;
 	VERTEX.xz += d * bend + vec2(-d.y, d.x) * flutter * 0.03 * tip;
 	VERTEX.y -= bend * bend * 0.35;
 	world_pos = VERTEX;
