@@ -7,6 +7,8 @@ const AUTOSAVE_INTERVAL := 300.0
 
 ## Авто-качество: замеряем частоту кадров окнами по PERF_WINDOW секунд.
 const PERF_WINDOW := 4.0
+## Доля полосы загрузки на подготовку графики (остальное — стартовый кусок мира).
+const WARMUP_SHARE := 0.35
 
 var _autosave := AUTOSAVE_INTERVAL
 var _markers: Markers
@@ -14,6 +16,9 @@ var _paths: PathSystem
 var _perf_time := 0.0
 var _perf_frames := 0
 var _perf_grace := 10.0
+var _warmup: ShaderWarmup
+var _world_ready := false
+var _normal_chunk_pace := []
 
 @onready var chunk_manager: ChunkManager = $ChunkManager
 @onready var camera_rig: CameraRig = $CameraRig
@@ -99,12 +104,75 @@ func _ready() -> void:
 	chunk_manager.focus = camera_rig.position
 	chunk_manager.initial_area_ready.connect(_on_world_ready, CONNECT_ONE_SHOT)
 
+	# Запуск по шагам, чтобы браузер не «зависал»: первый кадр — только экран
+	# загрузки, затем шейдеры компилируются по одному за кадр, и только потом
+	# строится мир. Экран загрузки всё это время показывает ход.
+	chunk_manager.running = false
+	water.visible = false
+	get_viewport().disable_3d = true
+	_warmup = ShaderWarmup.new()
+	_warmup.name = "ShaderWarmup"
+	_warmup.steps = _warmup_steps()
+	_warmup.progress.connect(func(f: float) -> void: _report_loading(f * WARMUP_SHARE, "Готовим графику…"))
+	_warmup.finished.connect(func() -> void:
+		_warmup.queue_free()
+		# Под экраном загрузки рывки не видны — стартовый кусок мира строим быстрее.
+		_normal_chunk_pace = [chunk_manager.finalize_per_frame, chunk_manager.max_tasks_in_flight]
+		chunk_manager.finalize_per_frame = 4
+		chunk_manager.max_tasks_in_flight = maxi(chunk_manager.max_tasks_in_flight, 4)
+		chunk_manager.running = true)
+	add_child(_warmup)
+	_report_loading(0.0, "Готовим графику…")
+
+
+## По виду материала на шаг — в том же формате, в каком их рисует мир.
+func _warmup_steps() -> Array[Callable]:
+	var far := float(Settings.get_value("grass_distance"))
+	var steps: Array[Callable] = [
+		# Кадр только с экраном загрузки.
+		func() -> Variant: return null,
+		# Небо.
+		func() -> Variant:
+			get_viewport().disable_3d = false
+			return null,
+		func() -> Variant: return ShaderWarmup.quad(ModelLibrary.terrain_material()),
+		func() -> Variant: return ShaderWarmup.multimesh(ModelLibrary.foliage_material()),
+		func() -> Variant: return ShaderWarmup.multimesh(GroundCover.grass_material(far), true, false, false),
+		func() -> Variant: return ShaderWarmup.multimesh(GroundCover.litter_material(far * 1.15), true, true, false),
+		func() -> Variant: return ShaderWarmup.quad(ModelLibrary.building_material("plank")),
+		func() -> Variant: return ShaderWarmup.quad(Building.ghost_material(), false),
+		func() -> Variant: return ShaderWarmup.quad(_paths.material_for("path_dirt"), false),
+		func() -> Variant: return ShaderWarmup.multimesh(ModelLibrary.fish_material(), false, true, false),
+		func() -> Variant: return Interaction.make_ring(Color.WHITE),
+		func() -> Variant: return Fire.new(),
+		# Вода — последней: её шейдер самый тяжёлый.
+		func() -> Variant:
+			water.visible = true
+			return null,
+	]
+	return steps
+
+
+## Ход загрузки: на экран загрузки игры и в браузерный (он закрывает холст).
+func _report_loading(fraction: float, text: String) -> void:
+	hud.set_loading(fraction, text)
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.everstead && window.everstead.progress(%f, %s)" % [fraction, JSON.stringify(text)])
+
 
 func _on_world_ready() -> void:
+	_world_ready = true
+	if not _normal_chunk_pace.is_empty():
+		chunk_manager.finalize_per_frame = _normal_chunk_pace[0]
+		chunk_manager.max_tasks_in_flight = _normal_chunk_pace[1]
+	_perf_grace = 10.0
 	building_system.restore_from_save()
 	_paths.restore()
 	_markers.refresh()
+	_report_loading(1.0, "Готово!")
 	hud.hide_loading()
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.everstead && window.everstead.ready()")
 	hud.show_message("Добро пожаловать! Срубите пару деревьев и постройте лесопилку.")
 
 
@@ -205,6 +273,10 @@ func _new_world() -> void:
 
 
 func _process(delta: float) -> void:
+	if not _world_ready:
+		if chunk_manager.running:
+			_report_loading(WARMUP_SHARE + (1.0 - WARMUP_SHARE) * chunk_manager.initial_progress(), "Строим мир…")
+		return
 	WorldState.camera_state = camera_rig.get_state()
 	_watch_performance(delta)
 	_autosave -= delta

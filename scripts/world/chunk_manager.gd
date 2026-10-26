@@ -15,6 +15,8 @@ signal chunk_loaded(chunk: Chunk)
 @export var initial_radius := 3
 ## false — чанки генерируются прямо в главном потоке (браузер без потоков).
 var use_threads := true
+## false — мир пока не строится (идёт подготовка графики при запуске).
+var running := true
 ## Чанки, которым ещё нужно пересеять траву (см. refresh_all_cover).
 var _cover_queue: Array = []
 ## Чанки, где меняли рельеф: после мазка объекты и трава в них проверяются заново.
@@ -57,7 +59,7 @@ static func chunk_of(x: float, z: float) -> Vector2i:
 
 
 func _process(delta: float) -> void:
-	if gen == null:
+	if gen == null or not running:
 		return
 	var center := chunk_of(focus.x, focus.z)
 	if center != _center:
@@ -134,6 +136,21 @@ func _finalize() -> void:
 	if not _initial_done and _initial_area_loaded():
 		_initial_done = true
 		initial_area_ready.emit()
+
+
+## Доля стартового круга, которая уже загружена (для экрана загрузки).
+func initial_progress() -> float:
+	var r := mini(initial_radius, view_radius)
+	var total := 0
+	var have := 0
+	var center := chunk_of(focus.x, focus.z)
+	for dz in range(-r, r + 1):
+		for dx in range(-r, r + 1):
+			if dx * dx + dz * dz <= r * r:
+				total += 1
+				if chunks.has(center + Vector2i(dx, dz)):
+					have += 1
+	return float(have) / maxf(total, 1)
 
 
 ## Стартовый круг загружен. Он не больше круга прорисовки: чанки за ним не грузятся,

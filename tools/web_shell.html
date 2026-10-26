@@ -2,9 +2,12 @@
 <html lang="ru">
 	<head>
 		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+		<!-- viewport-fit=cover: холст занимает весь экран, без бежевых полей у выреза iPhone. -->
+		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 		<meta name="apple-mobile-web-app-capable" content="yes">
 		<meta name="mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+		<meta name="apple-mobile-web-app-title" content="Everstead">
 		<meta name="theme-color" content="#F5F3EF">
 		<title>$GODOT_PROJECT_NAME</title>
 		<style>
@@ -15,94 +18,202 @@ html, body, #canvas {
 }
 
 html, body {
+	width: 100%;
+	height: 100%;
 	overscroll-behavior: none;
 }
 
 body {
+	position: fixed;
+	inset: 0;
 	color: #3E342B;
-	background-color: #F5F3EF;
+	background-color: #DCD3C6;
 	overflow: hidden;
 	touch-action: none;
 	-webkit-user-select: none;
 	user-select: none;
 	-webkit-touch-callout: none;
+	-webkit-tap-highlight-color: transparent;
 }
 
 #canvas {
 	display: block;
+	position: fixed;
+	inset: 0;
+	width: 100vw;
+	height: 100vh;
 }
 
 #canvas:focus {
 	outline: none;
 }
 
+/* --- Экран загрузки ------------------------------------------------------------------------- */
+
 #status {
-	position: absolute;
+	position: fixed;
 	inset: 0;
-	background-color: #F5F3EF;
+	z-index: 10;
+	overflow: hidden;
+	background: linear-gradient(180deg, #F8F3EA 0%, #F3ECE1 55%, #E8DDCD 100%);
+	font-family: ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, -apple-system, 'Segoe UI', sans-serif;
+	transition: opacity 0.7s ease;
+}
+
+#status.gone {
+	opacity: 0;
+	pointer-events: none;
+}
+
+#status-scene {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	width: 100%;
+	height: 46%;
+	pointer-events: none;
+}
+
+.cloud {
+	position: absolute;
+	height: 26px;
+	border-radius: 20px;
+	background: rgba(255, 255, 255, 0.85);
+	box-shadow: 0 2px 0 rgba(201, 184, 166, 0.35);
+	animation: drift linear infinite;
+}
+
+.cloud::before, .cloud::after {
+	content: '';
+	position: absolute;
+	bottom: 8px;
+	border-radius: 50%;
+	background: inherit;
+}
+
+.cloud::before {
+	left: 14%;
+	width: 42%;
+	height: 34px;
+}
+
+.cloud::after {
+	right: 16%;
+	width: 34%;
+	height: 26px;
+}
+
+@keyframes drift {
+	from { transform: translateX(-30vw); }
+	to { transform: translateX(130vw); }
+}
+
+#status-card {
+	position: absolute;
+	inset: 0 0 18% 0;
 	display: flex;
 	flex-direction: column;
 	justify-content: center;
 	align-items: center;
-	gap: 14px;
-	visibility: hidden;
-	font-family: 'Nunito', 'Segoe UI', system-ui, -apple-system, sans-serif;
+	gap: 10px;
+	padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+
+#status-logo {
+	width: clamp(64px, 15vmin, 110px);
+	height: clamp(64px, 15vmin, 110px);
+	border-radius: 24%;
+	box-shadow: 0 10px 24px rgba(62, 52, 43, 0.22), 0 0 0 3px #FFFFFF;
+	animation: bob 2.4s ease-in-out infinite;
+}
+
+@keyframes bob {
+	0%, 100% { transform: translateY(0) rotate(-2deg); }
+	50% { transform: translateY(-8px) rotate(2deg); }
 }
 
 #status-title {
-	font-size: clamp(30px, 7vw, 54px);
+	margin-top: 6px;
+	font-size: clamp(30px, 8vmin, 56px);
 	font-weight: 900;
-	letter-spacing: 0.01em;
-}
-
-#status-line {
-	width: 220px;
-	height: 3px;
-	background: #C9B8A6;
-	border-radius: 2px;
+	letter-spacing: 0.02em;
+	color: #3E342B;
+	text-shadow: 0 2px 0 #FFFFFF;
 }
 
 #status-sub {
-	font-size: clamp(15px, 2.6vw, 20px);
-	font-weight: 700;
+	min-height: 1.3em;
+	font-size: clamp(14px, 3.4vmin, 19px);
+	font-weight: 800;
 	color: #8C7A68;
 }
 
-#status-progress {
-	display: none;
-	width: min(60vw, 420px);
-	height: 12px;
-	margin-top: 10px;
-	-webkit-appearance: none;
-	appearance: none;
-	border: 2px solid #C9B8A6;
-	border-radius: 8px;
-	background: #EDE8E1;
+#status-bar {
+	position: relative;
+	width: min(64vw, 420px);
+	height: 16px;
+	margin-top: 4px;
+	border-radius: 10px;
+	background: #EDE6DC;
+	box-shadow: inset 0 2px 3px rgba(62, 52, 43, 0.14), 0 0 0 2px #FFFFFF;
 	overflow: hidden;
 }
 
-#status-progress::-webkit-progress-bar {
-	background: #EDE8E1;
+#status-fill {
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 0%;
+	border-radius: 10px;
+	background: linear-gradient(180deg, #B7A18A 0%, #8C7A68 100%);
+	box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.35);
+	transition: width 0.35s ease;
 }
 
-#status-progress::-webkit-progress-value {
-	background: #8C7A68;
-	border-radius: 6px;
+/* Бегущие полоски: видно, что игра работает, даже когда браузер занят. */
+#status-fill::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+	background: repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.0) 0 10px, rgba(255, 255, 255, 0.22) 10px 20px);
+	background-size: 28px 28px;
+	animation: stripes 0.9s linear infinite;
 }
 
-#status-progress::-moz-progress-bar {
-	background: #8C7A68;
-	border-radius: 6px;
+@keyframes stripes {
+	from { background-position: 0 0; }
+	to { background-position: 28px 0; }
 }
 
 #status-tip {
-	display: none;
-	max-width: 440px;
-	margin: 14px 2rem 0;
-	font-size: 14px;
-	font-weight: 600;
+	max-width: min(80vw, 520px);
+	margin-top: 8px;
+	font-size: clamp(12px, 2.8vmin, 15px);
+	font-weight: 700;
 	line-height: 1.4;
 	color: #8A7D70;
+	text-align: center;
+	transition: opacity 0.4s ease;
+}
+
+#status-ios {
+	display: none;
+	position: absolute;
+	left: 50%;
+	bottom: calc(10px + env(safe-area-inset-bottom));
+	transform: translateX(-50%);
+	width: max-content;
+	max-width: min(84vw, 560px);
+	padding: 8px 14px;
+	border-radius: 14px;
+	background: rgba(255, 255, 255, 0.75);
+	box-shadow: 0 0 0 2px #E2D7C9;
+	font-size: clamp(12px, 2.8vmin, 14px);
+	font-weight: 700;
+	line-height: 1.35;
+	color: #6E5E4E;
 	text-align: center;
 }
 
@@ -111,12 +222,54 @@ body {
 	max-width: 520px;
 	margin: 0 2rem;
 	padding: 1rem 1.2rem;
-	border: 2px solid #C9B8A6;
-	border-radius: 14px;
+	border-radius: 16px;
 	background: #FFFFFF;
+	box-shadow: 0 0 0 2px #C9B8A6;
 	color: #C4554A;
+	font-weight: 700;
 	line-height: 1.35;
 	text-align: center;
+}
+
+/* Телефон в альбомной ориентации: всё компактнее, чтобы влезло по высоте. */
+@media (max-height: 520px) {
+	#status-card {
+		inset: 0 0 24% 0;
+		gap: 6px;
+	}
+	#status-logo {
+		width: 58px;
+		height: 58px;
+	}
+	#status-title {
+		margin-top: 2px;
+		font-size: 34px;
+	}
+	#status-scene {
+		height: 40%;
+	}
+}
+
+.blade {
+	transform-origin: 0 0;
+	animation: spin 6s linear infinite;
+}
+
+@keyframes spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+.smoke {
+	animation: puff 3.2s ease-out infinite;
+	transform-box: fill-box;
+	transform-origin: center;
+}
+
+@keyframes puff {
+	0% { transform: translate(0, 0) scale(0.6); opacity: 0; }
+	20% { opacity: 0.7; }
+	100% { transform: translate(10px, -40px) scale(1.6); opacity: 0; }
 }
 		</style>
 		$GODOT_HEAD_INCLUDE
@@ -131,12 +284,63 @@ body {
 		</noscript>
 
 		<div id="status">
-			<div id="status-title">Everstead</div>
-			<div id="status-line"></div>
-			<div id="status-sub">Загружаем игру…</div>
-			<progress id="status-progress"></progress>
-			<div id="status-notice"></div>
-			<div id="status-tip">Совет: в Safari нажмите «Поделиться» → «На экран „Домой“» — игра будет открываться во весь экран, как приложение.</div>
+			<div class="cloud" style="top: 12%; width: 110px; animation-duration: 70s; animation-delay: -20s;"></div>
+			<div class="cloud" style="top: 22%; width: 80px; animation-duration: 55s; animation-delay: -45s; opacity: 0.8;"></div>
+			<div class="cloud" style="top: 7%; width: 70px; animation-duration: 90s; animation-delay: -5s; opacity: 0.7;"></div>
+			<!-- Пейзаж: холмы, домики, мельница с крыльями и дымок из трубы. -->
+			<svg id="status-scene" viewBox="0 0 1200 300" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+				<path d="M0 190 C 160 120, 300 150, 430 170 S 700 120, 860 150 S 1100 110, 1200 140 L1200 300 L0 300 Z" fill="#E4D8C7"/>
+				<path d="M0 230 C 200 180, 380 210, 560 215 S 900 170, 1200 205 L1200 300 L0 300 Z" fill="#D6C6B1"/>
+				<g fill="#C9B8A6">
+					<circle cx="120" cy="196" r="26"/><rect x="116" y="196" width="8" height="30"/>
+					<circle cx="170" cy="204" r="20"/><rect x="167" y="204" width="6" height="24"/>
+					<circle cx="1010" cy="182" r="24"/><rect x="1006" y="182" width="8" height="30"/>
+					<path d="M1080 214 L1100 160 L1120 214 Z"/><path d="M1060 222 L1082 176 L1104 222 Z"/>
+				</g>
+				<!-- Мельница -->
+				<g transform="translate(300 128)">
+					<path d="M-26 92 L-16 0 L16 0 L26 92 Z" fill="#F5F3EF" stroke="#8C7A68" stroke-width="4" stroke-linejoin="round"/>
+					<path d="M-22 2 L0 -22 L22 2 Z" fill="#B7A18A" stroke="#8C7A68" stroke-width="4" stroke-linejoin="round"/>
+					<rect x="-7" y="66" width="14" height="26" rx="3" fill="#8C7A68"/>
+					<g transform="translate(0 -6)">
+						<g class="blade">
+							<g fill="#FFFFFF" stroke="#8C7A68" stroke-width="3.5" stroke-linejoin="round">
+								<path d="M-4 -4 L-4 -64 L12 -60 L10 -6 Z"/>
+								<path d="M4 4 L4 64 L-12 60 L-10 6 Z"/>
+								<path d="M4 -4 L64 -4 L60 12 L6 10 Z"/>
+								<path d="M-4 4 L-64 4 L-60 -12 L-6 -10 Z"/>
+							</g>
+						</g>
+						<circle r="6" fill="#8C7A68"/>
+					</g>
+				</g>
+				<!-- Домик -->
+				<g transform="translate(700 168)">
+					<rect x="-46" y="0" width="92" height="56" rx="4" fill="#F5F3EF" stroke="#8C7A68" stroke-width="4"/>
+					<path d="M-56 4 L0 -40 L56 4 Z" fill="#C4554A" stroke="#8C7A68" stroke-width="4" stroke-linejoin="round"/>
+					<rect x="26" y="-34" width="12" height="22" fill="#B7A18A" stroke="#8C7A68" stroke-width="3"/>
+					<circle class="smoke" cx="32" cy="-44" r="8" fill="#FFFFFF"/>
+					<circle class="smoke" cx="32" cy="-44" r="7" fill="#FFFFFF" style="animation-delay: -1.6s"/>
+					<rect x="-10" y="22" width="20" height="34" rx="3" fill="#B7A18A"/>
+					<rect x="-36" y="16" width="16" height="14" rx="2" fill="#F2C46B"/>
+					<rect x="20" y="16" width="16" height="14" rx="2" fill="#F2C46B"/>
+				</g>
+				<!-- Заборчик -->
+				<g stroke="#B7A18A" stroke-width="5" stroke-linecap="round">
+					<line x1="790" y1="232" x2="900" y2="226"/>
+					<line x1="800" y1="214" x2="800" y2="238"/><line x1="830" y1="212" x2="830" y2="236"/>
+					<line x1="860" y1="210" x2="860" y2="234"/><line x1="890" y1="208" x2="890" y2="232"/>
+				</g>
+			</svg>
+			<div id="status-card">
+				<img id="status-logo" src="index.icon.png" alt="">
+				<div id="status-title">Everstead</div>
+				<div id="status-sub">Загружаем игру…</div>
+				<div id="status-bar"><div id="status-fill"></div></div>
+				<div id="status-notice"></div>
+				<div id="status-tip"></div>
+			</div>
+			<div id="status-ios">В Safari: «Поделиться» → «На экран „Домой“» — игра откроется во весь экран, как приложение.</div>
 		</div>
 
 		<script src="$GODOT_URL"></script>
@@ -146,56 +350,90 @@ const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 const engine = new Engine(GODOT_CONFIG);
 
 (function () {
-	const statusOverlay = document.getElementById('status');
-	const statusProgress = document.getElementById('status-progress');
-	const statusNotice = document.getElementById('status-notice');
+	const overlay = document.getElementById('status');
+	const fill = document.getElementById('status-fill');
+	const sub = document.getElementById('status-sub');
+	const tip = document.getElementById('status-tip');
+	const notice = document.getElementById('status-notice');
+	const bar = document.getElementById('status-bar');
+
+	// Загрузка файлов — первые 45 % полосы, остальное — подготовка графики и мира в игре.
+	const DOWNLOAD_SHARE = 0.45;
+	let shown = 0;
+	let finished = false;
+
+	function setProgress(fraction, text) {
+		if (finished) {
+			return;
+		}
+		shown = Math.max(shown, Math.min(1, fraction));
+		fill.style.width = (shown * 100).toFixed(1) + '%';
+		if (text) {
+			sub.textContent = text;
+		}
+	}
+
+	function hideOverlay() {
+		if (finished) {
+			return;
+		}
+		finished = true;
+		fill.style.width = '100%';
+		overlay.classList.add('gone');
+		setTimeout(() => overlay.remove(), 800);
+	}
+
+	// Игра сама сообщает, как идёт подготовка, и когда мир готов.
+	window.everstead = {
+		progress: (fraction, text) => setProgress(DOWNLOAD_SHARE + (1 - DOWNLOAD_SHARE) * fraction, text),
+		ready: hideOverlay,
+	};
+
+	const tips = [
+		'Срубите пару деревьев и постройте лесопилку — из брёвен выйдут доски.',
+		'Два пальца вверх-вниз наклоняют камеру, щипок — приближает.',
+		'Три быстрых касания двумя пальцами прячут интерфейс.',
+		'В настройках есть раздел «Управление» с подсказками.',
+		'Ставьте метки на карте, чтобы не потерять свои деревни.',
+		'Огонь гаснет под дождём и на сильном ветру.',
+	];
+	let tipIndex = Math.floor(Math.random() * tips.length);
+	tip.textContent = tips[tipIndex];
+	setInterval(() => {
+		tip.style.opacity = 0;
+		setTimeout(() => {
+			tipIndex = (tipIndex + 1) % tips.length;
+			tip.textContent = tips[tipIndex];
+			tip.style.opacity = 1;
+		}, 400);
+	}, 4500);
 
 	// iPhone и iPad: подсказываем, как запускать игру во весь экран (полноэкранного режима в Safari нет).
 	const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
 		|| (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 	if (isIOS && !navigator.standalone) {
-		document.getElementById('status-tip').style.display = 'block';
-	}
-
-	let initializing = true;
-	let statusMode = '';
-
-	function setStatusMode(mode) {
-		if (statusMode === mode || !initializing) {
-			return;
-		}
-		if (mode === 'hidden') {
-			statusOverlay.remove();
-			initializing = false;
-			return;
-		}
-		statusOverlay.style.visibility = 'visible';
-		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
-		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
-		statusMode = mode;
-	}
-
-	function setStatusNotice(text) {
-		while (statusNotice.lastChild) {
-			statusNotice.removeChild(statusNotice.lastChild);
-		}
-		text.split('\n').forEach((line) => {
-			statusNotice.appendChild(document.createTextNode(line));
-			statusNotice.appendChild(document.createElement('br'));
-		});
+		document.getElementById('status-ios').style.display = 'block';
 	}
 
 	function displayFailureNotice(err) {
 		console.error(err);
+		let text = 'Не удалось запустить игру.';
 		if (err instanceof Error) {
-			setStatusNotice(err.message);
+			text = err.message;
 		} else if (typeof err === 'string') {
-			setStatusNotice(err);
-		} else {
-			setStatusNotice('Не удалось запустить игру.');
+			text = err;
 		}
-		setStatusMode('notice');
-		initializing = false;
+		while (notice.lastChild) {
+			notice.removeChild(notice.lastChild);
+		}
+		text.split('\n').forEach((line) => {
+			notice.appendChild(document.createTextNode(line));
+			notice.appendChild(document.createElement('br'));
+		});
+		notice.style.display = 'block';
+		bar.style.display = 'none';
+		sub.textContent = '';
+		finished = true;
 	}
 
 	const missing = Engine.getMissingFeatures({
@@ -206,19 +444,16 @@ const engine = new Engine(GODOT_CONFIG);
 		displayFailureNotice('Браузер не поддерживает то, что нужно игре:\n' + missing.join('\n')
 			+ '\nПопробуйте свежий Safari, Chrome или Firefox.');
 	} else {
-		setStatusMode('progress');
 		engine.startGame({
 			'onProgress': function (current, total) {
 				if (current > 0 && total > 0) {
-					statusProgress.value = current;
-					statusProgress.max = total;
-				} else {
-					statusProgress.removeAttribute('value');
-					statusProgress.removeAttribute('max');
+					setProgress(DOWNLOAD_SHARE * current / total, current < total ? 'Загружаем игру…' : 'Запускаем движок…');
 				}
 			},
 		}).then(() => {
-			setStatusMode('hidden');
+			setProgress(DOWNLOAD_SHARE + 0.02, 'Запускаем движок…');
+			// Страховка: если игра так и не сообщила о готовности, не держим экран вечно.
+			setTimeout(hideOverlay, 120000);
 		}, displayFailureNotice);
 	}
 }());

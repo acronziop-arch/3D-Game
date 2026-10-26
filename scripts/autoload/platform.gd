@@ -133,9 +133,10 @@ func _safe_margins() -> Dictionary:
 		m["right"] = 47.0 * pt
 		m["bottom"] = maxf(EDGE, 21.0 * pt)
 		return m
-	# В браузере страницу и так держит внутри безопасной зоны сам Safari.
+	# В браузере холст занимает весь экран (viewport-fit=cover), а вырез и полоску
+	# «домой» сообщает CSS: env(safe-area-inset-*), в CSS-пикселях.
 	if is_web:
-		return m
+		return _web_safe_margins(m)
 	var screen := Vector2(DisplayServer.screen_get_size())
 	var safe := DisplayServer.get_display_safe_area()
 	if safe.size.x <= 0 or safe.size.y <= 0:
@@ -146,6 +147,38 @@ func _safe_margins() -> Dictionary:
 	m["top"] = clampf(safe.position.y * k, EDGE, visible.y * 0.15)
 	m["right"] = clampf((screen.x - safe.end.x) * k, EDGE, visible.x * 0.12)
 	m["bottom"] = clampf((screen.y - safe.end.y) * k, EDGE, visible.y * 0.15)
+	return m
+
+
+const _SAFE_AREA_JS := """(function () {
+	var d = document.getElementById('safe-probe');
+	if (!d) {
+		d = document.createElement('div');
+		d.id = 'safe-probe';
+		d.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;'
+			+ 'padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
+		document.body.appendChild(d);
+	}
+	var s = getComputedStyle(d);
+	return [s.paddingLeft, s.paddingTop, s.paddingRight, s.paddingBottom].map(function (v) { return parseFloat(v) || 0; })
+		.concat([window.innerHeight]).join(',');
+})()"""
+
+
+func _web_safe_margins(m: Dictionary) -> Dictionary:
+	var raw: Variant = JavaScriptBridge.eval(_SAFE_AREA_JS)
+	if not (raw is String):
+		return m
+	var v := (raw as String).split_floats(",")
+	if v.size() < 5 or v[4] <= 0.0:
+		return m
+	var visible := get_tree().root.get_visible_rect().size
+	# Единиц интерфейса на один CSS-пиксель.
+	var k := visible.y / v[4]
+	m["left"] = clampf(maxf(EDGE, v[0] * k), EDGE, visible.x * 0.12)
+	m["top"] = clampf(maxf(EDGE, v[1] * k), EDGE, visible.y * 0.15)
+	m["right"] = clampf(maxf(EDGE, v[2] * k), EDGE, visible.x * 0.12)
+	m["bottom"] = clampf(maxf(EDGE, v[3] * k), EDGE, visible.y * 0.15)
 	return m
 
 

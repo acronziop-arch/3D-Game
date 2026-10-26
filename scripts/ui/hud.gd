@@ -12,6 +12,15 @@ extends CanvasLayer
 signal new_world_requested
 signal markers_changed
 
+const LOADING_TIPS := [
+	"Срубите пару деревьев и постройте лесопилку — из брёвен выйдут доски.",
+	"Два пальца вверх-вниз наклоняют камеру, щипок — приближает.",
+	"Три быстрых касания двумя пальцами прячут интерфейс.",
+	"В настройках есть раздел «Управление» с подсказками.",
+	"Ставьте метки на карте, чтобы не потерять свои деревни.",
+	"Огонь гаснет под дождём и на сильном ветру.",
+]
+
 const GROUPS := [["raw", "Сырьё"], ["animal", "Из сундуков"], ["processed", "Материалы"]]
 const TOOLS := [
 	[Interaction.Tool.HARVEST, "tool_harvest", "Добыча", "1"],
@@ -78,6 +87,8 @@ var _rotate_hold: Button
 var _hint_max_width := 600.0
 var _notices: Notices
 var _loading: Control
+var _loading_bar: ProgressBar
+var _loading_text: Label
 var _portrait_hint: Control
 var _info_timer := 0.0
 
@@ -1118,35 +1129,95 @@ func _flash_hint(text: String) -> void:
 
 
 func _build_loading() -> void:
-	_loading = ColorRect.new()
-	(_loading as ColorRect).color = UiStyle.BASE
+	# Тот же вид, что и у браузерного экрана загрузки: тёплое небо, контурный
+	# пейзаж, покачивающийся логотип, полоса хода и советы.
+	var bg := TextureRect.new()
+	var grad := Gradient.new()
+	grad.set_color(0, Color("#F8F3EA"))
+	grad.set_color(1, Color("#E8DDCD"))
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill_from = Vector2(0, 0)
+	tex.fill_to = Vector2(0, 1)
+	tex.width = 4
+	tex.height = 64
+	bg.texture = tex
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.stretch_mode = TextureRect.STRETCH_SCALE
+	_loading = bg
 	_loading.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_loading.mouse_filter = Control.MOUSE_FILTER_STOP
 	_root.add_child(_loading)
+	var doodles := Doodles.new()
+	doodles.line_width = _px(2.6, 2.0)
+	doodles.alpha = 0.35
+	doodles.set_anchors_preset(Control.PRESET_FULL_RECT)
+	doodles.anchor_top = 0.55
+	_loading.add_child(doodles)
 	var box := VBoxContainer.new()
 	box.set_anchors_preset(Control.PRESET_CENTER)
 	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	box.grow_vertical = Control.GROW_DIRECTION_BOTH
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
-	box.add_theme_constant_override("separation", 10)
+	box.add_theme_constant_override("separation", int(_px(10, 7)))
+	box.position.y -= _px(40, 30)
 	_loading.add_child(box)
+	var logo_holder := Control.new()
+	logo_holder.custom_minimum_size = Vector2.ONE * _px(110, 78)
+	logo_holder.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(logo_holder)
 	var logo := TextureRect.new()
 	logo.texture = load("res://icon.png") if ResourceLoader.exists("res://icon.png") else null
-	logo.custom_minimum_size = Vector2.ONE * _px(120, 84)
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	logo.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	box.add_child(logo)
+	logo.set_anchors_preset(Control.PRESET_FULL_RECT)
+	logo_holder.add_child(logo)
+	logo.pivot_offset = logo_holder.custom_minimum_size * 0.5
+	var bob := logo.create_tween().set_loops()
+	bob.tween_property(logo, "position:y", -8.0, 1.2).set_trans(Tween.TRANS_SINE)
+	bob.parallel().tween_property(logo, "rotation", deg_to_rad(2.0), 1.2).set_trans(Tween.TRANS_SINE)
+	bob.tween_property(logo, "position:y", 0.0, 1.2).set_trans(Tween.TRANS_SINE)
+	bob.parallel().tween_property(logo, "rotation", deg_to_rad(-2.0), 1.2).set_trans(Tween.TRANS_SINE)
 	var title := UiStyle.label(GameData.GAME_NAME, _px(54, 40), UiStyle.TEXT, 900)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_color_override("font_shadow_color", Color.WHITE)
+	title.add_theme_constant_override("shadow_offset_y", 2)
 	box.add_child(title)
-	var line := ColorRect.new()
-	line.color = UiStyle.BRAND
-	line.custom_minimum_size = Vector2(220, 3)
-	line.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	box.add_child(line)
-	var sub := UiStyle.label("Создаём мир…", _px(20, 16), UiStyle.BRAND_DARK, 700)
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(sub)
+	_loading_text = UiStyle.label("Готовим графику…", _px(19, 15), UiStyle.BRAND_DARK, 800)
+	_loading_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(_loading_text)
+	_loading_bar = ProgressBar.new()
+	_loading_bar.show_percentage = false
+	_loading_bar.max_value = 1.0
+	_loading_bar.custom_minimum_size = Vector2(_px(420, 300), _px(16, 14))
+	_loading_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	var fill := UiStyle.box(UiStyle.BRAND_DARK, 10, 0)
+	fill.border_width_top = 2
+	fill.border_color = UiStyle.BRAND_DARK.lightened(0.25)
+	_loading_bar.add_theme_stylebox_override("fill", fill)
+	_loading_bar.add_theme_stylebox_override("background", UiStyle.box(Color("#EDE6DC"), 10, 0, 2, Color.WHITE))
+	box.add_child(_loading_bar)
+	var tip := UiStyle.label(LOADING_TIPS[randi() % LOADING_TIPS.size()], _px(15, 12), UiStyle.MUTED, 700)
+	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tip.custom_minimum_size.x = _px(520, 380)
+	box.add_child(tip)
+	var tips_tw := tip.create_tween().set_loops()
+	tips_tw.tween_interval(4.0)
+	tips_tw.tween_property(tip, "modulate:a", 0.0, 0.3)
+	tips_tw.tween_callback(func() -> void:
+		var i := (LOADING_TIPS.find(tip.text) + 1) % LOADING_TIPS.size()
+		tip.text = LOADING_TIPS[i])
+	tips_tw.tween_property(tip, "modulate:a", 1.0, 0.3)
+
+
+## Ход загрузки: доля 0..1 и что сейчас делается.
+func set_loading(fraction: float, text: String) -> void:
+	if not is_instance_valid(_loading) or _loading_bar == null:
+		return
+	_loading_text.text = text
+	var target := maxf(_loading_bar.value, fraction)
+	_loading_bar.create_tween().tween_property(_loading_bar, "value", target, 0.25)
 
 
 ## Телефон в портретной ориентации (бывает только в браузере): просим повернуть его.
