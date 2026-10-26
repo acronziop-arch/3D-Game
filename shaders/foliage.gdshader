@@ -20,7 +20,9 @@ void vertex() {
 	float flex = COLOR.a;
 	vec3 origin = MODEL_MATRIX[3].xyz;
 	bool leaf = kind > 0.5 && kind < 1.5;
-	if (leaf && seed_v > leaf_amount) {
+	// Кувшинки лежат на воде — зимой они уходят под лёд.
+	bool floating = abs(origin.y - water_level) < 0.08;
+	if ((leaf && seed_v > leaf_amount) || (floating && ice > 0.45)) {
 		VERTEX = origin;
 	} else {
 		float phase = dot(origin.xz, vec2(0.31, 0.17));

@@ -68,8 +68,8 @@ static func build(id: String, variant: int) -> ArrayMesh:
 		"rock":
 			_rock(g, rng, Color(0.53, 0.53, 0.54))
 		"ore_coal":
-			_rock(g, rng, Color(0.6, 0.59, 0.57))
-			_crystals(g, rng, Color(0.09, 0.09, 0.11), 0.1)
+			_rock(g, rng, Color(0.47, 0.46, 0.45))
+			_crystals(g, rng, Color(0.1, 0.1, 0.12), 0.1)
 		"ore_copper":
 			_rock(g, rng, Color(0.5, 0.48, 0.46))
 			_crystals(g, rng, Color(0.97, 0.55, 0.2), 0.12)

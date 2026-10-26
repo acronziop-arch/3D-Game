@@ -2,7 +2,7 @@
 // Форма — капля, верх «съедается» бегущим вверх шумом, поэтому языки
 // рвутся и пляшут. Внутри — почти белое ядро, к краям — оранжевый и красный.
 shader_type spatial;
-render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
+render_mode unshaded, blend_mix, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
 
 uniform sampler2D noise_tex : filter_linear, repeat_enable;
 uniform vec3 color_core : source_color = vec3(1.0, 0.93, 0.62);
@@ -11,7 +11,7 @@ uniform vec3 color_edge : source_color = vec3(0.85, 0.18, 0.04);
 uniform float seed = 0.0;
 uniform float speed = 1.3;
 uniform float intensity = 1.0;
-// 0 — днём (сложение с ярким фоном выбеливает пламя), 1 — ночью.
+// 0 — днём, 1 — ночью (ночью пламя ярче и светится сильнее).
 uniform float darkness = 0.0;
 
 void vertex() {
@@ -41,7 +41,9 @@ void fragment() {
 	float heat = clamp(a * (1.35 - y * 0.9) * (1.0 - d * 0.45), 0.0, 1.0);
 	vec3 col = mix(color_edge, color_mid, smoothstep(0.1, 0.5, heat));
 	col = mix(col, color_core, smoothstep(0.55, 0.95, heat));
-	float k = intensity * mix(0.75, 1.25, darkness);
-	ALBEDO = col * k * (0.55 + heat * 0.9);
-	ALPHA = a;
+	// Пламя рисуется с прозрачностью (а не сложением): так оно видно и днём.
+	// Ядро ярче единицы — ночью его подхватывает свечение (glow).
+	float k = intensity * mix(1.0, 1.5, darkness);
+	ALBEDO = col * k * (0.8 + heat * 0.9);
+	ALPHA = clamp(a * (0.55 + heat * 0.7), 0.0, 1.0) * smoothstep(0.02, 0.2, a);
 }

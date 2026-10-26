@@ -106,6 +106,8 @@ void fragment() {
 	float gust = smoothstep(0.42, 0.78, w_noise((p - wind_drift * 3.0) * 0.035));
 	float wind_amp = (0.05 + wind_strength * (0.55 + gust * 0.6)) * mix(1.0, 0.7, flowing);
 	vec2 slope = (na.xy * 0.6 + nb.xy * 0.4) * wind_amp;
+	// Крупная рябь без капель — ею искажаем отражение (мелочь даёт «песок» на краях).
+	vec2 big_slope = na.xy * wind_amp * 0.8;
 	// Течение реки: две фазы карты течения, сменяющие друг друга без рывков.
 	if (flowing > 0.01) {
 		float period = 2.6;
@@ -116,6 +118,7 @@ void fragment() {
 		vec3 f0 = texture(ripple_b, (p - fl * ph0 * period) * 0.13).rgb * 2.0 - 1.0;
 		vec3 f1 = texture(ripple_b, (p - fl * ph1 * period) * 0.13 + vec2(0.5, 0.21)).rgb * 2.0 - 1.0;
 		slope += mix(f0.xy, f1.xy, wgt) * 0.32 * flowing;
+		big_slope += mix(f0.xy, f1.xy, wgt) * 0.25 * flowing;
 	}
 	if (rain > 0.01) {
 		slope += (rain_drops(p * 1.6, TIME) + rain_drops(p * 1.6 + 17.3, TIME * 1.07 + 0.37)) * rain * 0.9;
@@ -137,13 +140,17 @@ void fragment() {
 	vec3 nw = normalize(vec3(-slope.x, 1.0, -slope.y));
 	NORMAL = normalize((VIEW_MATRIX * vec4(nw, 0.0)).xyz);
 
-	vec2 ruv = SCREEN_UV + slope * refraction * clamp(thickness0 * 0.6, 0.0, 1.0);
+	// Вдали искажения слабее: иначе мелкая рябь даёт мерцающий «песок».
+	float water_dist_k = 1.0 - smoothstep(50.0, 180.0, -VERTEX.z);
+	vec2 ruv = SCREEN_UV + slope * refraction * clamp(thickness0 * 0.6, 0.0, 1.0) * water_dist_k;
 	vec3 refr_view = view_from_depth(ruv, texture(depth_tex, ruv).r, INV_PROJECTION_MATRIX);
-	if (-refr_view.z < water_dist) {
+	vec3 ground_world = (INV_VIEW_MATRIX * vec4(refr_view, 1.0)).xyz;
+	// Сдвиг попал на предмет перед водой или на берег выше воды — берём точку без сдвига.
+	if (-refr_view.z < water_dist || ground_world.y > world_pos.y - 0.02) {
 		ruv = SCREEN_UV;
 		refr_view = ground_view;
+		ground_world = ground_world0;
 	}
-	vec3 ground_world = (INV_VIEW_MATRIX * vec4(refr_view, 1.0)).xyz;
 	float depth_v = max(world_pos.y - ground_world.y, 0.0);
 	float thickness = max(-refr_view.z - water_dist, 0.0);
 
@@ -161,7 +168,7 @@ void fragment() {
 	vec3 view_dir = normalize(CAMERA_POSITION_WORLD - world_pos);
 	float fres = 0.04 + 0.96 * pow(1.0 - clamp(dot(nw, view_dir), 0.0, 1.0), 5.0);
 	float near_k = clamp(water_dist / 40.0, 0.25, 1.0);
-	vec2 refl_uv = vec2(SCREEN_UV.x, 1.0 - SCREEN_UV.y) + slope * 0.05 * near_k;
+	vec2 refl_uv = vec2(SCREEN_UV.x, 1.0 - SCREEN_UV.y) + big_slope * 0.05 * near_k * water_dist_k;
 	vec3 refl = mix(sky_fallback * mix(1.0, 0.12, night), texture(reflection_tex, refl_uv).rgb, reflection_enabled);
 	// В дождь и порывы отражение размыто и слабее.
 	float refl_k = clamp(0.12 + fres * 1.25, 0.0, 0.92) * (1.0 - rain * 0.25);
