@@ -17,6 +17,9 @@ signal chunk_loaded(chunk: Chunk)
 var use_threads := true
 ## Чанки, которым ещё нужно пересеять траву (см. refresh_all_cover).
 var _cover_queue: Array = []
+## Чанки, где меняли рельеф: после мазка объекты и трава в них проверяются заново.
+var _content_dirty := {}
+var _content_queue: Array = []
 
 var gen: WorldGen
 var chunks := {}
@@ -65,6 +68,8 @@ func _process(delta: float) -> void:
 	# Новая густота травы: перестраиваем покров по чанку за кадр, ближние — первыми.
 	if not _cover_queue.is_empty():
 		_refresh_cover(_cover_queue.pop_front())
+	elif not _content_queue.is_empty() and _dirty.is_empty():
+		_refresh_content(_content_queue.pop_front())
 	_rebuild_timer -= delta
 	if _rebuild_timer <= 0.0 and not _dirty.is_empty():
 		_rebuild_timer = 0.06
@@ -320,6 +325,29 @@ func plant_tree(pos: Vector3, id: String) -> String:
 
 
 ## Пересоздаёт все чанки (например, после смены густоты травы).
+## Мазок выравнивания закончен: объекты и трава в изменённых чанках — заново по
+## правилам мира. Под водой ничего не растёт, на новых горах — только горное,
+## а на выровненной земле (если так в настройках) — пусто.
+func commit_terrain_edits() -> void:
+	for c: Vector2i in _content_dirty:
+		if not _content_queue.has(c):
+			_content_queue.append(c)
+	_content_dirty.clear()
+
+
+func _refresh_content(c: Vector2i) -> void:
+	var chunk: Chunk = chunks.get(c)
+	if chunk == null:
+		return
+	var out := {}
+	gen.generate_chunk(c, _edits_for_chunk(c), WorldState.removed_in_chunk(c), WorldState.opened_chests.has(c), out,
+		cover_density(), _extra_for_chunk(c))
+	chunk.replace_content(out)
+	# Карта и всё, что лежит на земле (здания, дорожки), узнают о новом рельефе.
+	WorldState.explored.erase(c)
+	chunk_loaded.emit(chunk)
+
+
 ## Пересеять траву во всех чанках (сменилась густота). Мир при этом не пропадает.
 func refresh_all_cover() -> void:
 	_cover_queue = chunks.keys()
@@ -380,6 +408,7 @@ func set_vertex_height(vx: int, vz: int, h: float) -> void:
 			if chunks.has(c):
 				chunks[c].set_vertex_height(i, j, h)
 				_dirty[c] = true
+				_content_dirty[c] = true
 
 
 ## Плавно тянет вершины в круге к высоте target. step — метров за вызов.

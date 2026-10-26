@@ -205,6 +205,20 @@ static func hide_in_rect(buffer: PackedFloat32Array, stride: int, rect: Rect2) -
 	return changed
 
 
+## Прячет экземпляры, чьи основания попали в клетки 1×1 м (мировые координаты;
+## origin — положение чанка). Нужно для дорожек произвольной формы.
+static func hide_in_cells(buffer: PackedFloat32Array, stride: int, cells: Dictionary, origin: Vector2) -> bool:
+	var changed := false
+	for i in range(0, buffer.size(), stride):
+		if buffer[i + 5] == 0.0:
+			continue
+		if cells.has(Vector2i(floori(buffer[i + 3] + origin.x), floori(buffer[i + 11] + origin.y))):
+			for k in [0, 2, 5, 8, 10]:
+				buffer[i + k] = 0.0
+			changed = true
+	return changed
+
+
 ## Ставит экземпляры на новую высоту земли после выравнивания.
 static func refit_heights(buffer: PackedFloat32Array, stride: int, height: Callable) -> void:
 	for i in range(0, buffer.size(), stride):

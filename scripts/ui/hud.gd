@@ -33,7 +33,7 @@ var _ui_hidden := false
 var _root: Control
 var _labels: WorldLabels
 var _bottom: VBoxContainer
-var _top_left: HBoxContainer
+var _top_left: VBoxContainer
 var _resource_bar: PanelContainer
 var _main_counts := {}
 var _all_panel: PanelContainer
@@ -74,9 +74,9 @@ var _hint_panel: PanelContainer
 var _hint_label: Label
 var _actions: VBoxContainer
 var _actions_key := ""
-var _toast: PanelContainer
-var _toast_label: Label
-var _toast_tween: Tween
+var _rotate_hold: Button
+var _hint_max_width := 600.0
+var _notices: Notices
 var _loading: Control
 var _portrait_hint: Control
 var _info_timer := 0.0
@@ -172,8 +172,11 @@ func is_modal_open() -> bool:
 	return _settings.is_open() or _map_panel.is_open()
 
 
-## Окна открываются по одному: открытие одного закрывает остальные.
+## Окна открываются по одному: открытие одного закрывает остальные
+## (меню стройки — тоже окно).
 func _close_panels(except := "") -> void:
+	if except != "drawer" and _drawer_open:
+		_set_drawer(false)
 	if except != "settings" and _settings.is_open():
 		_settings.close()
 	if except != "map" and _map_panel.is_open():
@@ -231,7 +234,7 @@ func toggle_ui_hidden() -> void:
 	_ui_hidden = not _ui_hidden
 	_close_panels()
 	for c in _root.get_children():
-		if c == _toast or c == _loading or c == _portrait_hint:
+		if c == _notices or c == _loading or c == _portrait_hint:
 			continue
 		var target := 0.0 if _ui_hidden else 1.0
 		if c is Control:
@@ -264,8 +267,11 @@ func _apply_layout() -> void:
 	_pin(_clock_row, -m["right"], m["top"], -m["right"], m["top"])
 	_pin(_bottom, 0.0, -m["bottom"], 0.0, -m["bottom"])
 	_pin(_actions, -m["right"], -m["bottom"], -m["right"], -m["bottom"])
-	var toast_y: float = m["top"] + _px(80, 56)
-	_pin(_toast, 0.0, toast_y, 0.0, toast_y)
+	# Сообщения — по центру под верхней строкой, не шире промежутка между
+	# мини-картой и часами.
+	var toast_y: float = m["top"] + _resource_bar.get_combined_minimum_size().y + 10.0
+	_notices.position.y = toast_y
+	_hint_max_width = minf(vp.x - 2.0 * (maxf(m["left"], m["right"]) + ACTIONS_WIDTH + 12.0), 720.0)
 	var below_bar: float = m["top"] + _resource_bar.get_combined_minimum_size().y + 8.0
 	_pin(_all_panel, m["left"], below_bar, m["left"], below_bar)
 	var all_room: float = vp.y - below_bar - m["bottom"] - 60.0
@@ -273,10 +279,12 @@ func _apply_layout() -> void:
 	all_scroll.custom_minimum_size.y = minf(all_scroll.content().get_combined_minimum_size().y, all_room)
 	var side := maxf(m["left"], m["right"]) + ACTIONS_WIDTH
 	_build_panel.custom_minimum_size.x = minf(maxf(vp.x - side * 2.0, 360.0), 1000.0)
-	# Ремесло — посередине, между часами и панелью инструментов.
-	var craft_top: float = m["top"] + _px(76, 58)
-	_pin(_craft_panel, 0.0, craft_top, 0.0, craft_top)
-	var craft_room: float = vp.y - craft_top - m["bottom"] - _px(110, 74) - _px(120, 104)
+	# Ремесло — справа, под часами: центр экрана остаётся для сообщений.
+	var craft_top: float = m["top"] + _clock_row.get_combined_minimum_size().y + 10.0
+	_pin(_craft_panel, -m["right"], craft_top, -m["right"], craft_top)
+	_craft_panel.custom_minimum_size.x = minf(_px(480, 440), vp.x - m["left"] - m["right"] - _minimap.custom_minimum_size.x - 40.0)
+	# Снизу оставляем место панели инструментов и строке подсказки.
+	var craft_room: float = vp.y - craft_top - m["bottom"] - _px(92, 80) - _px(48, 44) - _px(120, 104)
 	_craft_scroll.custom_minimum_size.y = clampf(_craft_scroll.content().get_combined_minimum_size().y, 80.0, maxf(craft_room, 80.0))
 	if _portrait_hint:
 		# Браузер на телефоне не умеет закрепить альбомную ориентацию — просим повернуть.
@@ -295,12 +303,13 @@ static func _pin(c: Control, left: float, top: float, right: float, bottom: floa
 # --- Ресурсы и мини-карта ----------------------------------------------------------------------
 
 func _build_resources() -> void:
-	_top_left = HBoxContainer.new()
+	# Слева сверху: ресурсы, под ними — мини-карта.
+	_top_left = VBoxContainer.new()
 	_top_left.add_theme_constant_override("separation", _px(10, 8))
 	_top_left.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_top_left)
 	_resource_bar = PanelContainer.new()
-	_resource_bar.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_resource_bar.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	if _touch:
 		_resource_bar.add_theme_stylebox_override("panel", UiStyle.panel(14, 9))
 	_top_left.add_child(_resource_bar)
@@ -331,17 +340,20 @@ func _build_resources() -> void:
 	more.pressed.connect(toggle_resources)
 	row.add_child(more)
 
-	# Мини-карта сразу после ресурсов: скруглённый квадрат, по нажатию — большая карта.
+	# Мини-карта под ресурсами: скруглённый квадрат, карта заполняет его целиком
+	# и обрезана ровно по скруглению; по нажатию — большая карта.
 	var map_frame := PanelContainer.new()
 	_map_frame = map_frame
-	map_frame.add_theme_stylebox_override("panel", UiStyle.box(Color(UiStyle.BASE, 0.97), 16, 3, 2, UiStyle.BRAND, true))
-	map_frame.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	var radius := int(_px(18, 14))
+	var frame_style := UiStyle.box(Color(UiStyle.BASE, 0.97), radius, 0, 0, UiStyle.BRAND, true)
+	map_frame.add_theme_stylebox_override("panel", frame_style)
+	map_frame.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_top_left.add_child(map_frame)
 	_minimap = Minimap.new()
-	var side := _px(118, 88)
+	var side := _px(150, 96)
 	_minimap.custom_minimum_size = Vector2(side, side)
-	_minimap.view_meters = 300.0
-	_minimap.corner_radius = 13.0
+	_minimap.view_meters = 220.0
+	_minimap.corner_radius = radius
 	_minimap.tooltip_text = "Карта [Tab]"
 	_minimap.tapped.connect(func(_p: Vector2) -> void: open_map())
 	map_frame.add_child(_minimap)
@@ -537,6 +549,8 @@ func _on_tool_changed(tool: Interaction.Tool) -> void:
 
 
 func _set_drawer(open: bool) -> void:
+	if open and not _drawer_open:
+		_close_panels("drawer")
 	_drawer_open = open
 	UiStyle.fade(_build_panel, open)
 	if open:
@@ -570,6 +584,10 @@ func _build_build_panel() -> void:
 	_build_panel.modulate.a = 0.0
 	_build_panel.add_theme_stylebox_override("panel", UiStyle.panel(16, int(_px(10, 8))))
 	_bottom.add_child(_build_panel)
+	# Фон меню: контурные рисунки фирменным цветом.
+	var doodles := Doodles.new()
+	doodles.line_width = _px(2.0, 1.6)
+	_build_panel.add_child(doodles)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", _px(10, 6))
 	_build_panel.add_child(box)
@@ -585,8 +603,12 @@ func _build_build_panel() -> void:
 		b.button_group = group
 		b.button_pressed = cat == _category
 		b.custom_minimum_size = Vector2(0, _px(38, 34))
-		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		b.clip_text = true
+		# На ПК вкладки делят ширину поровну; на телефоне они своей ширины
+		# и листаются вбок, чтобы названия не обрезались.
+		if not _touch:
+			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			b.clip_text = true
+		b.mouse_filter = Control.MOUSE_FILTER_PASS
 		b.add_theme_font_size_override("font_size", int(_px(14, 12)))
 		b.pressed.connect(func() -> void:
 			_category = cat
@@ -594,7 +616,13 @@ func _build_build_panel() -> void:
 			_refresh_build_cards())
 		tabs.add_child(b)
 		_category_buttons[cat] = b
-	box.add_child(tabs)
+	if _touch:
+		var tab_scroll := SmoothScroll.new()
+		tab_scroll.horizontal = true
+		tab_scroll.add_child(tabs)
+		box.add_child(tab_scroll)
+	else:
+		box.add_child(tabs)
 	# Лента карточек листается пальцем или колесом вбок.
 	_build_scroll = SmoothScroll.new()
 	_build_scroll.horizontal = true
@@ -700,7 +728,8 @@ func _refresh_build_cards() -> void:
 		time_label.add_theme_color_override("font_color", UiStyle.MUTED if affordable else UiStyle.BAD)
 		var selected := interaction != null and interaction.building_system.selected_id == id
 		b.disabled = not affordable
-		b.add_theme_stylebox_override("normal", UiStyle.box(UiStyle.BRAND.lightened(0.35) if selected else UiStyle.SURFACE, 14, 8,
+		# Карточки чуть прозрачные — сквозь них виден рисунок фона меню.
+		b.add_theme_stylebox_override("normal", UiStyle.box(UiStyle.BRAND.lightened(0.35) if selected else Color(UiStyle.SURFACE, 0.72), 14, 8,
 			2 if selected else 0, UiStyle.BRAND_DARK))
 		b.add_theme_stylebox_override("disabled", UiStyle.box(Color(UiStyle.SURFACE, 0.55), 14, 8))
 		b.modulate = Color.WHITE if affordable else Color(1, 1, 1, 0.62)
@@ -710,8 +739,8 @@ func _refresh_build_cards() -> void:
 
 func _build_craft_panel() -> void:
 	_craft_panel = PanelContainer.new()
-	_craft_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	_craft_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_craft_panel.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_craft_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_craft_panel.custom_minimum_size = Vector2(_px(480, 440), 0)
 	_craft_panel.add_theme_stylebox_override("panel", UiStyle.panel(16, int(_px(14, 10))))
 	_craft_panel.visible = false
@@ -887,6 +916,7 @@ func _build_hover() -> void:
 	_hover_panel.visible = false
 	_root.add_child(_hover_panel)
 	_hover_label = UiStyle.label("", 14, UiStyle.TEXT, 700)
+	_hover_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hover_panel.add_child(_hover_label)
 
 
@@ -901,17 +931,25 @@ func _build_hint() -> void:
 	_bottom.add_child(_hint_panel)
 	_hint_label = UiStyle.label("", 13, UiStyle.TEXT, 700)
 	_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint_panel.add_child(_hint_label)
 
 
 func _on_hover_changed(text: String) -> void:
 	if _touch:
+		if _hint_panel.has_meta("flash"):
+			# Сейчас в строке сообщение — подсказку покажем после него.
+			_hint_panel.set_meta("normal_text", text)
+			return
 		if text != "":
 			_hint_label.text = text
+			# Длинная подсказка переносится и не выходит за края экрана.
+			Notices.fit_label(_hint_label, text, _hint_max_width)
 			_hint_panel.reset_size()
-		UiStyle.fade(_hint_panel, text != "")
+		UiStyle.fade(_hint_panel, text != "", 0.2)
 		return
 	_hover_label.text = text
+	Notices.fit_label(_hover_label, text, 420.0)
 	_hover_panel.reset_size()
 	_hover_panel.visible = text != ""
 
@@ -953,6 +991,20 @@ func _action_button(icon_name: String, text: String, toggled := false) -> Button
 	return b
 
 
+## «Повернуть»: короткое нажатие — на 15°, удержание — плавно на любой угол.
+func _rotate_button() -> Button:
+	var b := _action_button("rotate", "Повернуть")
+	b.button_down.connect(func() -> void:
+		b.set_meta("held", 0.0)
+		b.set_meta("spun", false))
+	b.button_up.connect(func() -> void:
+		if not b.get_meta("spun", false):
+			interaction.rotate_building()
+		b.remove_meta("held"))
+	_rotate_hold = b
+	return b
+
+
 ## Набор кнопок зависит от инструмента и выбора; пересобираем, только когда он меняется.
 func _update_actions() -> void:
 	var bs := interaction.building_system
@@ -961,6 +1013,7 @@ func _update_actions() -> void:
 		is_instance_valid(interaction.selected_building), not interaction.jobs.is_empty(), _drawer_open,
 		interaction.nature_mode, interaction.flatten_offset_text(), interaction.tree_species, bs.crop_choice, selected_crop,
 		interaction.selected_building.get_instance_id() if is_instance_valid(interaction.selected_building) else 0]
+	key += "|%s|%d" % [bs.path_mode, interaction.selected_path]
 	if key == _actions_key:
 		return
 	_actions_key = key
@@ -970,7 +1023,7 @@ func _update_actions() -> void:
 	match interaction.tool:
 		Interaction.Tool.BUILD:
 			if bs.moving:
-				_action_button("rotate", "Повернуть").pressed.connect(interaction.rotate_building)
+				_rotate_button()
 				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction.set_tool(Interaction.Tool.EDIT))
 				_action_button("check", "Поставить").pressed.connect(interaction.confirm_build)
 			elif bs.selected_id != "":
@@ -979,9 +1032,17 @@ func _update_actions() -> void:
 				if GameData.BUILDINGS[bs.selected_id].has("crops"):
 					var c: Dictionary = CropPatch.CROPS[bs.crop_choice]
 					_action_button(c["icon"], c["name"], true).pressed.connect(interaction.next_crop)
-				_action_button("rotate", "Повернуть").pressed.connect(interaction.rotate_building)
-				_action_button("close", "Отмена").pressed.connect(to_harvest)
-				_action_button("check", "Построить").pressed.connect(interaction.confirm_build)
+				if bs.is_path():
+					# Дорожки: плитками или плавной лентой за пальцем.
+					_action_button("path_tiles", "Плитки", bs.path_mode == "tiles").pressed.connect(
+						func() -> void: interaction.set_path_mode("tiles"))
+					_action_button("path_smooth", "Плавная", bs.path_mode == "auto").pressed.connect(
+						func() -> void: interaction.set_path_mode("auto"))
+					_action_button("close", "Отмена").pressed.connect(to_harvest)
+				else:
+					_rotate_button()
+					_action_button("close", "Отмена").pressed.connect(to_harvest)
+					_action_button("check", "Построить").pressed.connect(interaction.confirm_build)
 			elif _touch:
 				_action_button("close", "Отмена").pressed.connect(to_harvest)
 		Interaction.Tool.FLATTEN:
@@ -1006,7 +1067,10 @@ func _update_actions() -> void:
 				_action_button("plus", "Шире").pressed.connect(func() -> void: interaction.resize_brush(1.0))
 				_action_button("minus", "Уже").pressed.connect(func() -> void: interaction.resize_brush(-1.0))
 		Interaction.Tool.EDIT:
-			if is_instance_valid(interaction.selected_building):
+			if interaction.selected_path >= 0:
+				_action_button("trash", "Убрать").pressed.connect(interaction.remove_selected_path)
+				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction._edit_pick(null, null))
+			elif is_instance_valid(interaction.selected_building):
 				if interaction.selected_building.has_crops():
 					var c: Dictionary = CropPatch.CROPS[selected_crop if selected_crop != "" else "wheat"]
 					_action_button(c["icon"], c["name"], true).pressed.connect(interaction.next_crop)
@@ -1027,26 +1091,30 @@ func _update_actions() -> void:
 
 
 func _build_toast() -> void:
-	_toast = PanelContainer.new()
-	_toast.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	_toast.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_toast.add_theme_stylebox_override("panel", UiStyle.box(Color(UiStyle.BASE, 0.97), 22, int(_px(12, 9)), 2, UiStyle.BRAND, true))
-	_toast.modulate.a = 0.0
-	_root.add_child(_toast)
-	_toast_label = UiStyle.label("", _px(17, 14), UiStyle.TEXT, 700)
-	_toast.add_child(_toast_label)
+	_notices = Notices.new()
+	_notices.font_size = int(_px(17, 14))
+	_notices.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_root.add_child(_notices)
 
 
 func show_message(text: String) -> void:
-	_toast_label.text = text
-	_toast.reset_size()
-	if _toast_tween:
-		_toast_tween.kill()
-	_toast_tween = _toast.create_tween()
-	_toast_tween.tween_property(_toast, "modulate:a", 1.0, 0.15)
-	_toast_tween.tween_interval(2.4)
-	_toast_tween.tween_property(_toast, "modulate:a", 0.0, 0.5)
+	# На телефоне меню стройки занимает верх экрана — сообщение показываем в строке
+	# подсказки над панелью инструментов, чтобы оно ничего не закрывало.
+	if _touch and _drawer_open:
+		_flash_hint(text)
+		return
+	_notices.show_text(text)
+
+
+func _flash_hint(text: String) -> void:
+	if not _hint_panel.has_meta("flash"):
+		_hint_panel.set_meta("normal_text", _hint_label.text)
+	_hint_panel.set_meta("flash", Notices.SHOW_TIME)
+	_hint_label.text = text
+	Notices.fit_label(_hint_label, text, _hint_max_width)
+	_hint_label.add_theme_color_override("font_color", UiStyle.BRAND_DARK)
+	_hint_panel.reset_size()
+	UiStyle.fade(_hint_panel, true, 0.2)
 
 
 func _build_loading() -> void:
@@ -1114,10 +1182,21 @@ func hide_loading() -> void:
 func _process(delta: float) -> void:
 	# На телефоне меню стройки и ремесло занимают верх экрана — мини-карта
 	# на это время уходит, чтобы не закрывать их.
-	if _touch and _map_frame:
-		var covered := _drawer_open or bool(_craft_panel.get_meta("fade_target", false))
+	if _map_frame:
+		var covered := bool(_all_panel.get_meta("fade_target", false))
+		if _touch:
+			covered = covered or _drawer_open
 		_map_frame.modulate.a = move_toward(_map_frame.modulate.a, 0.0 if covered else 1.0, delta * 6.0)
 		_map_frame.visible = _map_frame.modulate.a > 0.01
+	_place_notices()
+	if _hint_panel.has_meta("flash"):
+		var left: float = _hint_panel.get_meta("flash") - delta
+		if left > 0.0:
+			_hint_panel.set_meta("flash", left)
+		else:
+			_hint_panel.remove_meta("flash")
+			_hint_label.remove_theme_color_override("font_color")
+			_on_hover_changed(str(_hint_panel.get_meta("normal_text", "")))
 	_info_timer -= delta
 	if _info_timer <= 0.0:
 		_info_timer = 0.25
@@ -1127,6 +1206,13 @@ func _process(delta: float) -> void:
 	if interaction:
 		_update_job_panel()
 		_update_actions()
+		# Удерживаемая «Повернуть» крутит призрак плавно (≈ 60° в секунду).
+		if is_instance_valid(_rotate_hold) and _rotate_hold.has_meta("held"):
+			var held: float = _rotate_hold.get_meta("held") + delta
+			_rotate_hold.set_meta("held", held)
+			if held > 0.3:
+				_rotate_hold.set_meta("spun", true)
+				interaction.building_system.rotate_ghost_by(deg_to_rad(60.0) * delta)
 		# Полоска ремесла: плавно следует за прогрессом, а при смене рецепта — сразу к нулю.
 		var f := Crafting.current_fraction()
 		_craft_progress.value = f if f < _craft_progress.value else lerpf(_craft_progress.value, f, 1.0 - exp(-14.0 * delta))
@@ -1136,6 +1222,21 @@ func _process(delta: float) -> void:
 		target.x = minf(target.x, vp.x - _hover_panel.size.x - 8)
 		target.y = minf(target.y, vp.y - _hover_panel.size.y - 8)
 		_hover_panel.position = _hover_panel.position.lerp(target, 1.0 - exp(-25.0 * delta))
+
+
+## Сообщения — в свободной полосе между мини-картой и открытым справа окном.
+func _place_notices() -> void:
+	var m := Platform.safe_margins() if _touch else {"left": 16.0, "top": 16.0, "right": 16.0, "bottom": 16.0}
+	var vp := _root.get_viewport_rect().size
+	var left: float = m["left"]
+	if _map_frame and _map_frame.visible:
+		left += _map_frame.size.x + 14.0
+	var right: float = vp.x - m["right"]
+	if _craft_panel.get_meta("fade_target", false):
+		right = _craft_panel.global_position.x - 14.0
+	_notices.max_width = clampf(right - left - 12.0, 200.0, 620.0)
+	var x := (left + right) * 0.5 - _notices.size.x * 0.5
+	_notices.position.x = lerpf(_notices.position.x, x, 0.35)
 
 
 ## Раз в четверть секунды: не ушли ли мы далеко от мастерских (рецепты блокируются).

@@ -224,7 +224,7 @@ func _on_map_input(event: InputEvent) -> void:
 			var keys := _touches.keys()
 			var dist: float = (_touches[keys[0]] as Vector2).distance_to(_touches[keys[1]])
 			if _pinch > 0.0:
-				map.view_meters = clampf(map.view_meters * _pinch / maxf(dist, 1.0), 120.0, 4000.0)
+				map.view_meters = clampf(map.view_meters * _pinch / maxf(dist, 1.0), 120.0, 1800.0)
 			_pinch = dist
 			_moved = 999.0
 	elif event is InputEventMouseButton:
@@ -232,7 +232,7 @@ func _on_map_input(event: InputEvent) -> void:
 		if mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
 			map.view_meters = maxf(map.view_meters * 0.85, 120.0)
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
-			map.view_meters = minf(map.view_meters * 1.18, 4000.0)
+			map.view_meters = minf(map.view_meters * 1.18, 1800.0)
 		elif mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
 				_dragging = true

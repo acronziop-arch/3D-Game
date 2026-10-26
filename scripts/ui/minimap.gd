@@ -8,8 +8,9 @@ extends Control
 
 signal tapped(world_pos: Vector2)
 
-const CELL := 8.0
-const PER_CHUNK := 4
+## Пиксель полотна — 4 м: карта чёткая, но сохранение остаётся маленьким.
+const CELL := 4.0
+const PER_CHUNK := 8
 const CANVAS := 512
 const PAPER := Color("#E9E2D3")
 
@@ -31,6 +32,8 @@ var follow_camera := true
 var corner_radius := 14.0
 
 var _view: TextureRect
+## Поверх полотна: руины, здания, метки, стрелка камеры и рамка.
+var _overlay: Control
 var _redraw_timer := 0.0
 
 
@@ -45,8 +48,10 @@ static func ensure_canvas() -> void:
 static func explore(chunk: Chunk) -> void:
 	ensure_canvas()
 	if WorldState.explored.has(chunk.coord):
-		_paint_chunk(chunk.coord, WorldState.explored[chunk.coord])
-		return
+		var known: PackedByteArray = WorldState.explored[chunk.coord]
+		if known.size() == PER_CHUNK * PER_CHUNK * 3:
+			_paint_chunk(chunk.coord, known)
+			return
 	var bytes := PackedByteArray()
 	bytes.resize(PER_CHUNK * PER_CHUNK * 3)
 	var step := WorldGen.CHUNK_SIZE / PER_CHUNK
@@ -64,7 +69,7 @@ static func explore(chunk: Chunk) -> void:
 				# Светотень: склоны к северо-западу светлее, к юго-востоку темнее.
 				var dx := chunk.height_local(minf(lx + 2.0, WorldGen.CHUNK_SIZE), lz) - chunk.height_local(maxf(lx - 2.0, 0.0), lz)
 				var dz := chunk.height_local(lx, minf(lz + 2.0, WorldGen.CHUNK_SIZE)) - chunk.height_local(lx, maxf(lz - 2.0, 0.0))
-				var shade := clampf(1.0 - (dx + dz) * 0.06, 0.75, 1.2)
+				var shade := clampf(1.0 - (dx + dz) * 0.09, 0.72, 1.22)
 				c = Color(c.r * shade, c.g * shade, c.b * shade).lerp(Color.WHITE, clampf((h - 12.0) / 60.0, 0.0, 0.25))
 			var o := (j * PER_CHUNK + i) * 3
 			bytes[o] = clampi(roundi(c.r * 255.0), 0, 255)
@@ -75,6 +80,19 @@ static func explore(chunk: Chunk) -> void:
 
 
 static func _paint_chunk(coord: Vector2i, bytes: PackedByteArray) -> void:
+	# Старые сохранения хранили 4×4 точки на чанк — растягиваем.
+	var n := roundi(sqrt(bytes.size() / 3.0))
+	if n != PER_CHUNK and n > 0:
+		var up := PackedByteArray()
+		up.resize(PER_CHUNK * PER_CHUNK * 3)
+		for j in PER_CHUNK:
+			for i in PER_CHUNK:
+				var o := ((j * n / PER_CHUNK) * n + (i * n / PER_CHUNK)) * 3
+				var t := (j * PER_CHUNK + i) * 3
+				up[t] = bytes[o]
+				up[t + 1] = bytes[o + 1]
+				up[t + 2] = bytes[o + 2]
+		bytes = up
 	for j in PER_CHUNK:
 		for i in PER_CHUNK:
 			var px := coord.x * PER_CHUNK + i - _origin.x
@@ -124,11 +142,16 @@ func _ready() -> void:
 		_shader = Shader.new()
 		_shader.code = """
 shader_type canvas_item;
-// Скруглённые углы карты и мягкая тень по краю.
+// Скруглённые углы карты и мягкая тень по краю. Маска считается по положению
+// внутри блока (UV у куска полотна — это координаты всего полотна).
 uniform vec2 size = vec2(100.0);
 uniform float radius = 14.0;
+varying vec2 local;
+void vertex() {
+	local = VERTEX;
+}
 void fragment() {
-	vec2 p = UV * size;
+	vec2 p = local;
 	vec2 q = abs(p - size * 0.5) - (size * 0.5 - vec2(radius));
 	float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
 	vec4 c = texture(TEXTURE, UV);
@@ -143,6 +166,12 @@ void fragment() {
 	_view.material = mat
 	add_child(_view)
 	move_child(_view, 0)
+	# Значки рисуются отдельным слоем поверх полотна (иначе полотно их закрывает).
+	_overlay = Control.new()
+	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_overlay.draw.connect(_draw_overlay)
+	add_child(_overlay)
 
 
 func _process(delta: float) -> void:
@@ -165,7 +194,7 @@ func _process(delta: float) -> void:
 	_redraw_timer -= delta
 	if _redraw_timer <= 0.0:
 		_redraw_timer = 0.05
-		queue_redraw()
+		_overlay.queue_redraw()
 
 
 ## Мировые XZ → точка на карте.
@@ -179,9 +208,10 @@ func map_to_world(p: Vector2) -> Vector2:
 	return center + (p - size * 0.5) / k
 
 
-func _draw() -> void:
+func _draw_overlay() -> void:
 	if camera_rig == null:
 		return
+	var ci := _overlay
 	var k := size.y / view_meters
 	var rect := Rect2(Vector2.ZERO, size).grow(-2.0)
 	# Руины в разведанной части — коричневые «развалины».
@@ -199,7 +229,7 @@ func _draw() -> void:
 					continue
 				var mp := world_to_map(sc)
 				if rect.has_point(mp):
-					_draw_ruin(mp, maxf(4.0, WorldGen.RUIN_RADIUS * k * 0.35))
+					_draw_ruin(ci, mp, maxf(4.0, WorldGen.RUIN_RADIUS * k * 0.35))
 	# Здания.
 	if building_system:
 		for b in building_system.buildings:
@@ -209,15 +239,16 @@ func _draw() -> void:
 			if not rect.has_point(mp):
 				continue
 			var s := clampf(maxf(b.footprint.size.x, b.footprint.size.y) * k, 3.0, 14.0)
-			draw_rect(Rect2(mp - Vector2(s, s) * 0.5, Vector2(s, s)), Color("#8C5A3C"))
-			draw_rect(Rect2(mp - Vector2(s, s) * 0.5, Vector2(s, s)), Color("#3E342B"), false, 1.0)
-	# Метки игрока.
+			ci.draw_rect(Rect2(mp - Vector2(s, s) * 0.5, Vector2(s, s)), Color("#8C5A3C"))
+			ci.draw_rect(Rect2(mp - Vector2(s, s) * 0.5, Vector2(s, s)), Color("#3E342B"), false, 1.0)
+	# Метки игрока: дальние прижимаются к краю карты, чтобы было видно, где они.
+	var small := size.y < 200.0
+	var pad := corner_radius * 0.6 + (9.0 if small else 13.0)
 	for m: Dictionary in WorldState.markers:
 		var p: Vector3 = m["pos"]
 		var mp := world_to_map(Vector2(p.x, p.z))
-		if not rect.grow(8.0).has_point(mp):
-			mp = mp.clamp(Vector2(10, 10), size - Vector2(10, 10))
-		draw_marker(self, mp, m, 1.0 if size.y > 200.0 else 0.75)
+		mp = mp.clamp(Vector2(pad, pad), size - Vector2(pad, pad))
+		draw_marker(ci, mp, m, 0.7 if small else 1.0)
 	# Камера: стрелка по направлению взгляда.
 	var cam := world_to_map(Vector2(camera_rig.position.x, camera_rig.position.z))
 	var yaw := camera_rig.rotation.y
@@ -225,8 +256,16 @@ func _draw() -> void:
 	var side := Vector2(-fwd.y, fwd.x)
 	var tip := cam + fwd * 9.0
 	var pts := PackedVector2Array([tip, cam - fwd * 5.0 + side * 6.0, cam - fwd * 2.0, cam - fwd * 5.0 - side * 6.0])
-	draw_colored_polygon(pts, Color("#3E342B"))
-	draw_polyline(pts + PackedVector2Array([tip]), Color.WHITE, 1.5, true)
+	ci.draw_colored_polygon(pts, Color("#3E342B"))
+	ci.draw_polyline(pts + PackedVector2Array([tip]), Color.WHITE, 1.5, true)
+	# Рамка по тому же скруглению, что и маска карты.
+	var frame := StyleBoxFlat.new()
+	frame.draw_center = false
+	frame.set_corner_radius_all(roundi(corner_radius))
+	frame.set_border_width_all(2)
+	frame.border_color = UiStyle.BRAND
+	frame.anti_aliasing = true
+	ci.draw_style_box(frame, Rect2(Vector2.ZERO, size))
 
 
 static func _marker_color(m: Dictionary) -> Color:
@@ -246,11 +285,11 @@ static func draw_marker(ci: CanvasItem, at: Vector2, m: Dictionary, scale := 1.0
 		ci.draw_texture_rect(icon, Rect2(at - Vector2(s, s) * 0.5, Vector2(s, s)), false)
 
 
-func _draw_ruin(at: Vector2, r: float) -> void:
+static func _draw_ruin(ci: CanvasItem, at: Vector2, r: float) -> void:
 	for i in 3:
 		var a := i * 2.1 + 0.4
 		var p := at + Vector2(cos(a), sin(a)) * r * 0.6
-		draw_rect(Rect2(p - Vector2(r * 0.35, r * 0.25), Vector2(r * 0.7, r * 0.5)), Color("#8A7A66"))
+		ci.draw_rect(Rect2(p - Vector2(r * 0.35, r * 0.25), Vector2(r * 0.7, r * 0.5)), Color("#8A7A66"))
 
 
 func _gui_input(event: InputEvent) -> void:

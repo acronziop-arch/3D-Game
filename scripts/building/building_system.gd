@@ -10,13 +10,15 @@ extends Node3D
 ##            прилипает к нему краем и поворачивается так же;
 ##   bridge — концы моста на берегах, середина над водой.
 ## Уже построенное здание можно передвинуть и повернуть (start_move).
-## Секции оград и плитки дорожек ("snap") цепляются концами к соседним; дорожку
-## можно «рисовать» — вести пальцем или мышью, плитки ложатся следом (paint_*).
+## Плитки дорожек ("snap") цепляются к соседним; в режиме «Плитки» их можно
+## класть касанием или вести пальцем (paint_*), в режиме «Плавная» дорожку рисует
+## PathSystem. Ограды ("group": "fence") ставятся вплотную друг к другу под любым углом.
 
 signal placed(building: Building)
 
 const MAX_UNEVENNESS := 1.6
-const GRID := 1.0
+## Шаг сетки размещения: мелкий, чтобы здание вставало точно, куда нужно.
+const GRID := 0.25
 const ROTATE_STEP := PI / 12.0
 const PLATFORM_SIZE := 4.0
 const PLATFORM_TOP := 0.8
@@ -35,6 +37,8 @@ var over_water := false
 var moving: Building
 ## Культура для новых грядок.
 var crop_choice := "wheat"
+## Дорожки: "tiles" — плитками, "auto" — плавная лента за пальцем.
+var path_mode := "tiles"
 
 var _ghost: Node3D
 var _ghost_materials: Array[ShaderMaterial] = []
@@ -140,6 +144,12 @@ func update_ghost(hit: Variant, delta: float) -> void:
 		return
 	var p: Vector3 = hit
 	var def: Dictionary = GameData.BUILDINGS[selected_id]
+	if is_smooth_path():
+		# Плавную дорожку рисуют пальцем — призрак плитки не нужен.
+		_ghost.visible = false
+		_cross.visible = false
+		is_valid = false
+		return
 	var target := Vector3(snappedf(p.x, GRID), 0, snappedf(p.z, GRID))
 	if def.has("snap"):
 		# Мелкие секции ставим точнее сетки, а рядом с такой же — цепляем к её концу.
@@ -274,7 +284,21 @@ func ground_normal(x: float, z: float) -> Vector3:
 	return Vector3(-hx, 2.0 * e, -hz).normalized()
 
 
-## Можно ли «рисовать» выбранное (дорожки).
+func is_path(id := selected_id) -> bool:
+	return id.begins_with("path_")
+
+
+## Выбрана дорожка в режиме «Плавная».
+func is_smooth_path() -> bool:
+	return moving == null and is_path() and path_mode == "auto"
+
+
+## Вид дорожки для PathSystem: dirt / wood / stone / brick.
+func path_type() -> String:
+	return selected_id.substr(5)
+
+
+## Можно ли «рисовать» выбранное плитками (дорожки в режиме «Плитки»).
 func is_paintable() -> bool:
 	return selected_id != "" and moving == null and GameData.BUILDINGS[selected_id].get("snap", {}).get("grid", false)
 
@@ -447,8 +471,12 @@ func _props_inside(box: Dictionary) -> bool:
 
 
 func _overlaps(box: Dictionary, mode: String) -> bool:
+	var group: String = GameData.BUILDINGS[selected_id].get("group", "") if selected_id != "" else ""
 	for b in buildings:
 		if not is_instance_valid(b) or b == moving:
+			continue
+		# Секции оград могут касаться и пересекаться концами под любым углом.
+		if group != "" and GameData.BUILDINGS[b.id].get("group", "") == group:
 			continue
 		# Здания можно ставить на настил — он им не мешает (и настилы — друг другу, если не внахлёст).
 		if b.id == "platform" and mode == "land":

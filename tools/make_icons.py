@@ -334,6 +334,12 @@ ICONS["tree_apple"] = svg(line("M32 60 L32 36", "#7A4A28", 5.0)
     + shape("M32 8 Q46 10 50 22 Q56 30 50 38 Q44 46 32 42 Q20 46 14 38 Q8 30 14 22 Q18 10 32 8 Z", "#6DB04A", "#3E7424")
     + "".join(circle(x, y, 4.2, "#E0443A", "#8E1E16", 1.8) for x, y in [(24, 22), (40, 20), (34, 32), (20, 34), (44, 34)]))
 
+ICONS["path_tiles"] = svg("".join(shape(f"M{x} {y} L{x + 14} {y} L{x + 14} {y + 14} L{x} {y + 14} Z", "#C9B8A6", "#6B5B4D", 'stroke-width="2.2"')
+    for x, y in [(10, 40), (25, 40), (25, 25), (40, 25), (40, 10)]))
+ICONS["path_smooth"] = svg(line("M10 54 Q14 34 30 32 Q48 30 54 10", "#6B5B4D", 15.0)
+    + line("M10 54 Q14 34 30 32 Q48 30 54 10", "#C9B8A6", 10.0)
+    + line("M10 54 Q14 34 30 32 Q48 30 54 10", "#E8DCCB", 2.4, 0.9))
+
 os.makedirs(OUT, exist_ok=True)
 for name, data in ICONS.items():
     with open(os.path.join(OUT, name + ".svg"), "w") as f:

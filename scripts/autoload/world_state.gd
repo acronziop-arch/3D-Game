@@ -21,6 +21,8 @@ var cover_edits: Dictionary = {}
 var planted: Dictionary = {}
 ## Метки игрока: [{"pos": Vector3, "color": Color, "icon": String, "name": String}].
 var markers: Array = []
+## Плавные дорожки (см. PathSystem).
+var paths: Array = []
 ## Разведанные клетки карты (Vector2i клетки карты -> цвет).
 var explored: Dictionary = {}
 ## id здания -> сколько достроено (нужно для проверки мастерских).
@@ -37,6 +39,7 @@ func new_world(seed_value := -1) -> void:
 	cover_edits.clear()
 	planted.clear()
 	markers.clear()
+	paths.clear()
 	explored.clear()
 	completed_counts.clear()
 	camera_state.clear()
@@ -99,6 +102,7 @@ func save_game() -> bool:
 		"cover": cover_edits,
 		"planted": planted,
 		"markers": markers,
+		"paths": paths,
 		"explored": explored,
 		"crafting": Crafting.save_state(),
 		"inventory": Inventory.items,
@@ -127,6 +131,7 @@ func load_game() -> bool:
 	cover_edits = data.get("cover", {})
 	planted = data.get("planted", {})
 	markers = data.get("markers", [])
+	paths = data.get("paths", [])
 	explored = data.get("explored", {})
 	camera_state = data["camera"]
 	Crafting.load_state(data.get("crafting", {}))

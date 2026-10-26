@@ -41,6 +41,7 @@ const TREE_SPECIES := ["tree_oak", "tree_birch", "tree_apple", "tree_pine", "tre
 var camera_rig: CameraRig
 var chunk_manager: ChunkManager
 var building_system: BuildingSystem
+var path_system: PathSystem
 var tool := Tool.HARVEST
 ## [{"kind": "prop"|"chest", "name", "time", "elapsed", ...}]
 var jobs: Array[Dictionary] = []
@@ -49,6 +50,8 @@ var flatten_offset := 0.0
 var nature_mode := "mow"
 var tree_species := 0
 var selected_building: Building
+## Выбранная в правке плавная дорожка (−1 — нет).
+var selected_path := -1
 
 var _ground: Variant = null
 var _hover := {}
@@ -59,6 +62,9 @@ var _flatten_target := 0.0
 var _painting := false
 ## Рисование дорожки (зажата мышь или палец ведёт по земле).
 var _build_painting := false
+var _smooth_drawing := false
+var _was_flattening := false
+var _edit_commit_timer := 1.0
 var _paint_timer := 0.0
 var _ring: Node3D
 var _ring_target := Vector3.ZERO
@@ -133,9 +139,11 @@ func set_tool(new_tool: Tool) -> void:
 		_hover_building.set_highlight(false)
 	_hover_building = null
 	select_building(null)
+	_select_path(-1)
 	_flattening = false
 	_painting = false
 	_end_build_paint()
+	_end_smooth_path()
 	_touch_info = ""
 	tool = new_tool
 	tool_changed.emit(tool)
@@ -174,7 +182,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("edit_move") and tool == Tool.EDIT:
 		edit_move()
 	elif event.is_action_pressed("edit_delete") and tool == Tool.EDIT:
-		demolish_selected()
+		if selected_path >= 0:
+			remove_selected_path()
+		else:
+			demolish_selected()
 	elif event.is_action_pressed("brush_bigger"):
 		resize_brush(1.0)
 	elif event.is_action_pressed("brush_smaller"):
@@ -204,6 +215,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_flattening = false
 				_painting = false
 				_end_build_paint()
+				_end_smooth_path()
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed and camera_rig.was_right_click():
 			if tool == Tool.BUILD and building_system.moving:
 				building_system.cancel()
@@ -321,7 +333,79 @@ func select_building(b: Building) -> void:
 	selected_building = b
 	if b:
 		b.set_highlight(true)
+		_select_path(-1)
 	options_changed.emit()
+
+
+func _select_path(i: int) -> void:
+	selected_path = i
+	if path_system:
+		path_system.select(i)
+
+
+## Правка: выбрать здание, а если его нет — плавную дорожку под точкой.
+func _edit_pick(b: Building, ground: Variant) -> void:
+	if b:
+		select_building(null if b == selected_building else b)
+		if selected_building:
+			_show_building_name(selected_building)
+			Platform.haptic(0.2)
+		return
+	var i := path_system.pick(ground) if ground != null and path_system else -1
+	select_building(null)
+	_select_path(-1 if i == selected_path else i)
+	if selected_path >= 0:
+		message.emit(path_system.name_of(selected_path))
+		Platform.haptic(0.2)
+	options_changed.emit()
+
+
+## Правка: убрать выбранную плавную дорожку.
+func remove_selected_path() -> void:
+	if selected_path < 0:
+		return
+	var refund := path_system.remove(selected_path)
+	selected_path = -1
+	message.emit("Дорожка убрана" + ("" if refund.is_empty() else " · вернули %s" % GameData.cost_text(refund)))
+	Platform.haptic(0.4)
+	options_changed.emit()
+
+
+## Дорожки: режим «Плитки» или «Плавная».
+func set_path_mode(mode: String) -> void:
+	building_system.path_mode = mode
+	_end_build_paint()
+	_end_smooth_path()
+	options_changed.emit()
+
+
+func _begin_smooth_path(ground: Variant) -> bool:
+	if ground == null:
+		return false
+	var reason := path_system.begin(building_system.path_type(), ground)
+	if reason != "":
+		message.emit(reason)
+		return false
+	_smooth_drawing = true
+	Platform.haptic(0.2)
+	return true
+
+
+func _extend_smooth_path(ground: Variant) -> void:
+	if not _smooth_drawing or ground == null:
+		return
+	var reason := path_system.extend(ground)
+	if reason != "":
+		message.emit(reason)
+		if not path_system.is_drawing():
+			_smooth_drawing = false
+
+
+func _end_smooth_path() -> void:
+	if _smooth_drawing:
+		_smooth_drawing = false
+		path_system.finish()
+		Platform.haptic(0.3)
 
 
 ## Правка: передвинуть выбранное здание (оно становится призраком).
@@ -407,6 +491,13 @@ func touch_tap(screen: Vector2) -> void:
 		Tool.BUILD:
 			if building_system.selected_id == "":
 				message.emit("Выберите здание в меню снизу")
+			elif building_system.is_smooth_path():
+				message.emit("Ведите пальцем по земле — дорожка ляжет следом")
+			elif building_system.is_paintable() and ground != null:
+				# Плитка кладётся сразу, без подтверждения.
+				_touch_anchor = ground
+				building_system.update_ghost(ground, 1.0)
+				confirm_build()
 			elif ground != null:
 				_touch_anchor = ground
 		Tool.NATURE:
@@ -416,17 +507,16 @@ func touch_tap(screen: Vector2) -> void:
 				chunk_manager.paint_cover(ground, brush_radius * 0.5, nature_mode)
 				Platform.haptic(0.15)
 		Tool.EDIT:
-			var b := building_system.pick(from, dir)
-			select_building(null if b == selected_building else b)
-			if b:
-				_show_building_name(b)
-				Platform.haptic(0.2)
+			_edit_pick(building_system.pick(from, dir), ground)
 
 
 ## Палец начал движение: true — инструмент забирает жест себе, иначе это движение камеры.
 func touch_drag_begin(screen: Vector2) -> bool:
 	match tool:
 		Tool.BUILD:
+			if building_system.is_smooth_path():
+				# Плавная дорожка: камера стоит, лента ложится за пальцем.
+				return _begin_smooth_path(_ground_at(screen))
 			if building_system.is_paintable():
 				# Дорожку рисуют пальцем: плитки ложатся следом.
 				var start: Variant = _ground_at(screen)
@@ -467,7 +557,9 @@ func touch_drag(screen: Vector2) -> void:
 	_touch_point = screen
 	if tool == Tool.BUILD:
 		var ground: Variant = _ground_at(screen)
-		if ground != null and _build_painting:
+		if ground != null and _smooth_drawing:
+			_extend_smooth_path(ground)
+		elif ground != null and _build_painting:
 			_touch_anchor = ground
 			_paint_build_to(ground)
 		elif ground != null:
@@ -478,11 +570,12 @@ func touch_drag_end() -> void:
 	_flattening = false
 	_painting = false
 	_end_build_paint()
+	_end_smooth_path()
 
 
 func _set_touch_info(text: String) -> void:
 	_touch_info = text
-	_touch_info_timer = 3.5
+	_touch_info_timer = Notices.SHOW_TIME
 
 
 func _start_flatten(ground: Vector3) -> void:
@@ -508,7 +601,9 @@ func _primary_action() -> void:
 			elif is_instance_valid(_hover_building):
 				_show_building_name(_hover_building)
 		Tool.BUILD:
-			if building_system.is_paintable():
+			if building_system.is_smooth_path():
+				_begin_smooth_path(_ground)
+			elif building_system.is_paintable():
 				_begin_build_paint()
 			else:
 				confirm_build()
@@ -524,15 +619,23 @@ func _primary_action() -> void:
 				_painting = true
 				_paint_timer = 0.0
 		Tool.EDIT:
-			select_building(null if _hover_building == selected_building else _hover_building)
-			if selected_building:
-				_show_building_name(selected_building)
+			_edit_pick(_hover_building, _ground)
 
 
 # --- Каждый кадр ------------------------------------------------------------------
 
 func _process(delta: float) -> void:
 	_time += delta
+	# Мазок выравнивания: объекты и трава на изменённой земле проверяются заново —
+	# по окончании мазка и раз в секунду, пока ровняют.
+	if _flattening:
+		_edit_commit_timer -= delta
+		if _edit_commit_timer <= 0.0:
+			_edit_commit_timer = 1.0
+			chunk_manager.commit_terrain_edits()
+	elif _was_flattening:
+		chunk_manager.commit_terrain_edits()
+	_was_flattening = _flattening
 	var touch := Platform.is_touch
 	var camera := camera_rig.camera
 	var pointer := _touch_point if touch else get_viewport().get_mouse_position()
@@ -574,6 +677,7 @@ func _process(delta: float) -> void:
 			building_system.update_ghost(_touch_anchor if touch else _ground, delta)
 			if not touch:
 				_paint_build_to(_ground)
+				_extend_smooth_path(_ground)
 			var id := building_system.selected_id
 			if id == "":
 				text = "Выберите здание в меню снизу"
@@ -585,6 +689,18 @@ func _process(delta: float) -> void:
 					text += "\nТяните здание пальцем · ✓ — поставить"
 				else:
 					text += "\nЛКМ — поставить · R / Shift+R — повернуть · ПКМ — отмена"
+			elif building_system.is_smooth_path():
+				var cost := PathSystem.cost_of(building_system.path_type())
+				text = "%s · %s" % [GameData.BUILDINGS[id]["name"],
+					"бесплатно" if cost.is_empty() else "%s за 2 м" % GameData.cost_text(cost)]
+				text += "\nВедите пальцем по земле — дорожка ляжет следом" if touch else "\nЗажмите ЛКМ и ведите — дорожка ляжет следом"
+			elif building_system.is_paintable():
+				var def: Dictionary = GameData.BUILDINGS[id]
+				text = "%s · %s за плитку" % [def["name"], "бесплатно" if def["cost"].is_empty() else GameData.cost_text(def["cost"])]
+				if not building_system.is_valid and building_system.invalid_reason != "":
+					text += "\n" + building_system.invalid_reason
+				else:
+					text += "\nНажмите, куда положить плитку, или ведите пальцем" if touch else "\nЛКМ — положить плитку, зажать и вести — несколько подряд"
 			else:
 				var def: Dictionary = GameData.BUILDINGS[id]
 				var time_text := "сразу" if GameMode.is_creative() else "%d с" % def["time"]

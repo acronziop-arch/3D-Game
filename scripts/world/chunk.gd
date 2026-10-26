@@ -177,6 +177,17 @@ func _build_cover(data: Dictionary) -> void:
 		_cover[layer] = {"mm": mm, "buffer": buffer, "stride": stride, "node": node}
 
 
+## Рельеф изменился: объекты и трава — заново по правилам мира (data — результат
+## WorldGen.generate_chunk для нового рельефа). Старые объекты помечаются убранными,
+## чтобы задания добычи на них отменились.
+func replace_content(data: Dictionary) -> void:
+	for p in props:
+		p["removed"] = true
+	props.assign(data["props"])
+	_build_props()
+	_build_cover(data)
+
+
 ## Новая дальность травы: чанк прячет покров, когда в нём уже ничего не видно.
 func refit_cover_distance(far: float) -> void:
 	for layer: String in _cover:
@@ -213,6 +224,17 @@ func _add_cover(mm: MultiMesh, material: Material, distance: float) -> MultiMesh
 
 
 ## Убирает траву, цветы и листья в прямоугольнике (мировые XZ), например под зданием.
+## Убирает траву в клетках 1×1 м (мировые координаты) — под дорожками.
+func clear_cover_cells(cells: Dictionary) -> void:
+	var origin := Vector2(position.x, position.z)
+	for layer: String in _cover:
+		var c: Dictionary = _cover[layer]
+		var buffer: PackedFloat32Array = c["buffer"]
+		if GroundCover.hide_in_cells(buffer, c["stride"], cells, origin):
+			c["buffer"] = buffer
+			(c["mm"] as MultiMesh).buffer = buffer
+
+
 func clear_cover(rect: Rect2) -> void:
 	var local := Rect2(rect.position - Vector2(position.x, position.z), rect.size)
 	for layer: String in _cover:

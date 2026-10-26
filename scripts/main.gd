@@ -10,6 +10,7 @@ const PERF_WINDOW := 4.0
 
 var _autosave := AUTOSAVE_INTERVAL
 var _markers: Markers
+var _paths: PathSystem
 var _perf_time := 0.0
 var _perf_frames := 0
 var _perf_grace := 10.0
@@ -45,7 +46,15 @@ func _ready() -> void:
 	chunk_manager.chunk_loaded.connect(building_system.on_chunk_loaded)
 	chunk_manager.chunk_loaded.connect(Minimap.explore)
 	chunk_manager.chunk_loaded.connect(water.write_flow)
-	chunk_manager.building_hook = building_system.on_chunk_loaded
+	_paths = PathSystem.new()
+	_paths.name = "Paths"
+	_paths.chunk_manager = chunk_manager
+	add_child(_paths)
+	chunk_manager.chunk_loaded.connect(_paths.on_chunk_loaded)
+	# После пересева травы в чанке снова убираем её под зданиями и дорожками.
+	chunk_manager.building_hook = func(chunk: Chunk) -> void:
+		building_system.on_chunk_loaded(chunk)
+		_paths.on_chunk_loaded(chunk)
 	chunk_manager.blocked_by_building = func(p: Vector2) -> bool:
 		for b in building_system.buildings:
 			if is_instance_valid(b) and Building.obb_has_point(b.obb(0.5), p):
@@ -57,6 +66,7 @@ func _ready() -> void:
 	interaction.camera_rig = camera_rig
 	interaction.chunk_manager = chunk_manager
 	interaction.building_system = building_system
+	interaction.path_system = _paths
 	water.camera_rig = camera_rig
 	water.chunk_manager = chunk_manager
 	atmosphere.camera_rig = camera_rig
@@ -87,6 +97,7 @@ func _ready() -> void:
 
 func _on_world_ready() -> void:
 	building_system.restore_from_save()
+	_paths.restore()
 	_markers.refresh()
 	hud.hide_loading()
 	hud.show_message("Добро пожаловать! Срубите пару деревьев и постройте лесопилку.")

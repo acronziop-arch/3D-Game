@@ -1000,9 +1000,12 @@ static func _windmill(g: Geo, rng: RandomNumberGenerator) -> void:
 		{"angle": PI * 0.35, "v": 0.0, "w": 1.0, "h": 2.0, "type": "door"},
 		{"angle": PI * 0.75, "v": 1.2, "w": 0.6, "h": 0.9},
 	], {"frame": "plank", "door": "plank", "glass": true})
-	# Пояс между ярусами, как на референсе.
-	lathe(g, "stone_block", Vector3(0, BASE + 3.4, 0), [Vector2(2.42, 0.0), Vector2(2.42, 0.28), Vector2(2.1, 0.32)], 18, rng)
-	round_wall(g, rng, Vector3(0, BASE + 3.72, 0), 1.95, 1.8, 3.2, "stone_block", [
+	# Пояс между ярусами, как на референсе: снизу он закрывает верх первого яруса,
+	# сверху — заходит под второй, поэтому щели между ярусами нет.
+	lathe(g, "stone_block", Vector3(0, BASE + 3.4, 0), [Vector2(2.05, -0.04), Vector2(2.42, 0.0), Vector2(2.42, 0.28),
+		Vector2(2.1, 0.32), Vector2(1.7, 0.36)], 18, rng)
+	g.cylinder("stone_block", Vector3(0, BASE + 3.3, 0), 2.25, 1.97, 0.5, 18, col("stone_block", rng).darkened(0.25), false)
+	round_wall(g, rng, Vector3(0, BASE + 3.66, 0), 1.95, 1.8, 3.26, "stone_block", [
 		{"angle": PI * 0.5, "v": 1.0, "w": 0.55, "h": 0.85},
 		{"angle": -PI * 0.1, "v": 1.6, "w": 0.55, "h": 0.85},
 	], {"frame": "plank", "glass": true})
