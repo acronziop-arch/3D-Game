@@ -126,7 +126,7 @@ void fragment() {
 	ALBEDO = c;
 	ROUGHNESS = rough;
 	METALLIC = metallic_base * (1.0 - s);
-	SPECULAR = spec;
+	SPECULAR = glass > 0.5 ? spec : night_specular(spec);
 	// Мягкий контровой свет по краям и тёплая вспышка у только что поставленных деталей.
 	float rim = pow(1.0 - clamp(dot(n, v), 0.0, 1.0), 3.0);
 	EMISSION = emit * (1.0 - s) + c * rim * 0.1 * (1.0 - night * 0.8) + vec3(1.0, 0.82, 0.55) * landing * 0.7;

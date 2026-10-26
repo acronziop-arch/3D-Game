@@ -67,5 +67,5 @@ void fragment() {
 	c = mix(c, SNOW_COLOR, s);
 	ALBEDO = c;
 	ROUGHNESS = rough;
-	SPECULAR = 0.35;
+	SPECULAR = night_specular(0.35);
 }

@@ -51,5 +51,5 @@ void fragment() {
 	rough = mix(rough, 0.62, s);
 	ALBEDO = c;
 	ROUGHNESS = rough;
-	SPECULAR = 0.3 + puddle * 0.45;
+	SPECULAR = night_specular(0.3 + puddle * 0.45);
 }

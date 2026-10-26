@@ -44,22 +44,25 @@ def rock(main, light, dark):
 
 def arc_arrow(cx, cy, r, a0, a1, color, w=5.0, head=9.0):
     """Дуга по часовой стрелке (экранные координаты) от a0 до a1 градусов
-    и наконечник на конце, направленный по ходу дуги."""
+    и наконечник на конце. Наконечник строится по хорде дуги: остриё лежит на
+    окружности впереди конца дуги, основание — поперёк хорды, поэтому стрелка
+    идёт ровно по дуге и не «торчит» наружу."""
     import math
     t0, t1 = math.radians(a0), math.radians(a1)
     x0, y0 = cx + r * math.cos(t0), cy + r * math.sin(t0)
-    x1, y1 = cx + r * math.cos(t1), cy + r * math.sin(t1)
+    ahead = head * 1.05 / r
+    base_a = t1 - head * 0.1 / r
+    bx, by = cx + r * math.cos(base_a), cy + r * math.sin(base_a)
+    tx, ty = cx + r * math.cos(t1 + ahead), cy + r * math.sin(t1 + ahead)
     large = 1 if (a1 - a0) % 360 > 180 else 0
-    # Дугу не доводим до конца: там наконечник.
-    back = math.radians(a1) - head * 0.55 / r
-    xb, yb = cx + r * math.cos(back), cy + r * math.sin(back)
-    arc = f'<path d="M{x0:.1f} {y0:.1f} A{r} {r} 0 {large} 1 {xb:.1f} {yb:.1f}" fill="none" stroke="{color}" stroke-width="{w}" stroke-linecap="round"/>'
-    tx, ty = -math.sin(t1), math.cos(t1)
-    nx, ny = math.cos(t1), math.sin(t1)
-    tip = (x1 + tx * head * 0.6, y1 + ty * head * 0.6)
-    l = (x1 - tx * head * 0.5 + nx * head * 0.75, y1 - ty * head * 0.5 + ny * head * 0.75)
-    rr = (x1 - tx * head * 0.5 - nx * head * 0.75, y1 - ty * head * 0.5 - ny * head * 0.75)
-    tri = f'<path d="M{tip[0]:.1f} {tip[1]:.1f} L{l[0]:.1f} {l[1]:.1f} L{rr[0]:.1f} {rr[1]:.1f} Z" fill="{color}" stroke="{color}" stroke-width="1.5" stroke-linejoin="round"/>'
+    arc = f'<path d="M{x0:.1f} {y0:.1f} A{r} {r} 0 {large} 1 {bx:.1f} {by:.1f}" fill="none" stroke="{color}" stroke-width="{w}" stroke-linecap="round"/>'
+    dx, dy = tx - bx, ty - by
+    ln = math.hypot(dx, dy)
+    nx, ny = -dy / ln, dx / ln
+    half = head * 0.72
+    l = (bx + nx * half, by + ny * half)
+    rr = (bx - nx * half, by - ny * half)
+    tri = f'<path d="M{tx:.1f} {ty:.1f} L{l[0]:.1f} {l[1]:.1f} L{rr[0]:.1f} {rr[1]:.1f} Z" fill="{color}" stroke="{color}" stroke-width="1.5" stroke-linejoin="round"/>'
     return arc + tri
 
 

@@ -31,5 +31,5 @@ void fragment() {
 	vec3 c = apply_wet(COLOR.rgb, wetness, rough);
 	ALBEDO = c;
 	ROUGHNESS = rough;
-	SPECULAR = 0.3;
+	SPECULAR = night_specular(0.3);
 }

@@ -53,6 +53,6 @@ void fragment() {
 	c = apply_wet(c, wetness * 0.6, rough);
 	ALBEDO = c;
 	ROUGHNESS = rough;
-	SPECULAR = 0.25;
+	SPECULAR = night_specular(0.25);
 	BACKLIGHT = c * 0.3;
 }

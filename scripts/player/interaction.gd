@@ -123,6 +123,9 @@ static func make_ring(color: Color) -> Node3D:
 	rim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	root.add_child(rim)
 	root.set_meta("materials", [mat, rim_mat])
+	# Кольцо — подсказка, а не предмет мира: в воде оно не отражается.
+	band_mi.layers = Atmosphere.RAIN_LAYER
+	rim.layers = Atmosphere.RAIN_LAYER
 	return root
 
 

@@ -64,6 +64,12 @@ float snow_mask(vec3 world_pos, vec3 world_normal, float amount) {
 	return clamp((slope * cover - (1.0 - n) * 0.5) * 3.0, 0.0, 1.0) * above_water;
 }
 
+// Блеск поверхности ночью почти пропадает: иначе крутые склоны у воды под косым
+// взглядом отражают ночное небо и светятся сиреневыми пятнами, как фонари.
+float night_specular(float s) {
+	return s * mix(1.0, 0.12, night);
+}
+
 // Мокрая поверхность темнее и глаже.
 vec3 apply_wet(vec3 albedo, float wet, inout float roughness) {
 	roughness = mix(roughness, 0.22, wet);

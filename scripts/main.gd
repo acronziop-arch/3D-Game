@@ -30,7 +30,12 @@ func _ready() -> void:
 	if not "--new-world" in OS.get_cmdline_user_args():
 		loaded = WorldState.load_game()
 	if not loaded:
-		WorldState.new_world()
+		# `-- --seed=N` — мир с заданным зерном (для проверки одного и того же места).
+		var seed_value := -1
+		for arg in OS.get_cmdline_user_args():
+			if arg.begins_with("--seed="):
+				seed_value = int(arg.substr(7))
+		WorldState.new_world(seed_value)
 	Minimap.reset_canvas()
 
 	chunk_manager.view_radius = Settings.get_value("view_distance")

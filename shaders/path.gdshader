@@ -129,5 +129,5 @@ void fragment() {
 	c = mix(c, vec3(1.0, 0.45, 0.35), highlight * 0.4);
 	ALBEDO = c;
 	ROUGHNESS = rough;
-	SPECULAR = 0.3;
+	SPECULAR = night_specular(0.3);
 }
