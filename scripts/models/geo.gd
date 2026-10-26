@@ -25,6 +25,9 @@ var seed_value := 0.0
 var sway_height := 0.0
 ## Записывать ли UV2 (тип и зерно). Зданиям и рыбам не нужно — файлы меньше.
 var with_uv2 := true
+## Пометка деталей: геометрия уходит в отдельную поверхность «материал__пометка».
+## Так двери и окна («opening») можно выделить другим оттенком в превью стройки.
+var tag := ""
 
 var _surfaces := {}
 var _pieces: Array[Dictionary] = []
@@ -58,10 +61,11 @@ func end() -> void:
 
 
 func _surface(mat: String) -> Dictionary:
-	if not _surfaces.has(mat):
-		_surfaces[mat] = {"v": PackedVector3Array(), "n": PackedVector3Array(), "c": PackedColorArray(),
+	var key := mat if tag == "" else "%s__%s" % [mat, tag]
+	if not _surfaces.has(key):
+		_surfaces[key] = {"v": PackedVector3Array(), "n": PackedVector3Array(), "c": PackedColorArray(),
 			"uv2": PackedVector2Array()}
-	return _surfaces[mat]
+	return _surfaces[key]
 
 
 # --- Треугольники ---------------------------------------------------------------------
@@ -85,6 +89,7 @@ func tri(mat: String, a: Vector3, b: Vector3, c: Vector3, color: Color, ref := V
 		normal = -normal
 	begin()
 	var s := _surface(mat)
+	var key := mat if tag == "" else "%s__%s" % [mat, tag]
 	var start: int = s["v"].size()
 	for p in [a, b, c]:
 		var v: Vector3 = p
@@ -97,8 +102,8 @@ func tri(mat: String, a: Vector3, b: Vector3, c: Vector3, color: Color, ref := V
 		s["uv2"].append(Vector2(kind, seed_value))
 		_piece["min_y"] = minf(_piece["min_y"], v.y)
 		_piece["max_y"] = maxf(_piece["max_y"], v.y)
-	var r: Array = _piece["ranges"].get(mat, [start, start])
-	_piece["ranges"][mat] = [r[0], start + 3]
+	var r: Array = _piece["ranges"].get(key, [start, start])
+	_piece["ranges"][key] = [r[0], start + 3]
 	end()
 
 
@@ -245,6 +250,52 @@ func rod(mat: String, from: Vector3, to: Vector3, r0: float, r1: float, segments
 	var x := y.cross(Vector3.FORWARD if absf(y.dot(Vector3.FORWARD)) < 0.9 else Vector3.RIGHT).normalized()
 	var z := x.cross(y)
 	cylinder(mat, from, r0, r1, length, segments, color, caps, caps, 0.0, Basis(x, y, z))
+
+
+## Цельная изогнутая «труба» через точки: стволы без зазоров и колец на стыках.
+## radii — радиус в каждой точке. Кольца ориентированы по среднему направлению
+## соседних отрезков, соседние кольца соединены — швов нет.
+func tube(mat: String, points: Array[Vector3], radii: Array[float], segments: int, color: Color, cap_top := false,
+		color_jitter := 0.0, rng: RandomNumberGenerator = null) -> void:
+	if points.size() < 2:
+		return
+	begin()
+	var rings: Array = []
+	var prev_x := Vector3.ZERO
+	for i in points.size():
+		var dir: Vector3
+		if i == 0:
+			dir = points[1] - points[0]
+		elif i == points.size() - 1:
+			dir = points[i] - points[i - 1]
+		else:
+			dir = (points[i + 1] - points[i - 1])
+		dir = dir.normalized()
+		var x := prev_x if prev_x != Vector3.ZERO else dir.cross(Vector3.FORWARD if absf(dir.dot(Vector3.FORWARD)) < 0.9 else Vector3.RIGHT)
+		x = (x - dir * x.dot(dir)).normalized()
+		prev_x = x
+		var z := x.cross(dir)
+		var ring: Array[Vector3] = []
+		for k in segments:
+			var a := TAU * k / segments
+			ring.append(points[i] + (x * cos(a) + z * sin(a)) * radii[i])
+		rings.append(ring)
+	for i in points.size() - 1:
+		var r0: Array[Vector3] = rings[i]
+		var r1: Array[Vector3] = rings[i + 1]
+		var c := color
+		if rng and color_jitter > 0.0:
+			c = color.lightened(rng.randf_range(-color_jitter, color_jitter))
+		for k in segments:
+			var k1 := (k + 1) % segments
+			var out := ((r0[k] + r0[k1]) * 0.5 - points[i])
+			quad(mat, r0[k], r0[k1], r1[k1], r1[k], c, out)
+	if cap_top:
+		var last: Array[Vector3] = rings[rings.size() - 1]
+		var tip := points[points.size() - 1]
+		for k in segments:
+			tri(mat, tip, last[k], last[(k + 1) % segments], color.darkened(0.1), points[points.size() - 1] - points[points.size() - 2])
+	end()
 
 
 ## Бугристая сфера (икосфера с шумом): кроны, кусты, валуны.
@@ -395,6 +446,18 @@ func encode_stages(max_stages := 40, min_band := 0.25, override := -1.0) -> void
 			for i in range(r[0], r[1]):
 				colors[i].a = stage
 			_surfaces[mat]["c"] = colors
+
+
+## Равномерно масштабирует всю геометрию (нормали при этом не меняются).
+func scale_all(k: float) -> void:
+	for key: String in _surfaces:
+		var verts: PackedVector3Array = _surfaces[key]["v"]
+		for i in verts.size():
+			verts[i] *= k
+		_surfaces[key]["v"] = verts
+	for p in _pieces:
+		p["min_y"] *= k
+		p["max_y"] *= k
 
 
 func triangle_count() -> int:

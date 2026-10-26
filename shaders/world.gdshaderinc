@@ -12,6 +12,17 @@ global uniform float spring;
 global uniform float night;
 global uniform float rain;
 global uniform float water_level;
+// Мороз: зима и снег. Стёкла покрываются изморозью.
+global uniform float frost;
+// Лёд на озёрах (0..1): копится зимой и сходит весной.
+global uniform float ice;
+// Сила снегопада прямо сейчас.
+global uniform float snowfall;
+// Фаза покачивания на ветру: растёт тем быстрее, чем сильнее ветер. Смена ветра
+// меняет скорость, а не перескакивает фазу — поэтому ничего не «проматывается».
+global uniform float wind_phase;
+// Сколько ветер унёс рябь на воде, м (копится по направлению ветра).
+global uniform vec2 wind_drift;
 
 const vec3 SNOW_COLOR = vec3(0.92, 0.94, 0.97);
 
@@ -25,6 +36,20 @@ float w_noise(vec2 p) {
 	vec2 u = f * f * (3.0 - 2.0 * f);
 	return mix(mix(w_hash(i), w_hash(i + vec2(1.0, 0.0)), u.x),
 		mix(w_hash(i + vec2(0.0, 1.0)), w_hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+
+// Круги от капель дождя (наклон поверхности): в каждой клетке своя капля со своим временем.
+vec2 rain_drops(vec2 p, float t) {
+	vec2 cell = floor(p);
+	vec2 f = fract(p) - 0.5;
+	float h = w_hash(cell);
+	float life = fract(t * 1.2 + h);
+	vec2 center = (vec2(w_hash(cell + 3.1), w_hash(cell + 7.7)) - 0.5) * 0.6;
+	vec2 d = f - center;
+	float r = length(d);
+	float radius = life * 0.45;
+	float ring = sin((r - radius) * 55.0) * smoothstep(0.08, 0.0, abs(r - radius)) * (1.0 - life);
+	return d / max(r, 0.001) * ring;
 }
 
 // Снег ложится на верхние грани пятнами и растёт вместе с snow_cover.

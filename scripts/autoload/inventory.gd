@@ -1,5 +1,6 @@
 extends Node
 ## Склад игрока. Один общий на весь мир: людей нет, переносить ресурсы некому.
+## В творческом режиме ресурсы бесконечны: всё «есть» и ничего не тратится.
 
 ## id ресурса ("" — изменилось всё сразу, например после загрузки).
 signal changed(res_id: String)
@@ -25,6 +26,8 @@ func add_all(resources: Dictionary) -> void:
 
 
 func has_all(cost: Dictionary) -> bool:
+	if GameMode.is_creative():
+		return true
 	for id: String in cost:
 		if count(id) < cost[id]:
 			return false
@@ -34,6 +37,8 @@ func has_all(cost: Dictionary) -> bool:
 ## Чего не хватает: {id: сколько ещё нужно}.
 func missing(cost: Dictionary) -> Dictionary:
 	var result := {}
+	if GameMode.is_creative():
+		return result
 	for id: String in cost:
 		var lack: int = cost[id] - count(id)
 		if lack > 0:
@@ -44,6 +49,8 @@ func missing(cost: Dictionary) -> Dictionary:
 func spend(cost: Dictionary) -> bool:
 	if not has_all(cost):
 		return false
+	if GameMode.is_creative():
+		return true
 	for id: String in cost:
 		items[id] = count(id) - cost[id]
 		changed.emit(id)

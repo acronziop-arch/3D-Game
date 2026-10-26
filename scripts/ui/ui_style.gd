@@ -130,6 +130,19 @@ static func cost_row(cost: Dictionary, size := 18, check_inventory := true) -> H
 	return row
 
 
+## Кнопка-крестик закрытия: крестик ровно по центру квадратной кнопки.
+static func close_button(side := 44.0) -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(side, side)
+	b.tooltip_text = "Закрыть"
+	var ic := icon_rect("close", int(side * 0.42))
+	ic.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+	ic.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	ic.grow_vertical = Control.GROW_DIRECTION_BOTH
+	b.add_child(ic)
+	return b
+
+
 ## Плавное появление/исчезновение (с лёгким масштабом).
 static func fade(c: Control, shown: bool, duration := 0.18) -> void:
 	if c.get_meta("fade_target", c.visible) == shown:

@@ -1,37 +1,46 @@
 class_name Hud
 extends CanvasLayer
 ## Игровой интерфейс. Собирается кодом из стилей UiStyle:
-##   слева сверху — основные ресурсы и кнопка «…» со списком всех ресурсов;
+##   слева сверху — основные ресурсы, кнопка «…» со списком всех ресурсов и мини-карта;
 ##   справа сверху — часы, сезон, погода и шестерёнка настроек;
 ##   снизу — текущее действие, меню стройки и панель инструментов;
-##   справа — ремесло.
-## На телефоне (Platform.is_touch) всё компактнее и не заходит под вырез экрана:
-## меню стройки — лента карточек, подсказка — плашка над инструментами, а у правого
-## края, под большим пальцем, — кнопки действий (построить, повернуть, снести…).
+##   справа снизу — кнопки действий текущего инструмента (построить, повернуть…);
+##   окна (ремесло, все ресурсы, карта, настройки) открываются по одному.
+## На телефоне (Platform.is_touch) всё компактнее и не заходит под вырез экрана.
+## Тройное касание двумя пальцами (на ПК — H) прячет весь интерфейс.
 
 signal new_world_requested
+signal markers_changed
 
 const GROUPS := [["raw", "Сырьё"], ["animal", "Из сундуков"], ["processed", "Материалы"]]
 const TOOLS := [
 	[Interaction.Tool.HARVEST, "tool_harvest", "Добыча", "1"],
 	[Interaction.Tool.BUILD, "tool_build", "Стройка", "2"],
 	[Interaction.Tool.FLATTEN, "tool_flatten", "Ровнять", "3"],
-	[Interaction.Tool.DEMOLISH, "tool_demolish", "Снос", "4"],
+	[Interaction.Tool.NATURE, "tool_nature", "Природа", "4"],
+	[Interaction.Tool.EDIT, "tool_edit", "Правка", "5"],
 ]
-## Ширина колонки кнопок действий на телефоне (вместе с отступом).
+const NATURE_ICONS := {"mow": "mow", "grass": "grass_short", "tall": "grass_tall", "flowers": "flower", "tree": "tool_nature"}
+const NATURE_SHORT := {"mow": "Косить", "grass": "Трава", "tall": "Высокая", "flowers": "Цветы", "tree": "Дерево"}
+## Ширина колонки кнопок действий (вместе с отступом).
 const ACTIONS_WIDTH := 74.0
 
 var interaction: Interaction
 var thumbnails: Thumbnails
 
 var _touch := false
+var _ui_hidden := false
 var _root: Control
+var _labels: WorldLabels
 var _bottom: VBoxContainer
+var _top_left: HBoxContainer
 var _resource_bar: PanelContainer
 var _main_counts := {}
 var _all_panel: PanelContainer
-var _all_scroll: ScrollContainer
 var _all_counts := {}
+var _minimap: Minimap
+var _map_frame: Control
+var _map_panel: MapPanel
 var _clock_row: HBoxContainer
 var _clock_time: Label
 var _clock_icon: TextureRect
@@ -43,15 +52,18 @@ var _tool_buttons := {}
 var _build_panel: PanelContainer
 var _category_buttons := {}
 var _build_grid: Container
+var _build_scroll: SmoothScroll
 var _build_cards := {}
 var _category := "production"
-## Телефон: открыта ли лента зданий (закрывается, когда здание выбрано).
+## Открыта ли лента зданий (на ПК — меню стройки).
 var _drawer_open := false
 var _craft_panel: PanelContainer
-var _craft_scroll: ScrollContainer
+var _craft_scroll: SmoothScroll
 var _craft_rows := {}
 var _craft_progress: ProgressBar
-var _craft_queue_label: Label
+var _craft_queue: HBoxContainer
+var _craft_queue_scroll: SmoothScroll
+var _craft_status: Label
 var _job_panel: PanelContainer
 var _job_icon: TextureRect
 var _job_label: Label
@@ -80,6 +92,11 @@ func _ready() -> void:
 	thumbnails = Thumbnails.new()
 	add_child(thumbnails)
 	thumbnails.thumbnail_ready.connect(_on_thumbnail)
+	# Капли дождя и снежинки на экране — под всем интерфейсом.
+	_root.add_child(ScreenDrops.new())
+	# Надписи над миром — самый нижний слой интерфейса.
+	_labels = WorldLabels.new()
+	_root.add_child(_labels)
 
 	_bottom = VBoxContainer.new()
 	_bottom.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
@@ -93,26 +110,37 @@ func _ready() -> void:
 	_build_clock()
 	_build_job_panel()
 	_build_build_panel()
-	if _touch:
-		_build_hint()
+	_build_hint()
 	_build_toolbar()
+	_build_actions()
 	_build_craft_panel()
-	if _touch:
-		_build_actions()
-	else:
+	if not _touch:
 		_build_hover()
-	_build_toast()
+	_map_panel = MapPanel.new()
+	_root.add_child(_map_panel)
+	_map_panel.markers_changed.connect(func() -> void: markers_changed.emit())
 	_settings = SettingsDialog.new()
 	_root.add_child(_settings)
 	_settings.save_requested.connect(func() -> void:
 		show_message("Мир сохранён" if WorldState.save_game() else "Не удалось сохранить"))
 	_settings.new_world_requested.connect(func() -> void: new_world_requested.emit())
+	# Время, сезон и погода из настроек меняются сразу — за косой чёрной полосой.
+	var wipe := WorldWipe.new()
+	add_child(wipe)
+	Settings.changed.connect(func(key: String) -> void:
+		if key in ["time_mode", "season_mode", "weather_mode"] and Settings.get_value(key) != "auto":
+			wipe.play(Weather.snap_to_settings))
+	# Сообщения — поверх всех окон, чтобы их было видно и при открытых настройках.
+	_build_toast()
 	_build_loading()
 	if _touch:
 		_build_portrait_hint()
 	Inventory.changed.connect(_on_inventory_changed)
 	Crafting.queue_changed.connect(_refresh_crafting)
 	Crafting.crafted.connect(func(id: String) -> void: show_message("Готово: %s" % GameData.RECIPES[id]["name"]))
+	GameMode.mode_changed.connect(func() -> void:
+		_refresh_build_cards()
+		_refresh_crafting())
 	Weather.weather_changed.connect(func(_id: String) -> void: show_message("Погода: %s" % Weather.weather_name()))
 	Weather.season_changed.connect(func(_i: int) -> void: show_message("Наступает %s" % Weather.season_name().to_lower()))
 	_on_inventory_changed("")
@@ -126,7 +154,12 @@ func bind(target: Interaction) -> void:
 	interaction.tool_changed.connect(_on_tool_changed)
 	interaction.message.connect(show_message)
 	interaction.hover_changed.connect(_on_hover_changed)
+	interaction.options_changed.connect(func() -> void: _actions_key = "")
 	interaction.building_system.placed.connect(func(_b: Building) -> void: _refresh_build_cards())
+	_minimap.chunk_manager = interaction.chunk_manager
+	_minimap.camera_rig = interaction.camera_rig
+	_minimap.building_system = interaction.building_system
+	_map_panel.setup(interaction.chunk_manager, interaction.camera_rig, interaction.building_system)
 	_on_tool_changed(interaction.tool)
 
 
@@ -136,22 +169,90 @@ func _px(pc: float, touch: float) -> float:
 
 
 func is_modal_open() -> bool:
-	return _settings.is_open()
+	return _settings.is_open() or _map_panel.is_open()
 
 
-## Закрывает верхнюю открытую панель (кнопка «Назад» на Android). false — закрывать нечего.
+## Окна открываются по одному: открытие одного закрывает остальные.
+func _close_panels(except := "") -> void:
+	if except != "settings" and _settings.is_open():
+		_settings.close()
+	if except != "map" and _map_panel.is_open():
+		_map_panel.close()
+	if except != "craft" and _craft_panel.get_meta("fade_target", false):
+		UiStyle.fade(_craft_panel, false)
+	if except != "resources" and _all_panel.get_meta("fade_target", false):
+		UiStyle.fade(_all_panel, false)
+
+
+func open_settings() -> void:
+	_close_panels("settings")
+	_settings.open()
+
+
+func open_map() -> void:
+	_close_panels("map")
+	_map_panel.open()
+
+
+func toggle_resources() -> void:
+	var show: bool = not _all_panel.get_meta("fade_target", false)
+	if show:
+		_close_panels("resources")
+	UiStyle.fade(_all_panel, show)
+
+
+func toggle_crafting() -> void:
+	var show: bool = not _craft_panel.get_meta("fade_target", false)
+	if show:
+		_close_panels("craft")
+	UiStyle.fade(_craft_panel, show)
+	_refresh_crafting()
+
+
+## Закрывает верхнее открытое окно (кнопка «Назад» на Android). false — закрывать нечего.
 func close_top_panel() -> bool:
 	if _settings.is_open():
 		_settings.close()
+	elif _map_panel.is_open():
+		_map_panel.close()
 	elif _all_panel.get_meta("fade_target", false):
 		UiStyle.fade(_all_panel, false)
 	elif _craft_panel.get_meta("fade_target", false):
 		toggle_crafting()
-	elif _touch and _drawer_open and interaction.building_system.selected_id != "":
+	elif _drawer_open and interaction.building_system.selected_id != "":
 		_set_drawer(false)
 	else:
 		return false
 	return true
+
+
+## Прячет весь интерфейс, оставляя только мир (и возвращает его).
+func toggle_ui_hidden() -> void:
+	_ui_hidden = not _ui_hidden
+	_close_panels()
+	for c in _root.get_children():
+		if c == _toast or c == _loading or c == _portrait_hint:
+			continue
+		var target := 0.0 if _ui_hidden else 1.0
+		if c is Control:
+			var ctl := c as Control
+			if not _ui_hidden and ctl.has_meta("was_hidden"):
+				ctl.remove_meta("was_hidden")
+				continue
+			if _ui_hidden and not ctl.visible:
+				ctl.set_meta("was_hidden", true)
+				continue
+			ctl.visible = true
+			var tw := ctl.create_tween()
+			tw.tween_property(ctl, "modulate:a", target, 0.25)
+			if _ui_hidden:
+				tw.tween_callback(ctl.hide)
+	if _ui_hidden:
+		show_message("Меню скрыто — %s, чтобы вернуть" % ("трижды коснитесь экрана двумя пальцами" if _touch else "нажмите H"))
+
+
+func is_ui_hidden() -> bool:
+	return _ui_hidden
 
 
 ## Расставляет панели с учётом безопасной зоны экрана (вырез и полоска «домой» на iPhone).
@@ -159,29 +260,27 @@ func _apply_layout() -> void:
 	var m := Platform.safe_margins() if _touch else {"left": 16.0, "top": 16.0, "right": 16.0, "bottom": 16.0}
 	var vp := _root.get_viewport_rect().size
 	# Панели привязаны к углам; смещения задаём от угла, остальное растёт само.
-	_pin(_resource_bar, m["left"], m["top"], m["left"], m["top"])
+	_pin(_top_left, m["left"], m["top"], m["left"], m["top"])
 	_pin(_clock_row, -m["right"], m["top"], -m["right"], m["top"])
 	_pin(_bottom, 0.0, -m["bottom"], 0.0, -m["bottom"])
+	_pin(_actions, -m["right"], -m["bottom"], -m["right"], -m["bottom"])
 	var toast_y: float = m["top"] + _px(80, 56)
 	_pin(_toast, 0.0, toast_y, 0.0, toast_y)
 	var below_bar: float = m["top"] + _resource_bar.get_combined_minimum_size().y + 8.0
 	_pin(_all_panel, m["left"], below_bar, m["left"], below_bar)
-	if not _touch:
-		_pin(_craft_panel, -m["right"], 0.0, -m["right"], 0.0)
-		return
-	# Браузер на телефоне не умеет закрепить альбомную ориентацию — просим повернуть.
-	_portrait_hint.visible = vp.x < vp.y
-	_all_scroll.custom_minimum_size.y = minf(_all_scroll.get_child(0).get_combined_minimum_size().y,
-		vp.y - below_bar - m["bottom"] - 60.0)
+	var all_room: float = vp.y - below_bar - m["bottom"] - 60.0
+	var all_scroll := _all_panel.find_child("Scroll", true, false) as SmoothScroll
+	all_scroll.custom_minimum_size.y = minf(all_scroll.content().get_combined_minimum_size().y, all_room)
 	var side := maxf(m["left"], m["right"]) + ACTIONS_WIDTH
-	_build_panel.custom_minimum_size.x = maxf(vp.x - side * 2.0, 360.0)
-	_pin(_actions, -m["right"], -m["bottom"], -m["right"], -m["bottom"])
+	_build_panel.custom_minimum_size.x = minf(maxf(vp.x - side * 2.0, 360.0), 1000.0)
 	# Ремесло — посередине, между часами и панелью инструментов.
-	var craft_top: float = m["top"] + 58.0
+	var craft_top: float = m["top"] + _px(76, 58)
 	_pin(_craft_panel, 0.0, craft_top, 0.0, craft_top)
-	# Снизу — панель инструментов (~74), сверху в самой панели — заголовок и очередь (~96).
-	var craft_room: float = vp.y - craft_top - m["bottom"] - 74.0 - 96.0
-	_craft_scroll.custom_minimum_size.y = clampf(_craft_scroll.get_child(0).get_combined_minimum_size().y, 80.0, maxf(craft_room, 80.0))
+	var craft_room: float = vp.y - craft_top - m["bottom"] - _px(110, 74) - _px(120, 104)
+	_craft_scroll.custom_minimum_size.y = clampf(_craft_scroll.content().get_combined_minimum_size().y, 80.0, maxf(craft_room, 80.0))
+	if _portrait_hint:
+		# Браузер на телефоне не умеет закрепить альбомную ориентацию — просим повернуть.
+		_portrait_hint.visible = vp.x < vp.y
 
 
 ## Смещения краёв от точек привязки; размер дорастает до минимального сам
@@ -193,13 +292,18 @@ static func _pin(c: Control, left: float, top: float, right: float, bottom: floa
 	c.offset_bottom = bottom
 
 
-# --- Ресурсы ---------------------------------------------------------------------------------
+# --- Ресурсы и мини-карта ----------------------------------------------------------------------
 
 func _build_resources() -> void:
+	_top_left = HBoxContainer.new()
+	_top_left.add_theme_constant_override("separation", _px(10, 8))
+	_top_left.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_root.add_child(_top_left)
 	_resource_bar = PanelContainer.new()
+	_resource_bar.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	if _touch:
 		_resource_bar.add_theme_stylebox_override("panel", UiStyle.panel(14, 9))
-	_root.add_child(_resource_bar)
+	_top_left.add_child(_resource_bar)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", _px(14, 9))
 	_resource_bar.add_child(row)
@@ -218,14 +322,29 @@ func _build_resources() -> void:
 			# Подсказок при наведении на телефоне нет — название показываем по нажатию.
 			item.gui_input.connect(func(e: InputEvent) -> void:
 				if e is InputEventMouseButton and e.pressed:
-					show_message("%s: %d" % [GameData.res_name(id), Inventory.count(id)]))
+					show_message("%s: %s" % [GameData.res_name(id), _count_text(id)]))
 	var more := Button.new()
 	more.icon = UiStyle.icon("more")
 	more.add_theme_constant_override("icon_max_width", _px(22, 20))
 	more.custom_minimum_size = Vector2(_px(40, 42), _px(34, 30))
 	more.tooltip_text = "Все ресурсы"
-	more.pressed.connect(func() -> void: UiStyle.fade(_all_panel, not _all_panel.get_meta("fade_target", false)))
+	more.pressed.connect(toggle_resources)
 	row.add_child(more)
+
+	# Мини-карта сразу после ресурсов: скруглённый квадрат, по нажатию — большая карта.
+	var map_frame := PanelContainer.new()
+	_map_frame = map_frame
+	map_frame.add_theme_stylebox_override("panel", UiStyle.box(Color(UiStyle.BASE, 0.97), 16, 3, 2, UiStyle.BRAND, true))
+	map_frame.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_top_left.add_child(map_frame)
+	_minimap = Minimap.new()
+	var side := _px(118, 88)
+	_minimap.custom_minimum_size = Vector2(side, side)
+	_minimap.view_meters = 300.0
+	_minimap.corner_radius = 13.0
+	_minimap.tooltip_text = "Карта [Tab]"
+	_minimap.tapped.connect(func(_p: Vector2) -> void: open_map())
+	map_frame.add_child(_minimap)
 
 	_all_panel = PanelContainer.new()
 	_all_panel.visible = false
@@ -235,25 +354,19 @@ func _build_resources() -> void:
 	outer.add_theme_constant_override("separation", 6)
 	_all_panel.add_child(outer)
 	var title := HBoxContainer.new()
-	title.add_child(UiStyle.label("Все ресурсы", _px(18, 16), UiStyle.TEXT, 800))
+	var title_label := UiStyle.label("Все ресурсы", _px(18, 16), UiStyle.TEXT, 800)
+	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title.add_child(title_label)
+	var close := UiStyle.close_button(_px(38, 40))
+	close.pressed.connect(func() -> void: UiStyle.fade(_all_panel, false))
+	title.add_child(close)
 	outer.add_child(title)
+	var scroll := SmoothScroll.new()
+	scroll.name = "Scroll"
+	outer.add_child(scroll)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", _px(6, 4))
-	if _touch:
-		var spacer := Control.new()
-		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		title.add_child(spacer)
-		var close := Button.new()
-		close.icon = UiStyle.icon("close")
-		close.add_theme_constant_override("icon_max_width", 16)
-		close.custom_minimum_size = Vector2(36, 30)
-		close.pressed.connect(func() -> void: UiStyle.fade(_all_panel, false))
-		title.add_child(close)
-		_all_scroll = _scroll(false)
-		outer.add_child(_all_scroll)
-		_all_scroll.add_child(box)
-	else:
-		outer.add_child(box)
+	scroll.add_child(box)
 	for group: Array in GROUPS:
 		box.add_child(UiStyle.label(group[1], _px(13, 12), UiStyle.BRAND_DARK, 800))
 		var grid := GridContainer.new()
@@ -278,13 +391,8 @@ func _build_resources() -> void:
 		box.add_child(grid)
 
 
-## Прокрутка для телефона: листается пальцем, полосы прокрутки тонкие.
-func _scroll(horizontal: bool) -> ScrollContainer:
-	var s := ScrollContainer.new()
-	s.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER if horizontal else ScrollContainer.SCROLL_MODE_DISABLED
-	s.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED if horizontal else ScrollContainer.SCROLL_MODE_AUTO
-	s.scroll_deadzone = 8
-	return s
+func _count_text(id: String) -> String:
+	return "∞" if GameMode.is_creative() else str(Inventory.count(id))
 
 
 func _on_inventory_changed(res_id: String) -> void:
@@ -295,8 +403,8 @@ func _on_inventory_changed(res_id: String) -> void:
 			if not map.has(id):
 				continue
 			var l: Label = map[id]
-			l.text = str(n)
-			l.add_theme_color_override("font_color", UiStyle.TEXT if n > 0 else UiStyle.MUTED)
+			l.text = _count_text(id)
+			l.add_theme_color_override("font_color", UiStyle.TEXT if n > 0 or GameMode.is_creative() else UiStyle.MUTED)
 			if res_id != "":
 				l.pivot_offset = l.size * 0.5
 				l.scale = Vector2.ONE * 1.35
@@ -345,9 +453,9 @@ func _build_clock() -> void:
 	gear.custom_minimum_size = Vector2.ONE * _px(52, 44)
 	gear.add_theme_stylebox_override("normal", UiStyle.panel(16, 10))
 	gear.add_theme_stylebox_override("hover", UiStyle.box(UiStyle.BASE, 16, 10, 3, UiStyle.BRAND_DARK, true))
-	gear.add_theme_stylebox_override("pressed", UiStyle.box(UiStyle.BRAND, 16, 10, 2, UiStyle.BRAND_DARK, true))
+	gear.add_theme_stylebox_override("pressed", UiStyle.box(UiStyle.SURFACE_HOVER, 16, 10, 2, UiStyle.BRAND_DARK, true))
 	gear.tooltip_text = "Настройки"
-	gear.pressed.connect(func() -> void: _settings.open())
+	gear.pressed.connect(open_settings)
 	_clock_row.add_child(gear)
 
 
@@ -377,8 +485,8 @@ func _build_toolbar() -> void:
 		var b := _tool_button(t[1], t[2], t[3])
 		b.toggle_mode = true
 		b.pressed.connect(func() -> void:
-			# Повторное нажатие «Стройки» на телефоне открывает и закрывает ленту зданий.
-			if _touch and t[0] == Interaction.Tool.BUILD and interaction.tool == Interaction.Tool.BUILD:
+			# Повторное нажатие «Стройки» открывает и закрывает меню зданий.
+			if t[0] == Interaction.Tool.BUILD and interaction.tool == Interaction.Tool.BUILD and not interaction.building_system.moving:
 				_set_drawer(not _drawer_open)
 				b.set_pressed_no_signal(true)
 				return
@@ -395,14 +503,14 @@ func _build_toolbar() -> void:
 
 func _tool_button(icon_name: String, text: String, hotkey: String) -> Button:
 	var b := Button.new()
-	b.custom_minimum_size = Vector2(_px(92, 64), _px(74, 54))
+	b.custom_minimum_size = Vector2(_px(86, 62), _px(74, 54))
 	b.tooltip_text = "%s [%s]" % [text, hotkey]
 	var box := VBoxContainer.new()
 	box.set_anchors_preset(Control.PRESET_FULL_RECT)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
 	box.add_theme_constant_override("separation", _px(2, 1))
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var ic := UiStyle.icon_rect(icon_name, _px(36, 26))
+	var ic := UiStyle.icon_rect(icon_name, _px(36, 28))
 	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	box.add_child(ic)
 	var l := UiStyle.label(text, _px(13, 11), UiStyle.TEXT, 700)
@@ -419,13 +527,13 @@ func _tool_button(icon_name: String, text: String, hotkey: String) -> Button:
 func _on_tool_changed(tool: Interaction.Tool) -> void:
 	for t in _tool_buttons:
 		_tool_buttons[t].set_pressed_no_signal(t == tool)
-	if _touch:
-		# Лента зданий открыта, пока здание не выбрано.
-		_set_drawer(tool == Interaction.Tool.BUILD and interaction.building_system.selected_id == "")
+	var bs := interaction.building_system
+	# Меню зданий открыто, пока здание не выбрано (на ПК — всю стройку).
+	if tool == Interaction.Tool.BUILD and bs.moving == null:
+		_set_drawer(bs.selected_id == "" or not _touch)
 	else:
-		UiStyle.fade(_build_panel, tool == Interaction.Tool.BUILD)
-	if tool == Interaction.Tool.BUILD:
-		_refresh_build_cards()
+		_set_drawer(false)
+	_actions_key = ""
 
 
 func _set_drawer(open: bool) -> void:
@@ -438,10 +546,17 @@ func _set_drawer(open: bool) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("toggle_crafting"):
 		toggle_crafting()
+	elif event.is_action_pressed("toggle_map"):
+		if _map_panel.is_open():
+			_map_panel.close()
+		else:
+			open_map()
+	elif event.is_action_pressed("hide_ui"):
+		toggle_ui_hidden()
 	elif event.is_action_pressed("quick_save"):
 		show_message("Мир сохранён" if WorldState.save_game() else "Не удалось сохранить")
-	elif event.is_action_pressed("cancel") and _all_panel.get_meta("fade_target", false):
-		UiStyle.fade(_all_panel, false)
+	elif event.is_action_pressed("cancel") and (_all_panel.get_meta("fade_target", false) or _craft_panel.get_meta("fade_target", false)):
+		_close_panels()
 		get_viewport().set_input_as_handled()
 
 
@@ -453,8 +568,7 @@ func _build_build_panel() -> void:
 	_build_panel.custom_minimum_size = Vector2(980, 0)
 	_build_panel.visible = false
 	_build_panel.modulate.a = 0.0
-	if _touch:
-		_build_panel.add_theme_stylebox_override("panel", UiStyle.panel(16, 8))
+	_build_panel.add_theme_stylebox_override("panel", UiStyle.panel(16, int(_px(10, 8))))
 	_bottom.add_child(_build_panel)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", _px(10, 6))
@@ -471,32 +585,24 @@ func _build_build_panel() -> void:
 		b.button_group = group
 		b.button_pressed = cat == _category
 		b.custom_minimum_size = Vector2(0, _px(38, 34))
-		if _touch:
-			b.add_theme_font_size_override("font_size", 12)
-			b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		b.clip_text = true
+		b.add_theme_font_size_override("font_size", int(_px(14, 12)))
 		b.pressed.connect(func() -> void:
 			_category = cat
+			_build_scroll.reset()
 			_refresh_build_cards())
 		tabs.add_child(b)
 		_category_buttons[cat] = b
 	box.add_child(tabs)
-	var scroll: ScrollContainer
-	if _touch:
-		# Лента карточек листается пальцем вбок.
-		scroll = _scroll(true)
-		scroll.custom_minimum_size = Vector2(0, 136)
-		_build_grid = HBoxContainer.new()
-		_build_grid.add_theme_constant_override("separation", 6)
-	else:
-		scroll = ScrollContainer.new()
-		scroll.custom_minimum_size = Vector2(0, 186)
-		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		_build_grid = HFlowContainer.new()
-		_build_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		_build_grid.add_theme_constant_override("h_separation", 8)
-		_build_grid.add_theme_constant_override("v_separation", 8)
-	box.add_child(scroll)
-	scroll.add_child(_build_grid)
+	# Лента карточек листается пальцем или колесом вбок.
+	_build_scroll = SmoothScroll.new()
+	_build_scroll.horizontal = true
+	_build_scroll.custom_minimum_size = Vector2(0, _px(176, 140))
+	_build_grid = HBoxContainer.new()
+	_build_grid.add_theme_constant_override("separation", _px(8, 6))
+	box.add_child(_build_scroll)
+	_build_scroll.add_child(_build_grid)
 	for id: String in GameData.BUILDINGS:
 		_build_cards[id] = _make_card(id)
 		_build_grid.add_child(_build_cards[id]["button"])
@@ -504,41 +610,58 @@ func _build_build_panel() -> void:
 
 func _make_card(id: String) -> Dictionary:
 	var def: Dictionary = GameData.BUILDINGS[id]
+	var w := _px(160, 116)
 	var b := Button.new()
-	b.custom_minimum_size = Vector2(_px(178, 112), _px(178, 132))
+	b.custom_minimum_size = Vector2(w, _px(172, 136))
 	b.tooltip_text = def["desc"]
-	if _touch:
-		# Иначе лента не листается, если палец начал движение на карточке.
-		b.mouse_filter = Control.MOUSE_FILTER_PASS
+	b.clip_contents = true
+	# Иначе лента не листается, если палец начал движение на карточке.
+	b.mouse_filter = Control.MOUSE_FILTER_PASS
 	b.pressed.connect(func() -> void:
 		interaction.start_building(id)
 		Platform.haptic(0.2))
+	b.gui_input.connect(func(e: InputEvent) -> void:
+		# Недоступная карточка: сразу говорим, чего не хватает.
+		if b.disabled and e is InputEventMouseButton and not (e as InputEventMouseButton).pressed:
+			show_message("Не хватает: %s" % GameData.cost_text(Inventory.missing(def["cost"]))))
 	var box := VBoxContainer.new()
-	box.set_anchors_preset(Control.PRESET_FULL_RECT)
-	box.add_theme_constant_override("separation", _px(2, 1))
+	box.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	box.offset_left = 6
+	box.offset_right = -6
+	box.offset_top = 4
+	box.offset_bottom = -4
+	box.add_theme_constant_override("separation", 1)
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(box)
 	var thumb := TextureRect.new()
-	thumb.custom_minimum_size = Vector2(0, _px(96, 62))
+	thumb.custom_minimum_size = Vector2(0, _px(84, 58))
 	thumb.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	thumb.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	thumb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	thumb.texture = thumbnails.textures.get(id, UiStyle.icon("cat_" + def["category"]))
+	thumb.texture = thumbnails.texture_for(id, UiStyle.icon("cat_" + def["category"]))
 	box.add_child(thumb)
 	var title := UiStyle.label(def["name"], _px(14, 12), UiStyle.TEXT, 800)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	title.clip_text = true
+	title.custom_minimum_size.x = w - 14.0
 	box.add_child(title)
 	var time_row := HBoxContainer.new()
 	time_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	time_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	time_row.add_child(UiStyle.icon_rect("timer", _px(14, 12)))
-	time_row.add_child(UiStyle.label("%d с" % def["time"], _px(12, 11), UiStyle.MUTED, 700))
+	var time_label := UiStyle.label("%d с" % def["time"], _px(12, 11), UiStyle.MUTED, 700)
+	time_row.add_child(time_label)
 	box.add_child(time_row)
-	var cost_holder := CenterContainer.new()
-	cost_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_child(cost_holder)
-	return {"button": b, "thumb": thumb, "cost": cost_holder}
+	# Стоимость переносится на вторую строку, если не влезает в карточку.
+	var cost := HFlowContainer.new()
+	cost.alignment = FlowContainer.ALIGNMENT_CENTER
+	cost.add_theme_constant_override("h_separation", 5)
+	cost.add_theme_constant_override("v_separation", 0)
+	cost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cost.custom_minimum_size.x = w - 14.0
+	box.add_child(cost)
+	return {"button": b, "thumb": thumb, "cost": cost, "time": time_label}
 
 
 func _on_thumbnail(id: String, tex: Texture2D) -> void:
@@ -549,6 +672,7 @@ func _on_thumbnail(id: String, tex: Texture2D) -> void:
 func _refresh_build_cards() -> void:
 	if _build_cards.is_empty():
 		return
+	var creative := GameMode.is_creative()
 	for id: String in _build_cards:
 		var def: Dictionary = GameData.BUILDINGS[id]
 		var card: Dictionary = _build_cards[id]
@@ -556,30 +680,40 @@ func _refresh_build_cards() -> void:
 		b.visible = def["category"] == _category
 		if not b.visible:
 			continue
-		var holder: CenterContainer = card["cost"]
+		var holder: HFlowContainer = card["cost"]
 		for c in holder.get_children():
 			c.queue_free()
-		holder.add_child(UiStyle.cost_row(def["cost"], int(_px(18, 15))))
+		for res: String in def["cost"]:
+			var item := HBoxContainer.new()
+			item.add_theme_constant_override("separation", 1)
+			item.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			item.add_child(UiStyle.icon_rect(res, int(_px(16, 14))))
+			var enough := creative or Inventory.count(res) >= int(def["cost"][res])
+			item.add_child(UiStyle.label(str(def["cost"][res]), int(_px(14, 12)), UiStyle.TEXT if enough else UiStyle.BAD, 800))
+			holder.add_child(item)
+		if def["cost"].is_empty():
+			holder.add_child(UiStyle.label("бесплатно", int(_px(13, 11)), UiStyle.MUTED, 800))
+		var affordable := Inventory.has_all(def["cost"])
+		var time_label: Label = card["time"]
+		# Чего не хватает — видно прямо на карточке, а выбрать её нельзя.
+		time_label.text = ("сразу" if creative else "%d с" % ceili(def["time"])) if affordable else "Не хватает"
+		time_label.add_theme_color_override("font_color", UiStyle.MUTED if affordable else UiStyle.BAD)
 		var selected := interaction != null and interaction.building_system.selected_id == id
-		b.add_theme_stylebox_override("normal", UiStyle.box(UiStyle.BRAND.lightened(0.35) if selected else UiStyle.SURFACE, 14, int(_px(8, 5)),
+		b.disabled = not affordable
+		b.add_theme_stylebox_override("normal", UiStyle.box(UiStyle.BRAND.lightened(0.35) if selected else UiStyle.SURFACE, 14, 8,
 			2 if selected else 0, UiStyle.BRAND_DARK))
-		b.modulate = Color.WHITE if Inventory.has_all(def["cost"]) else Color(1, 1, 1, 0.78)
+		b.add_theme_stylebox_override("disabled", UiStyle.box(Color(UiStyle.SURFACE, 0.55), 14, 8))
+		b.modulate = Color.WHITE if affordable else Color(1, 1, 1, 0.62)
 
 
 # --- Ремесло --------------------------------------------------------------------------------------
 
 func _build_craft_panel() -> void:
 	_craft_panel = PanelContainer.new()
-	if _touch:
-		_craft_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
-		_craft_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-		_craft_panel.custom_minimum_size = Vector2(440, 0)
-		_craft_panel.add_theme_stylebox_override("panel", UiStyle.panel(16, 10))
-	else:
-		_craft_panel.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
-		_craft_panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-		_craft_panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-		_craft_panel.custom_minimum_size = Vector2(440, 0)
+	_craft_panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_craft_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_craft_panel.custom_minimum_size = Vector2(_px(480, 440), 0)
+	_craft_panel.add_theme_stylebox_override("panel", UiStyle.panel(16, int(_px(14, 10))))
 	_craft_panel.visible = false
 	_craft_panel.modulate.a = 0.0
 	_root.add_child(_craft_panel)
@@ -589,39 +723,45 @@ func _build_craft_panel() -> void:
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 8)
 	header.add_child(UiStyle.icon_rect("tool_craft", _px(28, 24)))
-	header.add_child(UiStyle.label("Ремесло", _px(22, 18), UiStyle.TEXT, 800))
+	var title := UiStyle.label("Ремесло", _px(22, 18), UiStyle.TEXT, 800)
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(title)
+	var close := UiStyle.close_button(_px(38, 40))
+	close.pressed.connect(toggle_crafting)
+	header.add_child(close)
 	box.add_child(header)
-	if _touch:
-		var spacer := Control.new()
-		spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		header.add_child(spacer)
-		var close := Button.new()
-		close.icon = UiStyle.icon("close")
-		close.add_theme_constant_override("icon_max_width", 16)
-		close.custom_minimum_size = Vector2(40, 34)
-		close.pressed.connect(toggle_crafting)
-		header.add_child(close)
-	_craft_queue_label = UiStyle.label("", _px(13, 12), UiStyle.MUTED, 700)
-	box.add_child(_craft_queue_label)
+	# Очередь: одинаковые рецепты складываются в «×N», длинная очередь листается вбок,
+	# а ширина окна от неё не меняется.
+	var queue_row := HBoxContainer.new()
+	queue_row.add_theme_constant_override("separation", 6)
+	_craft_status = UiStyle.label("", _px(13, 12), UiStyle.MUTED, 700)
+	queue_row.add_child(_craft_status)
+	_craft_queue_scroll = SmoothScroll.new()
+	_craft_queue_scroll.horizontal = true
+	_craft_queue_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_craft_queue_scroll.custom_minimum_size = Vector2(10, 26)
+	queue_row.add_child(_craft_queue_scroll)
+	_craft_queue = HBoxContainer.new()
+	_craft_queue.add_theme_constant_override("separation", 5)
+	_craft_queue_scroll.add_child(_craft_queue)
+	box.add_child(queue_row)
 	_craft_progress = ProgressBar.new()
 	_craft_progress.max_value = 1.0
+	_craft_progress.step = 0.0
 	_craft_progress.show_percentage = false
 	_craft_progress.custom_minimum_size = Vector2(0, 8)
 	box.add_child(_craft_progress)
-	var rows := box
-	if _touch:
-		_craft_scroll = _scroll(false)
-		box.add_child(_craft_scroll)
-		rows = VBoxContainer.new()
-		rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		rows.add_theme_constant_override("separation", 6)
-		_craft_scroll.add_child(rows)
+	_craft_scroll = SmoothScroll.new()
+	box.add_child(_craft_scroll)
+	var rows := VBoxContainer.new()
+	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rows.add_theme_constant_override("separation", 6)
+	_craft_scroll.add_child(rows)
 	for id: String in GameData.RECIPES:
 		var r: Dictionary = GameData.RECIPES[id]
 		var row := PanelContainer.new()
 		row.add_theme_stylebox_override("panel", UiStyle.box(UiStyle.SURFACE, 12, int(_px(8, 6))))
-		if _touch:
-			row.mouse_filter = Control.MOUSE_FILTER_PASS
+		row.mouse_filter = Control.MOUSE_FILTER_PASS
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", 8)
 		row.add_child(line)
@@ -636,14 +776,14 @@ func _build_craft_panel() -> void:
 		formula.add_child(UiStyle.cost_row(r["out"], int(_px(20, 18)), false))
 		info.add_child(formula)
 		var sub := UiStyle.label("", 12, UiStyle.MUTED, 700)
+		sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		info.add_child(sub)
 		line.add_child(info)
 		var b := Button.new()
 		b.text = "Сделать"
 		b.custom_minimum_size = Vector2(_px(96, 92), _px(36, 40))
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		if _touch:
-			b.mouse_filter = Control.MOUSE_FILTER_PASS
+		b.mouse_filter = Control.MOUSE_FILTER_PASS
 		b.pressed.connect(func() -> void:
 			var reason := Crafting.enqueue(id)
 			if reason != "":
@@ -655,11 +795,6 @@ func _build_craft_panel() -> void:
 		_craft_rows[id] = {"button": b, "sub": sub, "ins": ins}
 
 
-func toggle_crafting() -> void:
-	UiStyle.fade(_craft_panel, not _craft_panel.get_meta("fade_target", false))
-	_refresh_crafting()
-
-
 func _refresh_crafting() -> void:
 	if _craft_rows.is_empty():
 		return
@@ -668,20 +803,34 @@ func _refresh_crafting() -> void:
 		var row: Dictionary = _craft_rows[id]
 		var reason := Crafting.check(id)
 		var station: String = GameData.BUILDINGS[r["station"]]["name"]
-		row["sub"].text = "%s · %d с%s" % [station, r["time"], "" if reason == "" else " · " + reason]
+		var time_text := "сразу" if GameMode.is_creative() else "%d с" % r["time"]
+		row["sub"].text = "%s · %s%s" % [station, time_text, "" if reason == "" else " · " + reason]
 		row["sub"].add_theme_color_override("font_color", UiStyle.MUTED if reason == "" else UiStyle.BAD)
 		row["button"].disabled = reason != ""
 		var ins: HBoxContainer = row["ins"]
 		for c in ins.get_children():
 			c.queue_free()
 		ins.add_child(UiStyle.cost_row(r["in"], int(_px(20, 18))))
-	if Crafting.queue.is_empty():
-		_craft_queue_label.text = "Очередь пуста"
+	for c in _craft_queue.get_children():
+		c.queue_free()
+	var groups := Crafting.grouped()
+	if groups.is_empty():
+		_craft_status.text = "Очередь пуста"
 	else:
-		var names: PackedStringArray = []
-		for id in Crafting.queue:
-			names.append(GameData.RECIPES[id]["name"])
-		_craft_queue_label.text = "В работе: " + ", ".join(names)
+		_craft_status.text = "В работе:"
+		for g: Dictionary in groups:
+			var chip := PanelContainer.new()
+			chip.add_theme_stylebox_override("panel", UiStyle.box(UiStyle.SURFACE, 10, 4, 1, UiStyle.BRAND))
+			chip.mouse_filter = Control.MOUSE_FILTER_PASS
+			var chip_row := HBoxContainer.new()
+			chip_row.add_theme_constant_override("separation", 3)
+			chip_row.add_child(UiStyle.icon_rect(GameData.RECIPES[g["id"]]["out"].keys()[0], 16))
+			var text: String = GameData.RECIPES[g["id"]]["name"]
+			if g["count"] > 1:
+				text += " ×%d" % g["count"]
+			chip_row.add_child(UiStyle.label(text, 12, UiStyle.TEXT, 800))
+			chip.add_child(chip_row)
+			_craft_queue.add_child(chip)
 
 
 # --- Текущее действие, подсказки, сообщения ---------------------------------------------------------
@@ -708,6 +857,7 @@ func _build_job_panel() -> void:
 	box.add_child(_job_label)
 	_job_bar = ProgressBar.new()
 	_job_bar.max_value = 1.0
+	_job_bar.step = 0.0
 	_job_bar.show_percentage = false
 	_job_bar.custom_minimum_size = Vector2(0, _px(10, 8))
 	box.add_child(_job_bar)
@@ -727,7 +877,7 @@ func _update_job_panel() -> void:
 	else:
 		var drops: Dictionary = GameData.PROPS[job["prop"]["id"]].get("drops", {})
 		_job_icon.texture = UiStyle.icon(drops.keys()[0] if not drops.is_empty() else "tool_harvest")
-	_job_bar.value = lerpf(_job_bar.value, interaction.current_job_fraction(), 0.5)
+	_job_bar.value = interaction.current_job_fraction()
 
 
 func _build_hover() -> void:
@@ -740,7 +890,7 @@ func _build_hover() -> void:
 	_hover_panel.add_child(_hover_label)
 
 
-## Телефон: подсказка — плашка над панелью инструментов, а не у курсора.
+## Подсказка-плашка над панелью инструментов (на телефоне — вместо подсказки у курсора).
 func _build_hint() -> void:
 	_hint_panel = PanelContainer.new()
 	_hint_panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -766,7 +916,7 @@ func _on_hover_changed(text: String) -> void:
 	_hover_panel.visible = text != ""
 
 
-# --- Кнопки действий (телефон) ------------------------------------------------------------------
+# --- Кнопки действий ------------------------------------------------------------------------------
 
 func _build_actions() -> void:
 	_actions = VBoxContainer.new()
@@ -779,13 +929,14 @@ func _build_actions() -> void:
 	_root.add_child(_actions)
 
 
-func _action_button(icon_name: String, text: String, accent := false) -> Button:
+func _action_button(icon_name: String, text: String, toggled := false) -> Button:
 	var b := Button.new()
 	b.custom_minimum_size = Vector2(ACTIONS_WIDTH - 8.0, 58)
-	var bg := UiStyle.BRAND if accent else Color(UiStyle.BASE, 0.97)
-	b.add_theme_stylebox_override("normal", UiStyle.box(bg, 18, 6, 2, UiStyle.BRAND_DARK if accent else UiStyle.BRAND, true))
-	b.add_theme_stylebox_override("hover", UiStyle.box(bg, 18, 6, 2, UiStyle.BRAND_DARK, true))
-	b.add_theme_stylebox_override("pressed", UiStyle.box(UiStyle.BRAND.darkened(0.08), 18, 6, 2, UiStyle.BRAND_DARK, true))
+	var bg := UiStyle.BRAND.lightened(0.35) if toggled else Color(UiStyle.BASE, 0.97)
+	# Обычный светлый цвет, как у всех кнопок: тёмная заливка выглядела «недоступной».
+	b.add_theme_stylebox_override("normal", UiStyle.box(bg, 18, 6, 2, UiStyle.BRAND_DARK if toggled else UiStyle.BRAND, true))
+	b.add_theme_stylebox_override("hover", UiStyle.box(UiStyle.SURFACE_HOVER, 18, 6, 2, UiStyle.BRAND_DARK, true))
+	b.add_theme_stylebox_override("pressed", UiStyle.box(UiStyle.SURFACE_HOVER, 18, 6, 2, UiStyle.BRAND_DARK, true))
 	var box := VBoxContainer.new()
 	box.set_anchors_preset(Control.PRESET_FULL_RECT)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -805,32 +956,66 @@ func _action_button(icon_name: String, text: String, accent := false) -> Button:
 ## Набор кнопок зависит от инструмента и выбора; пересобираем, только когда он меняется.
 func _update_actions() -> void:
 	var bs := interaction.building_system
-	var key := "%d|%s|%s|%s|%s" % [interaction.tool, bs.selected_id != "", is_instance_valid(interaction.selected_building),
-		not interaction.jobs.is_empty(), _drawer_open]
+	var selected_crop: String = interaction.selected_building.crop if is_instance_valid(interaction.selected_building) else ""
+	var key := "%d|%s|%s|%s|%s|%s|%s|%s|%d|%s|%s|%s" % [interaction.tool, bs.selected_id, bs.moving != null,
+		is_instance_valid(interaction.selected_building), not interaction.jobs.is_empty(), _drawer_open,
+		interaction.nature_mode, interaction.flatten_offset_text(), interaction.tree_species, bs.crop_choice, selected_crop,
+		interaction.selected_building.get_instance_id() if is_instance_valid(interaction.selected_building) else 0]
 	if key == _actions_key:
 		return
 	_actions_key = key
 	for c in _actions.get_children():
 		c.queue_free()
+	var to_harvest := func() -> void: interaction.set_tool(Interaction.Tool.HARVEST)
 	match interaction.tool:
 		Interaction.Tool.BUILD:
-			if bs.selected_id != "":
-				_action_button("cat_housing", "Здания").pressed.connect(func() -> void: _set_drawer(not _drawer_open))
+			if bs.moving:
 				_action_button("rotate", "Повернуть").pressed.connect(interaction.rotate_building)
-				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction.set_tool(Interaction.Tool.HARVEST))
-				_action_button("check", "Построить", true).pressed.connect(interaction.confirm_build)
-			else:
-				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction.set_tool(Interaction.Tool.HARVEST))
+				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction.set_tool(Interaction.Tool.EDIT))
+				_action_button("check", "Поставить").pressed.connect(interaction.confirm_build)
+			elif bs.selected_id != "":
+				if _touch:
+					_action_button("cat_housing", "Здания").pressed.connect(func() -> void: _set_drawer(not _drawer_open))
+				if GameData.BUILDINGS[bs.selected_id].has("crops"):
+					var c: Dictionary = CropPatch.CROPS[bs.crop_choice]
+					_action_button(c["icon"], c["name"], true).pressed.connect(interaction.next_crop)
+				_action_button("rotate", "Повернуть").pressed.connect(interaction.rotate_building)
+				_action_button("close", "Отмена").pressed.connect(to_harvest)
+				_action_button("check", "Построить").pressed.connect(interaction.confirm_build)
+			elif _touch:
+				_action_button("close", "Отмена").pressed.connect(to_harvest)
 		Interaction.Tool.FLATTEN:
+			_action_button("arrow_up", "Выше").pressed.connect(func() -> void: interaction.adjust_flatten_offset(0.5))
+			_action_button("auto", interaction.flatten_offset_text().capitalize(), is_zero_approx(interaction.flatten_offset)) \
+				.pressed.connect(interaction.reset_flatten_offset)
+			_action_button("arrow_down", "Ниже").pressed.connect(func() -> void: interaction.adjust_flatten_offset(-0.5))
 			_action_button("plus", "Шире").pressed.connect(func() -> void: interaction.resize_brush(1.0))
 			_action_button("minus", "Уже").pressed.connect(func() -> void: interaction.resize_brush(-1.0))
-			_action_button("check", "Готово").pressed.connect(func() -> void: interaction.set_tool(Interaction.Tool.HARVEST))
-		Interaction.Tool.DEMOLISH:
+		Interaction.Tool.NATURE:
+			for mode: String in NATURE_ICONS:
+				var label: String = NATURE_SHORT[mode]
+				if mode == "tree" and interaction.nature_mode == "tree":
+					label = interaction.tree_species_name()
+				var b := _action_button(NATURE_ICONS[mode], label, interaction.nature_mode == mode)
+				b.pressed.connect(func() -> void:
+					if mode == "tree" and interaction.nature_mode == "tree":
+						interaction.next_tree_species()
+					else:
+						interaction.set_nature_mode(mode))
+			if interaction.nature_mode != "tree":
+				_action_button("plus", "Шире").pressed.connect(func() -> void: interaction.resize_brush(1.0))
+				_action_button("minus", "Уже").pressed.connect(func() -> void: interaction.resize_brush(-1.0))
+		Interaction.Tool.EDIT:
 			if is_instance_valid(interaction.selected_building):
+				if interaction.selected_building.has_crops():
+					var c: Dictionary = CropPatch.CROPS[selected_crop if selected_crop != "" else "wheat"]
+					_action_button(c["icon"], c["name"], true).pressed.connect(interaction.next_crop)
+				_action_button("move", "Перенести").pressed.connect(interaction.edit_move)
+				_action_button("rotate", "Повернуть").pressed.connect(func() -> void: interaction.edit_rotate(1.0))
+				_action_button("trash", "Снести").pressed.connect(interaction.demolish_selected)
 				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction.select_building(null))
-				_action_button("tool_demolish", "Снести", true).pressed.connect(interaction.demolish_selected)
 			else:
-				_action_button("check", "Готово").pressed.connect(func() -> void: interaction.set_tool(Interaction.Tool.HARVEST))
+				_action_button("check", "Готово").pressed.connect(to_harvest)
 		Interaction.Tool.HARVEST:
 			if not interaction.jobs.is_empty():
 				_action_button("close", "Очередь").pressed.connect(interaction.cancel_all_jobs)
@@ -874,8 +1059,16 @@ func _build_loading() -> void:
 	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	box.grow_vertical = Control.GROW_DIRECTION_BOTH
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_theme_constant_override("separation", 10)
 	_loading.add_child(box)
-	var title := UiStyle.label("Тихие Земли", _px(54, 40), UiStyle.TEXT, 900)
+	var logo := TextureRect.new()
+	logo.texture = load("res://icon.png") if ResourceLoader.exists("res://icon.png") else null
+	logo.custom_minimum_size = Vector2.ONE * _px(120, 84)
+	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	logo.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	box.add_child(logo)
+	var title := UiStyle.label(GameData.GAME_NAME, _px(54, 40), UiStyle.TEXT, 900)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
 	var line := ColorRect.new()
@@ -919,18 +1112,42 @@ func hide_loading() -> void:
 
 
 func _process(delta: float) -> void:
+	# На телефоне меню стройки и ремесло занимают верх экрана — мини-карта
+	# на это время уходит, чтобы не закрывать их.
+	if _touch and _map_frame:
+		var covered := _drawer_open or bool(_craft_panel.get_meta("fade_target", false))
+		_map_frame.modulate.a = move_toward(_map_frame.modulate.a, 0.0 if covered else 1.0, delta * 6.0)
+		_map_frame.visible = _map_frame.modulate.a > 0.01
 	_info_timer -= delta
 	if _info_timer <= 0.0:
 		_info_timer = 0.25
 		_update_clock()
+		if _craft_panel.visible:
+			_refresh_craft_status()
 	if interaction:
 		_update_job_panel()
-		_craft_progress.value = Crafting.current_fraction()
-		if _touch:
-			_update_actions()
+		_update_actions()
+		# Полоска ремесла: плавно следует за прогрессом, а при смене рецепта — сразу к нулю.
+		var f := Crafting.current_fraction()
+		_craft_progress.value = f if f < _craft_progress.value else lerpf(_craft_progress.value, f, 1.0 - exp(-14.0 * delta))
 	if _hover_panel and _hover_panel.visible:
 		var target := get_viewport().get_mouse_position() + Vector2(22, 22)
 		var vp := get_viewport().get_visible_rect().size
 		target.x = minf(target.x, vp.x - _hover_panel.size.x - 8)
 		target.y = minf(target.y, vp.y - _hover_panel.size.y - 8)
 		_hover_panel.position = _hover_panel.position.lerp(target, 1.0 - exp(-25.0 * delta))
+
+
+## Раз в четверть секунды: не ушли ли мы далеко от мастерских (рецепты блокируются).
+func _refresh_craft_status() -> void:
+	var paused := Crafting.is_paused()
+	if paused and not _craft_status.text.begins_with("Пауза"):
+		_refresh_crafting()
+		_craft_status.text = "Пауза — мастерская далеко:"
+	elif not paused and _craft_status.text.begins_with("Пауза"):
+		_refresh_crafting()
+	for id: String in _craft_rows:
+		var reason := Crafting.check(id)
+		if (reason != "") != (_craft_rows[id]["button"] as Button).disabled:
+			_refresh_crafting()
+			break

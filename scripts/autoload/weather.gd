@@ -32,8 +32,17 @@ var storm := 0.0
 var wind_dir := Vector2(1.0, 0.35).normalized()
 var wetness := 0.0
 var snow_cover := 0.0
+## Лёд на озёрах: нарастает зимой, тает весной.
+var ice := 0.0
 
 var _wind_angle := 0.33
+
+## Часы для режимов «Только день» и «Только ночь».
+const DAY_HOUR := 12.5
+const NIGHT_HOUR := 23.5
+## За сколько секунд погода сама сменяется на новую (режим «Авто»): медленно,
+## как в жизни, без ускорения.
+const WEATHER_BLEND := 22.0
 var _last_season := -1
 
 
@@ -68,9 +77,9 @@ func _process(delta: float) -> void:
 func _advance_time(delta: float, hours_per_sec: float) -> void:
 	match Settings.get_value("time_mode"):
 		"day":
-			hour = _approach_hour(hour, 12.5, delta)
+			hour = DAY_HOUR
 		"night":
-			hour = _approach_hour(hour, 23.5, delta)
+			hour = NIGHT_HOUR
 		_:
 			hour += delta * hours_per_sec
 			if hour >= 24.0:
@@ -78,30 +87,23 @@ func _advance_time(delta: float, hours_per_sec: float) -> void:
 				day += 1
 
 
-## Плавно «прокручивает» часы к нужному времени, чтобы свет не прыгал.
-static func _approach_hour(h: float, target: float, delta: float) -> float:
-	var diff := fposmod(target - h, 24.0)
-	if diff < 0.01:
-		return target
-	return fposmod(h + minf(diff, delta * 3.0), 24.0)
-
-
 func _advance_season(delta: float, hours_per_sec: float) -> void:
 	var mode: String = Settings.get_value("season_mode")
 	if mode == "auto":
 		season_t = fposmod(season_t + delta * hours_per_sec / 24.0 / float(Settings.get_value("season_days")), 4.0)
 	else:
-		var index := 0
-		for i in SEASONS.size():
-			if SEASONS[i]["id"] == mode:
-				index = i
-		var target := index + 0.55
-		var diff := fposmod(target - season_t, 4.0)
-		if diff > 0.005:
-			season_t = fposmod(season_t + minf(diff, delta * 0.25), 4.0)
+		season_t = _season_target(mode, season_t)
 	if season_index() != _last_season:
 		_last_season = season_index()
 		season_changed.emit(_last_season)
+
+
+## Середина выбранного сезона (если уже внутри него — остаёмся на месте).
+func _season_target(mode: String, current: float) -> float:
+	for i in SEASONS.size():
+		if SEASONS[i]["id"] == mode:
+			return current if int(floorf(current)) % 4 == i and fmod(current, 1.0) > 0.3 else i + 0.55
+	return current
 
 
 func _advance_weather(delta: float, hours_per_sec: float) -> void:
@@ -114,7 +116,7 @@ func _advance_weather(delta: float, hours_per_sec: float) -> void:
 			weather_left = randf_range(2.0, 6.0)
 			_set_weather(_pick_weather())
 	var target: Dictionary = WEATHERS[weather]
-	var k := 1.0 - exp(-delta / 6.0)
+	var k := 1.0 - exp(-delta / WEATHER_BLEND)
 	clouds = lerpf(clouds, target["clouds"], k)
 	overcast = lerpf(overcast, target["overcast"], k)
 	wind = lerpf(wind, target["wind"], k)
@@ -131,6 +133,42 @@ func _advance_weather(delta: float, hours_per_sec: float) -> void:
 	var snow_target := 1.0 if snow > 0.15 else keep_snow
 	var snow_rate := snow / 45.0 if snow > 0.15 else 1.0 / 80.0
 	snow_cover = move_toward(snow_cover, snow_target, delta * snow_rate)
+	ice = move_toward(ice, _ice_target(), delta / 90.0)
+
+
+## Озёра замерзают зимой (и немного — под толстым снегом).
+func _ice_target() -> float:
+	return clampf(winter_amount() * 1.2 + snow_cover * 0.35 - 0.2, 0.0, 1.0)
+
+
+## Мгновенно приводит мир к выбранным в настройках времени, сезону и погоде.
+## Смену прячет шторка в интерфейсе (WorldWipe), поэтому ничего не «проматывается».
+func snap_to_settings() -> void:
+	match Settings.get_value("time_mode"):
+		"day":
+			hour = DAY_HOUR
+		"night":
+			hour = NIGHT_HOUR
+	var season_mode: String = Settings.get_value("season_mode")
+	if season_mode != "auto":
+		season_t = _season_target(season_mode, season_t)
+	var mode: String = Settings.get_value("weather_mode")
+	if mode != "auto" and WEATHERS.has(mode):
+		_set_weather(mode)
+	var target: Dictionary = WEATHERS[weather]
+	clouds = target["clouds"]
+	overcast = target["overcast"]
+	wind = target["wind"]
+	rain = target["rain"]
+	snow = target["snow"]
+	fog = target["fog"]
+	storm = target["storm"]
+	wetness = 0.8 if rain > 0.15 else minf(wetness, 0.25)
+	if snow > 0.15:
+		snow_cover = 0.9
+	else:
+		snow_cover = winter_amount() * 0.75
+	ice = _ice_target()
 
 
 func _set_weather(id: String) -> void:
@@ -181,7 +219,8 @@ func winter_amount() -> float:
 
 
 func save_state() -> Dictionary:
-	return {"hour": hour, "day": day, "season_t": season_t, "weather": weather, "snow_cover": snow_cover, "wetness": wetness}
+	return {"hour": hour, "day": day, "season_t": season_t, "weather": weather, "snow_cover": snow_cover, "wetness": wetness,
+		"ice": ice}
 
 
 func load_state(state: Dictionary) -> void:
@@ -191,3 +230,4 @@ func load_state(state: Dictionary) -> void:
 	weather = state.get("weather", weather)
 	snow_cover = state.get("snow_cover", snow_cover)
 	wetness = state.get("wetness", wetness)
+	ice = state.get("ice", _ice_target())

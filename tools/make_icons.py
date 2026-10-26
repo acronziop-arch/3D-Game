@@ -42,6 +42,33 @@ def rock(main, light, dark):
             + line("M22 32 L36 30 L46 20 M36 30 L40 46", dark, 1.6, 0.55))
 
 
+def arc_arrow(cx, cy, r, a0, a1, color, w=5.0, head=9.0):
+    """Дуга по часовой стрелке (экранные координаты) от a0 до a1 градусов
+    и наконечник на конце, направленный по ходу дуги."""
+    import math
+    t0, t1 = math.radians(a0), math.radians(a1)
+    x0, y0 = cx + r * math.cos(t0), cy + r * math.sin(t0)
+    x1, y1 = cx + r * math.cos(t1), cy + r * math.sin(t1)
+    large = 1 if (a1 - a0) % 360 > 180 else 0
+    # Дугу не доводим до конца: там наконечник.
+    back = math.radians(a1) - head * 0.55 / r
+    xb, yb = cx + r * math.cos(back), cy + r * math.sin(back)
+    arc = f'<path d="M{x0:.1f} {y0:.1f} A{r} {r} 0 {large} 1 {xb:.1f} {yb:.1f}" fill="none" stroke="{color}" stroke-width="{w}" stroke-linecap="round"/>'
+    tx, ty = -math.sin(t1), math.cos(t1)
+    nx, ny = math.cos(t1), math.sin(t1)
+    tip = (x1 + tx * head * 0.6, y1 + ty * head * 0.6)
+    l = (x1 - tx * head * 0.5 + nx * head * 0.75, y1 - ty * head * 0.5 + ny * head * 0.75)
+    rr = (x1 - tx * head * 0.5 - nx * head * 0.75, y1 - ty * head * 0.5 - ny * head * 0.75)
+    tri = f'<path d="M{tip[0]:.1f} {tip[1]:.1f} L{l[0]:.1f} {l[1]:.1f} L{rr[0]:.1f} {rr[1]:.1f} Z" fill="{color}" stroke="{color}" stroke-width="1.5" stroke-linejoin="round"/>'
+    return arc + tri
+
+
+def pin(inner, color):
+    """Метка на карте: капля цвета color с рисунком внутри (рисунок в квадрате 16..48)."""
+    return (shape("M32 60 Q14 40 14 26 A18 18 0 1 1 50 26 Q50 40 32 60 Z", color, "#3E342B", 'stroke-width="2.2"')
+            + circle(32, 26, 13.5, "#FFFFFF") + f'<g transform="translate(32 26) scale(0.42) translate(-32 -32)">{inner}</g>')
+
+
 ICONS = {}
 
 # --- Ресурсы -----------------------------------------------------------------------------
@@ -118,23 +145,40 @@ ICONS["cloth"] = svg(
 
 # --- Инструменты и общие --------------------------------------------------------------------
 ICONS["tool_harvest"] = svg(
-    line("M18 54 L42 18", "#7A4A28", 6.5) + line("M18 54 L42 18", "#B87A48", 3.5)
-    + shape("M34 14 Q44 6 54 12 Q52 22 46 28 Q42 22 34 14 Z", "#B9C0CB", "#4D535E")
-    + line("M44 11 Q50 14 50 20", "#E8EDF3", 1.8))
+    # Пень с воткнутым топором и щепками.
+    shape("M12 40 L12 54 Q32 62 52 54 L52 40 Z", "#9C6A3E", "#5E3A1E")
+    + ellipse(32, 40, 20, 7, "#E2B47C", "#5E3A1E", 2.4) + ellipse(32, 40, 12, 4, "none", "#B98552", 1.6)
+    + line("M24 40 L40 12", "#6E4024", 6.0) + line("M24 40 L40 12", "#C08650", 3.0)
+    + shape("M33 10 Q42 2 52 8 Q50 18 44 22 Q40 16 33 10 Z", "#B9C0CB", "#4D535E")
+    + shape("M8 30 L14 26 L16 32 Z", "#E2B47C", "#8E5A30", 'stroke-width="1.6"') + shape("M52 26 L58 24 L56 31 Z", "#E2B47C", "#8E5A30", 'stroke-width="1.6"'))
 ICONS["tool_build"] = svg(
-    line("M16 54 L38 26", "#7A4A28", 6.5) + line("M16 54 L38 26", "#B87A48", 3.5)
-    + shape("M30 14 L46 30 L54 22 L38 6 Z", "#9AA1AD", "#4D535E")
-    + shape("M30 14 L38 6 L42 10 L34 18 Z", "#C7CDD6", "none"))
+    # Домик и «плюс» — построить новое.
+    shape("M8 32 L28 14 L48 32", "#D06C49", "#6C2E1E") + shape("M12 30 L44 30 L44 56 L12 56 Z", "#F0D3A6", "#7A5634")
+    + shape("M23 56 L23 42 L33 42 L33 56", "#A86C3E", "#5A361C")
+    + circle(48, 46, 12, "#5E9C4A", "#2F5A22", 2.4) + line("M48 39 L48 53 M41 46 L55 46", "#FFFFFF", 4.0))
 ICONS["tool_flatten"] = svg(
-    line("M44 8 L30 34", "#7A4A28", 6.0) + line("M44 8 L30 34", "#B87A48", 3.2)
-    + shape("M22 30 L38 38 L32 54 Q20 58 14 50 Z", "#A8AFBA", "#4D535E")
-    + line("M8 58 L58 58", "#8C6A48", 3.0))
+    # Холм, срезанный в ровную площадку, и стрелки вниз.
+    shape("M4 56 Q14 30 26 28 L40 28 Q52 30 60 56 Z", "#8DBE5A", "#3E6A26")
+    + shape("M18 28 L46 28 L46 34 L18 34 Z", "#C9A06A", "#7A5634", 'stroke-width="1.8"')
+    + line("M24 6 L24 20 M18 14 L24 21 L30 14", "#4E7FC0", 3.6) + line("M40 6 L40 20 M34 14 L40 21 L46 14", "#4E7FC0", 3.6))
+ICONS["tool_nature"] = svg(
+    # Росток с двумя листьями над горкой земли.
+    shape("M10 56 Q32 42 54 56 Z", "#9C6A3E", "#5E3A1E")
+    + line("M32 50 L32 24", "#4F8A2E", 4.2)
+    + shape("M32 34 Q14 34 10 18 Q28 16 32 34 Z", "#7CC04C", "#3E7424")
+    + shape("M32 26 Q48 26 54 10 Q36 8 32 26 Z", "#8FD45A", "#3E7424"))
+ICONS["tool_edit"] = svg(
+    # Домик с перекрёстными стрелками — передвинуть и повернуть.
+    shape("M10 30 L28 14 L46 30", "#7B8EC0", "#36446A") + shape("M14 28 L42 28 L42 52 L14 52 Z", "#E8E2D6", "#5A5A6A")
+    + circle(46, 46, 13, "#F2C14E", "#8A6512", 2.4)
+    + line("M46 37 L46 55 M37 46 L55 46", "#5A4310", 3.2)
+    + shape("M46 34 L42 39 L50 39 Z", "#5A4310", "#5A4310", 'stroke-width="1"') + shape("M46 58 L42 53 L50 53 Z", "#5A4310", "#5A4310", 'stroke-width="1"')
+    + shape("M34 46 L39 42 L39 50 Z", "#5A4310", "#5A4310", 'stroke-width="1"') + shape("M58 46 L53 42 L53 50 Z", "#5A4310", "#5A4310", 'stroke-width="1"'))
 ICONS["tool_demolish"] = svg(
     shape("M8 34 L26 34 L26 46 L8 46 Z", "#C5603F", "#6C2E1E") + shape("M8 48 L30 48 L30 58 L8 58 Z", "#B85538", "#6C2E1E")
     + shape("M34 48 L56 48 L56 58 L34 58 Z", "#C5603F", "#6C2E1E")
     + line("M30 26 L52 8", "#7A4A28", 6.0) + line("M30 26 L52 8", "#B87A48", 3.2)
-    + shape("M22 22 L32 14 L40 24 L30 32 Z", "#7D8592", "#3E434C")
-    + line("M36 36 L40 42 L36 46", "#E04A3A", 2.4))
+    + shape("M22 22 L32 14 L40 24 L30 32 Z", "#7D8592", "#3E434C"))
 ICONS["tool_craft"] = svg(
     shape("M10 22 L50 22 Q58 22 58 28 L42 32 L42 40 L48 46 L48 52 L18 52 L18 46 L24 40 L24 32 L10 30 Z", "#6F7682", "#30343B")
     + shape("M10 22 L50 22 Q58 22 58 28 L42 28 L10 26 Z", "#A3AAB5", "none")
@@ -150,12 +194,55 @@ ICONS["timer"] = svg(
     + shape("M24 50 Q26 42 32 40 Q38 42 40 50 Z", "#E2B86A", "none") + shape("M26 18 L38 18 L32 26 Z", "#E2B86A", "none"))
 # Кнопки действий для сенсорного управления.
 ICONS["check"] = svg(line("M14 34 L27 47 L50 18", "#4E7A3A", 6.5))
-ICONS["rotate"] = svg(line("M48 22 A19 19 0 1 0 51 38", "#6B5B4D", 5.0)
-    + shape("M40 12 L54 18 L46 30 Z", "#6B5B4D", "#6B5B4D", 'stroke-width="2"'))
+ICONS["rotate"] = svg(arc_arrow(32, 33, 19, -60, 210, "#6B5B4D", 5.0, 11.0))
 ICONS["plus"] = svg(line("M32 14 L32 50 M14 32 L50 32", "#6B5B4D", 6.0))
 ICONS["minus"] = svg(line("M14 32 L50 32", "#6B5B4D", 6.0))
 # Стрелка «превращается в» (в шрифте Nunito её нет, а в браузере нет системных шрифтов).
 ICONS["arrow"] = svg(line("M10 32 L50 32 M37 19 L51 32 L37 45", "#8C7A68", 5.5))
+ICONS["mow"] = svg(
+    # Коса.
+    line("M14 58 L40 10", "#7A4A28", 5.0) + line("M14 58 L40 10", "#B87A48", 2.6)
+    + shape("M40 10 Q60 14 62 34 Q52 22 36 20 Z", "#B9C0CB", "#4D535E") + line("M22 40 L30 44", "#7A4A28", 4.0)
+    + line("M4 60 L22 60 M30 60 L44 60", "#7CC04C", 3.0))
+ICONS["grass_short"] = svg("".join(line(f"M{x} 56 Q{x + d} {44} {x + d * 2} {y}", "#5E9C3A", 3.6) for x, d, y in
+    [(14, 2, 30), (22, -2, 22), (30, 3, 26), (38, -3, 20), (46, 2, 30)]) + line("M8 58 L56 58", "#8C6A48", 3.0))
+ICONS["grass_tall"] = svg("".join(line(f"M{x} 58 Q{x + d} 34 {x + d * 2} {y}", "#6EA844", 3.4) for x, d, y in
+    [(16, 3, 12), (26, -2, 6), (36, 2, 10), (46, -3, 16)])
+    + "".join(ellipse(x, y, 3, 6, "#D9B860", "#8A6E2A", 1.4) for x, y in [(22, 12), (32, 8), (40, 13)]))
+ICONS["flower"] = svg(line("M32 58 L32 30", "#4F8A2E", 3.6) + shape("M32 44 Q20 42 18 34 Q28 34 32 44 Z", "#7CC04C", "#3E7424")
+    + "".join(circle(32 + 9 * c, 22 + 9 * s_, 7, "#F27A9A", "#A33A5C", 2.0) for c, s_ in
+              [(1, 0), (0.31, 0.95), (-0.81, 0.59), (-0.81, -0.59), (0.31, -0.95)])
+    + circle(32, 22, 5.5, "#F6C445", "#9E7414", 2.0))
+ICONS["arrow_up"] = svg(shape("M32 8 L54 32 L40 32 L40 56 L24 56 L24 32 L10 32 Z", "#7CC04C", "#3E7424"))
+ICONS["arrow_down"] = svg(shape("M32 56 L54 32 L40 32 L40 8 L24 8 L24 32 L10 32 Z", "#E8A24E", "#8A5A12"))
+ICONS["move"] = svg(line("M32 8 L32 56 M8 32 L56 32", "#6B5B4D", 4.4)
+    + "".join(shape(d, "#6B5B4D", "#6B5B4D", 'stroke-width="1.5"') for d in
+              ["M32 4 L24 14 L40 14 Z", "M32 60 L24 50 L40 50 Z", "M4 32 L14 24 L14 40 Z", "M60 32 L50 24 L50 40 Z"]))
+ICONS["trash"] = svg(shape("M16 18 L48 18 L44 58 L20 58 Z", "#E8E2D6", "#6B5B4D") + line("M10 16 L54 16 M26 10 L38 10", "#6B5B4D", 4.0)
+    + line("M26 26 L27 50 M32 26 L32 50 M38 26 L37 50", "#B9AE9C", 3.0))
+ICONS["map"] = svg(shape("M6 14 L22 8 L42 14 L58 8 L58 52 L42 58 L22 52 L6 58 Z", "#F3E7C8", "#7A6448")
+    + line("M22 8 L22 52 M42 14 L42 58", "#C9B48A", 2.0) + line("M12 44 Q22 30 30 38 Q40 46 50 22", "#C4554A", 2.8)
+    + circle(50, 22, 3.5, "#C4554A"))
+ICONS["target"] = svg(circle(32, 32, 20, "none", "#6B5B4D", 4.0) + circle(32, 32, 6, "#6B5B4D")
+    + line("M32 4 L32 14 M32 50 L32 60 M4 32 L14 32 M50 32 L60 32", "#6B5B4D", 4.0))
+ICONS["eye_off"] = svg(shape("M6 32 Q32 8 58 32 Q32 56 6 32 Z", "#FFFFFF", "#6B5B4D") + circle(32, 32, 9, "#6B5B4D")
+    + line("M12 52 L52 12", "#C4554A", 5.0))
+# Значки меток (внутренний рисунок 0..64, его кладут в «каплю» pin()).
+MARKER_ART = {
+    "home": shape("M10 32 L32 12 L54 32", "#D06C49", "#6C2E1E") + shape("M16 30 L48 30 L48 56 L16 56 Z", "#E8C394", "#7A5634"),
+    "star": shape("M32 6 L39 23 L57 24 L43 36 L48 54 L32 44 L16 54 L21 36 L7 24 L25 23 Z", "#F6C445", "#9E7414"),
+    "flag": line("M18 58 L18 8", "#6B5B4D", 5.0) + shape("M18 8 L52 16 L18 30 Z", "#C4554A", "#7A2A22"),
+    "tree": shape("M32 4 L52 40 L12 40 Z", "#4F8A3E", "#2F5A22") + shape("M28 40 L36 40 L36 58 L28 58 Z", "#8C5A34", "#5A361C"),
+    "pick": line("M14 54 L46 22", "#7A4A28", 6.0) + shape("M30 10 Q52 8 58 32 Q48 18 30 18 Z", "#9AA1AD", "#4D535E"),
+    "heart": shape("M32 56 Q8 38 10 22 Q12 10 24 10 Q30 10 32 18 Q34 10 40 10 Q52 10 54 22 Q56 38 32 56 Z", "#E8506A", "#8E2238"),
+    "castle": shape("M10 58 L10 22 L18 22 L18 30 L26 30 L26 22 L38 22 L38 30 L46 30 L46 22 L54 22 L54 58 Z", "#A3A3A8", "#4D4D55")
+              + shape("M28 58 L28 44 Q32 38 36 44 L36 58 Z", "#6B5B4D", "none"),
+    "camp": shape("M8 56 L32 14 L56 56 Z", "#E8A24E", "#8A5A12") + shape("M26 56 L32 40 L38 56 Z", "#6B4A2A", "none"),
+}
+MARKER_COLORS = {"red": "#E05A4E", "orange": "#F09A3E", "yellow": "#F2C94C", "green": "#62B04E", "blue": "#4E8FD6", "purple": "#9B6BD8"}
+for name, art in MARKER_ART.items():
+    ICONS["marker_" + name] = svg(art)
+ICONS["marker_pin"] = svg(pin(MARKER_ART["flag"], "#C9B8A6"))
 ICONS["warning"] = svg(shape("M32 8 L58 54 L6 54 Z", "#F2C14E", "#8A6512") + line("M32 24 L32 38", "#5A4310", 4.5) + circle(32, 46, 2.8, "#5A4310"))
 
 # --- Крестик над водой (для 3D) ---------------------------------------------------------------
@@ -179,9 +266,8 @@ FLAKE = lambda x, y, r: "".join(line(f"M{x - r * c:.1f} {y - r * s:.1f} L{x + r 
 ICONS["weather_snow"] = svg(f'<g transform="translate(0 -8)">{CLOUD}</g>' + FLAKE(20, 50, 5) + FLAKE(34, 54, 5) + FLAKE(46, 46, 4))
 ICONS["weather_blizzard"] = svg(FLAKE(26, 28, 14).replace('2.2', '3.4') + line("M34 44 L54 44 Q60 44 60 50 M38 54 L56 54", "#7C8DA4", 3.2) + line("M6 14 L18 14", "#7C8DA4", 3.2))
 ICONS["weather_fog"] = svg("".join(line(f"M{x0} {y} L{x1} {y}", "#8C9AAB", 4.2) for x0, x1, y in [(10, 46, 18), (18, 56, 28), (8, 50, 38), (16, 54, 48)]))
-ICONS["auto"] = svg(shape("M32 8 A24 24 0 1 1 10 42", "none", "#8C7A68").replace(f'stroke-width="{SW}"', 'stroke-width="4"')
-    + shape("M4 36 L10 44 L18 38", "none", "#8C7A68").replace(f'stroke-width="{SW}"', 'stroke-width="4"')
-    + f'<text x="32" y="40" font-family="Arial, sans-serif" font-size="22" font-weight="bold" fill="#8C7A68" text-anchor="middle">A</text>')
+ICONS["auto"] = svg(arc_arrow(32, 32, 24, -80, 200, "#8C7A68", 4.0, 9.0)
+    + shape("M23 43 L32 19 L41 43 M26.5 35 L37.5 35", "none", "#8C7A68", 'stroke-width="4"'))
 
 ICONS["clock_day"] = svg(circle(32, 32, 24, "#FFF6DD", "#C9973A", 3.2) + line("M32 32 L32 16 M32 32 L42 38", "#7A5A2A", 3.6)
     + circle(32, 32, 2.6, "#7A5A2A") + "".join(circle(32 + 18 * c, 32 + 18 * s, 1.6, "#C9973A") for c, s in [(1, 0), (0, 1), (-1, 0), (0, -1)]))
@@ -216,6 +302,37 @@ ICONS["cat_defense"] = svg(shape("M32 6 L54 14 Q54 42 32 58 Q10 42 10 14 Z", "#A
 ICONS["cat_water"] = svg(line("M6 26 Q14 18 22 26 Q30 34 38 26 Q46 18 54 26 Q58 30 60 28", "#4E8FD6", 4.0)
     + line("M6 40 Q14 32 22 40 Q30 48 38 40 Q46 32 54 40 Q58 44 60 42", "#6FA5DD", 4.0)
     + line("M6 54 Q14 46 22 54 Q30 62 38 54 Q46 46 54 54", "#8FBDE6", 4.0))
+
+
+FLAME = ("M32 8 Q40 20 44 30 Q48 40 42 48 Q36 54 32 54 Q22 54 20 44 Q18 36 24 28 Q26 36 30 36 Q26 24 32 8 Z")
+ICONS["cat_yard"] = svg(shape(FLAME, "#F59A3A", "#A34A12")
+    + shape("M32 26 Q38 36 38 44 Q36 50 32 50 Q26 50 26 44 Q26 38 32 26 Z", "#FFD25E", "none")
+    + shape("M10 56 L54 46 L56 52 L12 62 Z", "#9C6438", "#5A361C", 'stroke-width="2"')
+    + shape("M54 56 L10 46 L8 52 L52 62 Z", "#B07B4E", "#5A361C", 'stroke-width="2"'))
+ICONS["cat_garden"] = svg(shape("M8 44 L56 44 L52 56 L12 56 Z", "#8A5A36", "#4E301A")
+    + line("M20 44 L20 30 M32 44 L32 24 M44 44 L44 30", "#4E8A2E", 3.0)
+    + "".join(shape(f"M{x} {y} Q{x - 9} {y - 4} {x - 10} {y - 12} Q{x - 2} {y - 10} {x} {y} Z", "#7CC04C", "#3E7424", 'stroke-width="1.8"')
+              + shape(f"M{x} {y} Q{x + 9} {y - 4} {x + 10} {y - 12} Q{x + 2} {y - 10} {x} {y} Z", "#98D06E", "#3E7424", 'stroke-width="1.8"')
+              for x, y in [(20, 34), (32, 28), (44, 34)]))
+ICONS["crop_wheat"] = svg(line("M32 60 L32 14", "#B68A2E", 3.0)
+    + "".join(ellipse(32 + dx, y, 4, 7, "#E8C15A", "#9A6E1E", 1.8) for y in [16, 26, 36] for dx in [-6, 6])
+    + ellipse(32, 9, 3.5, 6, "#E8C15A", "#9A6E1E", 1.8))
+ICONS["crop_rice"] = svg(shape("M6 50 L58 50 L58 60 L6 60 Z", "#6FA5DD", "#3F6E9E", 'stroke-width="2"')
+    + "".join(line(f"M{x} 52 Q{x - 2} 30 {x - 8} 14", "#5C9A3A", 3.0) + line(f"M{x} 52 Q{x + 3} 32 {x + 9} 18", "#7CC04C", 3.0) for x in [18, 32, 46]))
+ICONS["crop_cabbage"] = svg(circle(32, 36, 20, "#A6D27A", "#4E7A2E") + shape("M14 34 Q20 18 32 16 Q26 26 28 40 Q20 42 14 34 Z", "#7CB84C", "#4E7A2E", 'stroke-width="2"')
+    + shape("M50 34 Q44 18 32 16 Q38 26 36 40 Q44 42 50 34 Z", "#8CC45C", "#4E7A2E", 'stroke-width="2"') + circle(32, 38, 8, "#CBE6A6", "#6E9A4A", 2))
+ICONS["crop_carrot"] = svg(shape("M24 22 L40 22 L33 60 Z", "#F08A2C", "#A34E12")
+    + line("M28 32 L34 31 M29 42 L33 41", "#A34E12", 1.8)
+    + shape("M32 22 Q26 10 22 6 Q30 8 32 18 Q34 8 42 6 Q38 12 32 22 Z", "#6DB04A", "#3E7424", 'stroke-width="2"'))
+ICONS["crop_pumpkin"] = svg(ellipse(32, 38, 24, 18, "#F08A2C", "#A34E12") + ellipse(32, 38, 9, 18, "#F5A44C", "#A34E12", 2)
+    + shape("M30 20 L32 10 L36 11 L34 21 Z", "#6B8A3A", "#3E5A1E", 'stroke-width="2"'))
+ICONS["crop_sunflower"] = svg(line("M32 60 L32 30", "#5C9A3A", 3.4)
+    + "".join(ellipse(32 + 13 * c, 24 + 13 * s, 5, 5, "#F6C445", "#B9851A", 1.8) for c, s in
+              [(1, 0), (0.71, 0.71), (0, 1), (-0.71, 0.71), (-1, 0), (-0.71, -0.71), (0, -1), (0.71, -0.71)])
+    + circle(32, 24, 9, "#6E4426", "#3E2414", 2))
+ICONS["tree_apple"] = svg(line("M32 60 L32 36", "#7A4A28", 5.0)
+    + shape("M32 8 Q46 10 50 22 Q56 30 50 38 Q44 46 32 42 Q20 46 14 38 Q8 30 14 22 Q18 10 32 8 Z", "#6DB04A", "#3E7424")
+    + "".join(circle(x, y, 4.2, "#E0443A", "#8E1E16", 1.8) for x, y in [(24, 22), (40, 20), (34, 32), (20, 34), (44, 34)]))
 
 os.makedirs(OUT, exist_ok=True)
 for name, data in ICONS.items():

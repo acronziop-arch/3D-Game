@@ -15,9 +15,15 @@ signal chunk_loaded(chunk: Chunk)
 @export var initial_radius := 3
 ## false — чанки генерируются прямо в главном потоке (браузер без потоков).
 var use_threads := true
+## Чанки, которым ещё нужно пересеять траву (см. refresh_all_cover).
+var _cover_queue: Array = []
 
 var gen: WorldGen
 var chunks := {}
+## Проверки зданий (их задаёт main.gd): убрать траву под зданиями чанка
+## и узнать, стоит ли здание в точке.
+var building_hook: Callable = func(_chunk: Chunk) -> void: pass
+var blocked_by_building: Callable = func(_p: Vector2) -> bool: return false
 ## Позиция, вокруг которой грузится мир (её задаёт камера).
 var focus := Vector3.ZERO
 
@@ -56,6 +62,9 @@ func _process(delta: float) -> void:
 		_update_wanted()
 	_dispatch()
 	_finalize()
+	# Новая густота травы: перестраиваем покров по чанку за кадр, ближние — первыми.
+	if not _cover_queue.is_empty():
+		_refresh_cover(_cover_queue.pop_front())
 	_rebuild_timer -= delta
 	if _rebuild_timer <= 0.0 and not _dirty.is_empty():
 		_rebuild_timer = 0.06
@@ -90,7 +99,7 @@ func _dispatch() -> void:
 			continue
 		var out := {}
 		var args := [c, _edits_for_chunk(c), WorldState.removed_in_chunk(c), WorldState.opened_chests.has(c), out,
-			float(Settings.get_value("grass")) * Platform.grass_density_scale()]
+			cover_density(), _extra_for_chunk(c)]
 		if use_threads:
 			_pending[c] = {"task": WorkerThreadPool.add_task(gen.generate_chunk.bindv(args)), "out": out}
 		else:
@@ -140,6 +149,16 @@ func _exit_tree() -> void:
 	_pending.clear()
 
 
+## Густота травы 0..1: настройка игрока с поправкой качества графики.
+func cover_density() -> float:
+	return float(Settings.get_value("grass"))
+
+
+func _extra_for_chunk(c: Vector2i) -> Dictionary:
+	return {"cover": WorldState.cover_edits_for_chunk(c), "planted": WorldState.planted_in_chunk(c),
+		"keep_cleared": bool(Settings.get_value("keep_cleared"))}
+
+
 func _edits_for_chunk(c: Vector2i) -> Dictionary:
 	var result := {}
 	if WorldState.terrain_edits.is_empty():
@@ -166,6 +185,8 @@ func get_height(x: float, z: float) -> float:
 
 
 func get_biome_name(x: float, z: float) -> String:
+	if gen.ruin_near(x, z):
+		return "Руины"
 	return gen.biome_name(gen.biome_at(x, z, get_height(x, z)))
 
 
@@ -231,16 +252,91 @@ func _chunks_in_rect(rect: Rect2) -> Array[Chunk]:
 	return result
 
 
-## Убирает траву, цветы и опавшие листья под новым зданием.
+## Убирает траву, цветы, кусты и опавшие листья под новым зданием.
 func clear_decor(rect: Rect2) -> void:
 	for p in props_in_rect(rect, false):
-		if GameData.PROPS[p["id"]]["kind"] == "decor":
+		if not GameData.blocks_building(p["id"]):
 			p["chunk"].remove_prop(p)
 	for chunk in _chunks_in_rect(rect):
 		chunk.clear_cover(rect)
 
 
+# --- Природа: покос, посев, посадка деревьев ----------------------------------------
+
+## Косит или сеет траву в круге: mode — "mow", "grass", "tall", "flowers".
+func paint_cover(center: Vector3, radius: float, mode: String) -> void:
+	var touched := {}
+	var r := maxf(radius, 1.0)
+	for cz in range(floori((center.z - r) / 2.0), floori((center.z + r) / 2.0) + 1):
+		for cx in range(floori((center.x - r) / 2.0), floori((center.x + r) / 2.0) + 1):
+			var cell_center := Vector2(cx * 2.0 + 1.0, cz * 2.0 + 1.0)
+			if cell_center.distance_to(Vector2(center.x, center.z)) > r + 0.5:
+				continue
+			var cell := Vector2i(cx, cz)
+			if WorldState.cover_edits.get(cell, "") == mode:
+				continue
+			WorldState.cover_edits[cell] = mode
+			touched[chunk_of(cell_center.x, cell_center.y)] = true
+	for c: Vector2i in touched:
+		_refresh_cover(c)
+
+
+func _refresh_cover(c: Vector2i) -> void:
+	var chunk: Chunk = chunks.get(c)
+	if chunk == null:
+		return
+	var edits := _edits_for_chunk(c)
+	var out := {}
+	gen._scatter_cover(c, chunk.heights, chunk.colors, cover_density(), out, WorldState.cover_edits_for_chunk(c),
+		edits if Settings.get_value("keep_cleared") else {})
+	chunk.rebuild_cover(out)
+	building_hook.call(chunk)
+
+
+## Сажает дерево. Пустая строка — посажено; иначе причина, почему нельзя.
+func plant_tree(pos: Vector3, id: String) -> String:
+	var h := get_height(pos.x, pos.z)
+	if h < WorldGen.WATER_LEVEL + 0.3:
+		return "Дерево не растёт в воде"
+	var c := chunk_of(pos.x, pos.z)
+	var chunk: Chunk = chunks.get(c)
+	if chunk == null:
+		return ""
+	if not props_in_rect(Rect2(pos.x - 1.6, pos.z - 1.6, 3.2, 3.2), true).filter(
+			func(p: Dictionary) -> bool: return GameData.blocks_building(p["id"])).is_empty():
+		return "Слишком близко к другому дереву или камню"
+	if blocked_by_building.call(Vector2(pos.x, pos.z)):
+		return "Здесь стоит здание"
+	var list: Array = WorldState.planted.get(c, [])
+	var entry := {"id": id, "x": pos.x - chunk.position.x, "z": pos.z - chunk.position.z,
+		"rot": randf() * TAU, "scale": randf_range(0.85, 1.15), "t": Time.get_unix_time_from_system()}
+	list.append(entry)
+	WorldState.planted[c] = list
+	var variants: int = PropFactory.VARIANTS.get(id, 1)
+	chunk.add_planted({"id": id, "index": WorldGen.PLANTED_INDEX + list.size() - 1,
+		"pos": Vector3(entry["x"], h, entry["z"]), "rot": entry["rot"], "scale": entry["scale"],
+		"variant": (list.size() - 1) % variants, "float": false, "planted_at": entry["t"]})
+	return ""
+
+
 ## Пересоздаёт все чанки (например, после смены густоты травы).
+## Пересеять траву во всех чанках (сменилась густота). Мир при этом не пропадает.
+func refresh_all_cover() -> void:
+	_cover_queue = chunks.keys()
+	_cover_queue.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
+		return (a - _center).length_squared() < (b - _center).length_squared())
+
+
+## Сменилась дальность травы: шейдеры и границы видимости.
+func apply_cover_distance() -> void:
+	var far := float(Settings.get_value("grass_distance"))
+	GroundCover.grass_material(far)
+	GroundCover.flower_material(far)
+	GroundCover.litter_material(far * 1.15)
+	for c: Vector2i in chunks:
+		chunks[c].refit_cover_distance(far)
+
+
 func reload_all() -> void:
 	for c: Vector2i in chunks:
 		chunks[c].queue_free()

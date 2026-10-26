@@ -27,16 +27,29 @@ void fragment() {
 	c = mix(c, golden, autumn * green * 0.8);
 	c = mix(c, c * vec3(0.9, 1.1, 0.88), spring * green);
 	float rough = 0.93;
-	float land = step(water_level + 0.08, world_pos.y);
-	float puddle = wetness * land * smoothstep(0.985, 0.998, world_normal.y)
-		* smoothstep(0.56, 0.66, w_noise(world_pos.xz * 0.2));
-	c = apply_wet(c, wetness * land * 0.85, rough);
-	c = mix(c, c * 0.55, puddle);
-	rough = mix(rough, 0.03, puddle);
+	float land = smoothstep(water_level + 0.05, water_level + 0.5, world_pos.y);
+	// Лужи — в низинах ровной земли: мягкие пятна неправильной формы, которые
+	// растут, пока идёт дождь, и сохнут потом. Края плавные, без обрезов.
+	vec2 q = world_pos.xz * 0.16;
+	q += vec2(w_noise(q * 1.7 + 3.0), w_noise(q * 1.7 - 5.0)) * 0.9;
+	float basin = w_noise(q) * 0.7 + w_noise(q * 2.3 + 11.0) * 0.3;
+	float flat_ground = smoothstep(0.9, 0.985, world_normal.y);
+	float level = 0.74 - wetness * 0.12;
+	float puddle = smoothstep(level, level + 0.05, basin) * flat_ground * land * smoothstep(0.25, 0.7, wetness);
+	// Вокруг лужи земля темнее — мокрая кайма.
+	float rim = smoothstep(level - 0.08, level, basin) * flat_ground * land * wetness;
+	c = apply_wet(c, clamp(wetness * land * 0.8 + rim * 0.3, 0.0, 1.0), rough);
+	c = mix(c, c * 0.5 + vec3(0.02, 0.025, 0.03), puddle * 0.85);
+	rough = mix(rough, 0.04, puddle);
+	if (puddle > 0.01 && rain > 0.01) {
+		vec2 sl = (rain_drops(world_pos.xz * 2.2, TIME) + rain_drops(world_pos.xz * 2.2 + 9.7, TIME * 1.1 + 0.5)) * rain * puddle * 0.35;
+		vec3 nw = normalize(vec3(-sl.x, 1.0, -sl.y));
+		NORMAL = normalize(mix(NORMAL, (VIEW_MATRIX * vec4(nw, 0.0)).xyz, puddle));
+	}
 	float s = snow_mask(world_pos, world_normal, snow_cover);
 	c = mix(c, SNOW_COLOR, s);
 	rough = mix(rough, 0.62, s);
 	ALBEDO = c;
 	ROUGHNESS = rough;
-	SPECULAR = 0.3 + puddle * 0.5;
+	SPECULAR = 0.3 + puddle * 0.45;
 }

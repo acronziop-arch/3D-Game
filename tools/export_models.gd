@@ -3,8 +3,9 @@ extends SceneTree
 ## Запуск (из папки проекта):
 ##   godot --headless --path . --script res://tools/export_models.gd
 ## Файлы .glb можно открыть в Blender, доработать и сохранить обратно —
-## игра подхватит их автоматически. Правила (названия материалов, COLOR.a, UV2)
-## описаны в docs/MODELS.md.
+## игра подхватит их автоматически. Правила: материал детали называется как
+## в GameData.MATERIALS («__opening» — проём окна или двери), COLOR.a — этап
+## стройки (здания) или гибкость на ветру (растения), UV2 — тип поверхности.
 
 const GD := preload("res://scripts/autoload/game_data.gd")
 

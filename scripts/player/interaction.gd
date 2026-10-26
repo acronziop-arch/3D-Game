@@ -1,25 +1,39 @@
 class_name Interaction
 extends Node3D
 ## Инструменты игрока и очередь действий.
-##   1 Добыча — щелчок по дереву, камню, руде или сундуку ставит его в очередь.
-##   2 Стройка — размещение выбранного здания.
-##   3 Выравнивание — зажать ЛКМ: земля тянется к высоте точки, где нажали.
-##   4 Снос — щелчок по зданию, возвращается половина ресурсов.
+##   1 Добыча — щелчок по дереву, кусту, камню, руде или сундуку ставит его в очередь;
+##     щелчок по зданию показывает его название.
+##   2 Стройка — размещение выбранного здания (поворот на любой угол).
+##   3 Ровнять — зажать ЛКМ: земля тянется к высоте точки нажатия (авто) или к ней
+##     плюс/минус заданная поправка.
+##   4 Природа — косить траву, сеять траву и цветы, сажать деревья.
+##   5 Правка — выбрать здание: передвинуть, повернуть или снести.
 ## Действия выполняются по одному, у каждого своё время (не больше 30 с).
-## На телефоне те же инструменты работают от касаний (см. TouchInput): нажатие —
-## действие, призрак здания тянется пальцем и ставится кнопкой «Построить», здание
-## для сноса сначала выбирается, потом сносится кнопкой.
+## В творческом режиме добыча мгновенная.
+## На телефоне те же инструменты работают от касаний (см. TouchInput).
 
-enum Tool { HARVEST, BUILD, FLATTEN, DEMOLISH }
+enum Tool { HARVEST, BUILD, FLATTEN, NATURE, EDIT }
 
 signal tool_changed(tool: Tool)
 signal message(text: String)
 signal hover_changed(text: String)
 signal jobs_changed
+## Изменилось что-то, от чего зависят кнопки действий (режим природы, выбор…).
+signal options_changed
 
 const MAX_JOBS := 6
-const RING_COLOR := Color(1.0, 0.95, 0.7, 0.85)
-const BRUSH_COLOR := Color(0.55, 0.85, 1.0, 0.85)
+const RING_COLOR := Color(1.0, 0.95, 0.7, 0.9)
+const BRUSH_COLOR := Color(0.55, 0.85, 1.0, 0.9)
+const JOB_COLOR := Color(1.0, 0.86, 0.45, 0.9)
+const NATURE_COLOR := Color(0.6, 1.0, 0.55, 0.9)
+const NATURE_MODES := {
+	"mow": "Косить траву",
+	"grass": "Сеять траву",
+	"tall": "Высокая трава",
+	"flowers": "Сажать цветы",
+	"tree": "Сажать деревья",
+}
+const TREE_SPECIES := ["tree_oak", "tree_birch", "tree_apple", "tree_pine", "tree_maple", "tree_spruce"]
 
 @export var brush_radius := 5.0
 @export var flatten_speed := 4.0
@@ -30,6 +44,11 @@ var building_system: BuildingSystem
 var tool := Tool.HARVEST
 ## [{"kind": "prop"|"chest", "name", "time", "elapsed", ...}]
 var jobs: Array[Dictionary] = []
+## Поправка высоты выравнивания, м (0 — авто: по высоте точки нажатия).
+var flatten_offset := 0.0
+var nature_mode := "mow"
+var tree_species := 0
+var selected_building: Building
 
 var _ground: Variant = null
 var _hover := {}
@@ -37,52 +56,86 @@ var _hover_building: Building
 var _hover_text := ""
 var _flattening := false
 var _flatten_target := 0.0
-var _ring: MeshInstance3D
-var _ring_material: StandardMaterial3D
+var _painting := false
+## Рисование дорожки (зажата мышь или палец ведёт по земле).
+var _build_painting := false
+var _paint_timer := 0.0
+var _ring: Node3D
 var _ring_target := Vector3.ZERO
 var _ring_scale := 1.0
 var _time := 0.0
-## Касания: где «указатель» (последний палец), к какой точке привязан призрак здания,
-## какое здание выбрано для сноса и что сказать о том, на что нажали.
+## Касания: где «указатель» (последний палец), к какой точке привязан призрак здания
+## и что сказать о том, на что нажали.
 var _touch_point := Vector2.ZERO
 var _touch_anchor: Variant = null
 var _ghost_offset := Vector3.ZERO
 var _touch_info := ""
 var _touch_info_timer := 0.0
-var selected_building: Building
 
 
 func _ready() -> void:
-	_ring_material = StandardMaterial3D.new()
-	_ring_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_ring_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	_ring_material.albedo_color = RING_COLOR
-	_ring = _make_ring(_ring_material)
+	_ring = make_ring(RING_COLOR)
 	_ring.visible = false
 	add_child(_ring)
 
 
-static func _make_ring(mat: Material) -> MeshInstance3D:
+## Кольцо-«стакан»: тонкий обод у земли и светящаяся стенка, тающая кверху.
+static func make_ring(color: Color) -> Node3D:
+	var root := Node3D.new()
+	var mat := ShaderMaterial.new()
+	mat.shader = load("res://shaders/ring.gdshader")
+	mat.set_shader_parameter("color", color)
+	mat.set_shader_parameter("band_height", 0.55)
+	mat.render_priority = 3
+	var band := CylinderMesh.new()
+	band.top_radius = 1.0
+	band.bottom_radius = 1.0
+	band.height = 0.55
+	band.radial_segments = 40
+	band.rings = 1
+	band.cap_top = false
+	band.cap_bottom = false
+	var band_mi := MeshInstance3D.new()
+	band_mi.mesh = band
+	band_mi.material_override = mat
+	band_mi.position.y = 0.275
+	band_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(band_mi)
 	var torus := TorusMesh.new()
-	torus.inner_radius = 0.84
-	torus.outer_radius = 1.0
-	torus.rings = 32
+	torus.inner_radius = 0.9
+	torus.outer_radius = 1.04
+	torus.rings = 40
 	torus.ring_segments = 4
-	var mi := MeshInstance3D.new()
-	mi.mesh = torus
-	mi.material_override = mat
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	return mi
+	var rim_mat := StandardMaterial3D.new()
+	rim_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	rim_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	rim_mat.albedo_color = color
+	rim_mat.render_priority = 3
+	var rim := MeshInstance3D.new()
+	rim.mesh = torus
+	rim.material_override = rim_mat
+	rim.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	root.add_child(rim)
+	root.set_meta("materials", [mat, rim_mat])
+	return root
+
+
+static func set_ring_color(ring: Node3D, color: Color) -> void:
+	var mats: Array = ring.get_meta("materials")
+	(mats[0] as ShaderMaterial).set_shader_parameter("color", color)
+	(mats[1] as StandardMaterial3D).albedo_color = color
 
 
 func set_tool(new_tool: Tool) -> void:
-	if new_tool != Tool.BUILD:
+	if new_tool != Tool.BUILD or building_system.moving:
 		building_system.cancel()
-	if tool == Tool.DEMOLISH and is_instance_valid(_hover_building):
+	if is_instance_valid(_hover_building):
 		_hover_building.set_highlight(false)
 	_hover_building = null
 	select_building(null)
 	_flattening = false
+	_painting = false
+	_end_build_paint()
 	_touch_info = ""
 	tool = new_tool
 	tool_changed.emit(tool)
@@ -108,43 +161,98 @@ func _unhandled_input(event: InputEvent) -> void:
 		set_tool(Tool.BUILD)
 	elif event.is_action_pressed("tool_flatten"):
 		set_tool(Tool.FLATTEN)
-	elif event.is_action_pressed("tool_demolish"):
-		set_tool(Tool.DEMOLISH)
-	elif event.is_action_pressed("rotate_building") and tool == Tool.BUILD:
-		building_system.rotate_ghost()
+	elif event.is_action_pressed("tool_nature"):
+		set_tool(Tool.NATURE)
+	elif event.is_action_pressed("tool_edit"):
+		set_tool(Tool.EDIT)
+	elif event.is_action_pressed("rotate_building"):
+		var back := (event as InputEventKey).shift_pressed if event is InputEventKey else false
+		if tool == Tool.BUILD:
+			rotate_building(-1.0 if back else 1.0)
+		elif tool == Tool.EDIT:
+			edit_rotate(-1.0 if back else 1.0)
+	elif event.is_action_pressed("edit_move") and tool == Tool.EDIT:
+		edit_move()
+	elif event.is_action_pressed("edit_delete") and tool == Tool.EDIT:
+		demolish_selected()
 	elif event.is_action_pressed("brush_bigger"):
-		_resize_brush(1.0)
+		resize_brush(1.0)
 	elif event.is_action_pressed("brush_smaller"):
-		_resize_brush(-1.0)
+		resize_brush(-1.0)
+	elif event.is_action_pressed("flatten_up") and tool == Tool.FLATTEN:
+		adjust_flatten_offset(0.5)
+	elif event.is_action_pressed("flatten_down") and tool == Tool.FLATTEN:
+		adjust_flatten_offset(-0.5)
 	elif event.is_action_pressed("cancel"):
-		if tool != Tool.HARVEST:
+		if tool == Tool.BUILD and building_system.moving:
+			building_system.cancel()
+			set_tool(Tool.EDIT)
+		elif tool != Tool.HARVEST:
 			set_tool(Tool.HARVEST)
 		else:
 			cancel_all_jobs()
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_LEFT:
+		if (mb.ctrl_pressed or mb.alt_pressed) and mb.pressed and tool == Tool.BUILD \
+				and mb.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			building_system.rotate_ghost_by(deg_to_rad(5.0) * (1.0 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else -1.0))
+			get_viewport().set_input_as_handled()
+		elif mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
 				_primary_action()
 			else:
 				_flattening = false
+				_painting = false
+				_end_build_paint()
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed and camera_rig.was_right_click():
-			if tool != Tool.HARVEST:
+			if tool == Tool.BUILD and building_system.moving:
+				building_system.cancel()
+				set_tool(Tool.EDIT)
+			elif tool != Tool.HARVEST:
 				set_tool(Tool.HARVEST)
-		elif mb.shift_pressed and mb.pressed and tool == Tool.FLATTEN:
+		elif mb.shift_pressed and mb.pressed and tool in [Tool.FLATTEN, Tool.NATURE]:
 			if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-				_resize_brush(0.5)
+				resize_brush(0.5)
 			elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-				_resize_brush(-0.5)
-
-
-func _resize_brush(step: float) -> void:
-	brush_radius = clampf(brush_radius + step, 2.0, 14.0)
+				resize_brush(-0.5)
 
 
 func resize_brush(step: float) -> void:
-	_resize_brush(step)
+	brush_radius = clampf(brush_radius + step, 1.0, 14.0)
 	Platform.haptic(0.15)
+	options_changed.emit()
+
+
+func adjust_flatten_offset(step: float) -> void:
+	flatten_offset = clampf(flatten_offset + step, -6.0, 6.0)
+	Platform.haptic(0.15)
+	options_changed.emit()
+
+
+func reset_flatten_offset() -> void:
+	flatten_offset = 0.0
+	options_changed.emit()
+
+
+## «Авто» или «+1.5 м» — для подсказок и кнопок.
+func flatten_offset_text() -> String:
+	if is_zero_approx(flatten_offset):
+		return "авто"
+	return "%+.1f м" % flatten_offset
+
+
+func set_nature_mode(mode: String) -> void:
+	nature_mode = mode
+	options_changed.emit()
+
+
+func next_tree_species() -> void:
+	tree_species = (tree_species + 1) % TREE_SPECIES.size()
+	options_changed.emit()
+
+
+func tree_species_name() -> String:
+	return GameData.PROPS[TREE_SPECIES[tree_species]]["name"]
 
 
 ## Ставит здание на место призрака (кнопка «Построить» на телефоне, ЛКМ на ПК).
@@ -152,16 +260,58 @@ func confirm_build() -> void:
 	if building_system.selected_id == "":
 		message.emit("Выберите здание в меню снизу")
 		return
+	var was_moving := building_system.moving != null
 	var reason := building_system.try_place()
 	if reason != "":
 		message.emit(reason)
 		Platform.haptic(0.2)
+		return
+	Platform.haptic(0.7)
+	if was_moving:
+		set_tool(Tool.EDIT)
+
+
+## Дорожка: первая плитка сразу, дальше — следом за мышью или пальцем.
+func _begin_build_paint() -> void:
+	var reason := building_system.paint_begin()
+	_build_painting = true
+	if reason != "" and reason.begins_with("Не хватает"):
+		message.emit(reason)
 	else:
-		Platform.haptic(0.7)
+		Platform.haptic(0.3)
 
 
-func rotate_building() -> void:
-	building_system.rotate_ghost()
+func _paint_build_to(ground: Variant) -> void:
+	if not _build_painting or ground == null:
+		return
+	var before := building_system.buildings.size()
+	var reason := building_system.paint_to(ground)
+	if building_system.buildings.size() > before:
+		Platform.haptic(0.15)
+	if reason.begins_with("Не хватает"):
+		message.emit(reason)
+		_end_build_paint()
+
+
+func _end_build_paint() -> void:
+	if _build_painting:
+		_build_painting = false
+		building_system.paint_end()
+
+
+## Грядка: сменить культуру (у новой — до постройки, у готовой — в правке).
+func next_crop() -> void:
+	if tool == Tool.EDIT and is_instance_valid(selected_building) and selected_building.has_crops():
+		var c := building_system.cycle_crop(selected_building)
+		message.emit("Посажено: %s" % CropPatch.CROPS[c]["name"])
+	else:
+		building_system.crop_choice = CropPatch.next_crop(building_system.crop_choice)
+	options_changed.emit()
+	Platform.haptic(0.2)
+
+
+func rotate_building(direction := 1.0) -> void:
+	building_system.rotate_ghost(direction)
 	Platform.haptic(0.15)
 
 
@@ -171,14 +321,39 @@ func select_building(b: Building) -> void:
 	selected_building = b
 	if b:
 		b.set_highlight(true)
+	options_changed.emit()
 
 
-## Сносит здание, выбранное касанием.
+## Правка: передвинуть выбранное здание (оно становится призраком).
+func edit_move() -> void:
+	if not is_instance_valid(selected_building) or not selected_building.is_complete:
+		return
+	var b := selected_building
+	select_building(null)
+	tool = Tool.BUILD
+	building_system.start_move(b)
+	if Platform.is_touch:
+		_touch_anchor = b.position
+	tool_changed.emit(tool)
+
+
+## Правка: повернуть выбранное здание на месте на 15°.
+func edit_rotate(direction := 1.0) -> void:
+	if not is_instance_valid(selected_building):
+		return
+	var reason := building_system.rotate_building(selected_building, direction)
+	if reason != "":
+		message.emit(reason)
+	Platform.haptic(0.15)
+
+
+## Сносит выбранное здание.
 func demolish_selected() -> void:
 	if not is_instance_valid(selected_building):
 		return
-	_demolish(selected_building)
-	selected_building = null
+	if _demolish(selected_building):
+		selected_building = null
+		options_changed.emit()
 
 
 func _demolish(b: Building) -> bool:
@@ -190,6 +365,14 @@ func _demolish(b: Building) -> bool:
 	Fx.show_loot(self, b.global_position + Vector3(0, 2, 0), refund)
 	Platform.haptic(0.6)
 	return true
+
+
+## Короткая подпись с названием здания над ним.
+func _show_building_name(b: Building) -> void:
+	if WorldLabels.instance:
+		var state := "" if b.is_complete else "  (строится)"
+		WorldLabels.instance.show_name(b.global_position + Vector3(0, b.top_height + 0.6, 0),
+			GameData.BUILDINGS[b.id]["name"] + state)
 
 
 # --- Касания (вызывает TouchInput) ------------------------------------------------------
@@ -212,6 +395,9 @@ func touch_tap(screen: Vector2) -> void:
 			var slack := ground_t * 2.0 * tan(deg_to_rad(cam.fov) * 0.5) / get_viewport().get_visible_rect().size.y * 14.0
 			var target := chunk_manager.pick(from, dir, ground_t + 1.0, slack)
 			if target.is_empty():
+				var b := building_system.pick(from, dir)
+				if b:
+					_show_building_name(b)
 				_set_touch_info("")
 				return
 			var info := _target_info(target)
@@ -223,12 +409,17 @@ func touch_tap(screen: Vector2) -> void:
 				message.emit("Выберите здание в меню снизу")
 			elif ground != null:
 				_touch_anchor = ground
-		Tool.FLATTEN:
-			pass
-		Tool.DEMOLISH:
+		Tool.NATURE:
+			if nature_mode == "tree" and ground != null:
+				_plant_tree(ground)
+			elif ground != null:
+				chunk_manager.paint_cover(ground, brush_radius * 0.5, nature_mode)
+				Platform.haptic(0.15)
+		Tool.EDIT:
 			var b := building_system.pick(from, dir)
 			select_building(null if b == selected_building else b)
 			if b:
+				_show_building_name(b)
 				Platform.haptic(0.2)
 
 
@@ -236,6 +427,15 @@ func touch_tap(screen: Vector2) -> void:
 func touch_drag_begin(screen: Vector2) -> bool:
 	match tool:
 		Tool.BUILD:
+			if building_system.is_paintable():
+				# Дорожку рисуют пальцем: плитки ложатся следом.
+				var start: Variant = _ground_at(screen)
+				if start == null:
+					return false
+				_touch_anchor = start
+				building_system.update_ghost(start, 1.0)
+				_begin_build_paint()
+				return true
 			if building_system.selected_id == "" or _touch_anchor == null:
 				return false
 			var cam := camera_rig.camera
@@ -251,8 +451,14 @@ func touch_drag_begin(screen: Vector2) -> bool:
 			if ground == null:
 				return false
 			_touch_point = screen
-			_flattening = true
-			_flatten_target = snappedf(maxf((ground as Vector3).y, WorldGen.WATER_LEVEL), 0.25)
+			_start_flatten(ground)
+			return true
+		Tool.NATURE:
+			if nature_mode == "tree":
+				return false
+			_touch_point = screen
+			_painting = true
+			_paint_timer = 0.0
 			return true
 	return false
 
@@ -261,12 +467,17 @@ func touch_drag(screen: Vector2) -> void:
 	_touch_point = screen
 	if tool == Tool.BUILD:
 		var ground: Variant = _ground_at(screen)
-		if ground != null:
+		if ground != null and _build_painting:
+			_touch_anchor = ground
+			_paint_build_to(ground)
+		elif ground != null:
 			_touch_anchor = (ground as Vector3) + _ghost_offset
 
 
 func touch_drag_end() -> void:
 	_flattening = false
+	_painting = false
+	_end_build_paint()
 
 
 func _set_touch_info(text: String) -> void:
@@ -274,20 +485,48 @@ func _set_touch_info(text: String) -> void:
 	_touch_info_timer = 3.5
 
 
+func _start_flatten(ground: Vector3) -> void:
+	_flattening = true
+	_flatten_target = snappedf(maxf(ground.y + flatten_offset, WorldGen.WATER_LEVEL - 4.0), 0.25)
+
+
+func _plant_tree(ground: Vector3) -> void:
+	var reason := chunk_manager.plant_tree(ground, TREE_SPECIES[tree_species])
+	if reason != "":
+		message.emit(reason)
+		Platform.haptic(0.2)
+	else:
+		Fx.burst(self, ground + Vector3(0, 0.3, 0), Color(0.5, 0.75, 0.35), 10, 0.12)
+		Platform.haptic(0.35)
+
+
 func _primary_action() -> void:
 	match tool:
 		Tool.HARVEST:
 			if not _hover.is_empty():
 				_toggle_job(_hover)
+			elif is_instance_valid(_hover_building):
+				_show_building_name(_hover_building)
 		Tool.BUILD:
-			confirm_build()
+			if building_system.is_paintable():
+				_begin_build_paint()
+			else:
+				confirm_build()
 		Tool.FLATTEN:
 			if _ground != null:
-				_flattening = true
-				_flatten_target = snappedf(maxf(_ground.y, WorldGen.WATER_LEVEL), 0.25)
-		Tool.DEMOLISH:
-			if is_instance_valid(_hover_building) and _demolish(_hover_building):
-				_hover_building = null
+				_start_flatten(_ground)
+		Tool.NATURE:
+			if _ground == null:
+				return
+			if nature_mode == "tree":
+				_plant_tree(_ground)
+			else:
+				_painting = true
+				_paint_timer = 0.0
+		Tool.EDIT:
+			select_building(null if _hover_building == selected_building else _hover_building)
+			if selected_building:
+				_show_building_name(selected_building)
 
 
 # --- Каждый кадр ------------------------------------------------------------------
@@ -301,8 +540,8 @@ func _process(delta: float) -> void:
 	var from := camera.project_ray_origin(pointer)
 	var dir := camera.project_ray_normal(pointer)
 	if touch:
-		# Под пальцем землю ищем, только пока им ровняют.
-		_ground = chunk_manager.raycast(from, dir) if _flattening else null
+		# Под пальцем землю ищем, только пока им ровняют или красят.
+		_ground = chunk_manager.raycast(from, dir) if (_flattening or _painting) else null
 	else:
 		_ground = null if over_ui else chunk_manager.raycast(from, dir)
 	var ground_t: float = from.distance_to(_ground) if _ground != null else 700.0
@@ -312,76 +551,105 @@ func _process(delta: float) -> void:
 
 	var text := ""
 	var ring_visible := false
+	var ring_color := RING_COLOR
 	match tool:
 		Tool.HARVEST when touch:
 			text = _touch_info
 			if text == "" and jobs.is_empty():
-				text = "Нажмите на дерево, камень, руду или сундук"
+				text = "Нажмите на дерево, куст, камень, руду или сундук"
 		Tool.HARVEST:
 			_hover = {} if over_ui else chunk_manager.pick(from, dir, ground_t + 1.0)
+			_hover_building = null
 			if not _hover.is_empty():
 				ring_visible = true
 				var info := _target_info(_hover)
 				_ring_target = info["pos"]
 				_ring_scale = info["radius"]
-				_ring_material.albedo_color = RING_COLOR
 				text = "%s — %s" % [info["name"], info["hint"]]
+			elif not over_ui:
+				_hover_building = building_system.pick(from, dir)
+				if _hover_building:
+					text = GameData.BUILDINGS[_hover_building.id]["name"]
 		Tool.BUILD:
 			building_system.update_ghost(_touch_anchor if touch else _ground, delta)
+			if not touch:
+				_paint_build_to(_ground)
 			var id := building_system.selected_id
 			if id == "":
 				text = "Выберите здание в меню снизу"
+			elif building_system.moving:
+				text = "Переносим: %s" % GameData.BUILDINGS[id]["name"]
+				if not building_system.is_valid and building_system.invalid_reason != "":
+					text += "\n" + building_system.invalid_reason
+				elif touch:
+					text += "\nТяните здание пальцем · ✓ — поставить"
+				else:
+					text += "\nЛКМ — поставить · R / Shift+R — повернуть · ПКМ — отмена"
 			else:
 				var def: Dictionary = GameData.BUILDINGS[id]
-				text = "%s · %d с · %s" % [def["name"], def["time"], GameData.cost_text(def["cost"])]
+				var time_text := "сразу" if GameMode.is_creative() else "%d с" % def["time"]
+				text = "%s · %s · %s" % [def["name"], time_text, GameData.cost_text(def["cost"])]
 				if not building_system.is_valid and building_system.invalid_reason != "":
 					text += "\n" + building_system.invalid_reason
 				elif touch:
 					text += "\nТяните здание пальцем или нажмите, куда поставить"
 				else:
-					text += "\nЛКМ — построить · R — повернуть · ПКМ — отмена"
+					text += "\nЛКМ — построить · R / Shift+R или Ctrl+колесо — повернуть · ПКМ — отмена"
 		Tool.FLATTEN:
 			if _ground != null:
 				ring_visible = true
 				_ring_target = _ground
 				_ring_scale = brush_radius
-				_ring_material.albedo_color = BRUSH_COLOR
+				ring_color = BRUSH_COLOR
 				if _flattening:
 					chunk_manager.flatten(_ground, brush_radius, _flatten_target, flatten_speed * delta)
+			var mode := "высота: %s" % flatten_offset_text()
 			if touch:
-				text = "Проведите пальцем — выровнять по высоте точки касания · кисть %d м\nКамера — двумя пальцами" % roundi(brush_radius)
+				text = "Проведите пальцем — выровнять · %s · кисть %d м\nКамера — двумя пальцами" % [mode, roundi(brush_radius)]
 			else:
-				text = "Зажмите ЛКМ — выровнять по высоте точки нажатия · [ ] или Shift+колесо — размер (%d м)" % roundi(brush_radius)
-		Tool.DEMOLISH when touch:
+				text = "Зажмите ЛКМ — выровнять · %s (PgUp / PgDn) · [ ] — кисть %d м" % [mode, roundi(brush_radius)]
+		Tool.NATURE:
+			if _ground != null:
+				ring_visible = true
+				_ring_target = _ground
+				_ring_scale = 1.2 if nature_mode == "tree" else brush_radius * 0.5
+				ring_color = NATURE_COLOR
+				if _painting and nature_mode != "tree":
+					_paint_timer -= delta
+					if _paint_timer <= 0.0:
+						_paint_timer = 0.12
+						chunk_manager.paint_cover(_ground, brush_radius * 0.5, nature_mode)
+			if nature_mode == "tree":
+				text = "Нажмите, куда посадить: %s. Дерево вырастет за пару минут" % tree_species_name()
+			else:
+				text = "%s — %s" % [NATURE_MODES[nature_mode], "проведите пальцем" if touch else "зажмите ЛКМ"]
+		Tool.EDIT:
+			if not touch:
+				var b: Building = null if over_ui else building_system.pick(from, dir)
+				if b != _hover_building:
+					if is_instance_valid(_hover_building) and _hover_building != selected_building:
+						_hover_building.set_highlight(false)
+					if b and b != selected_building:
+						b.set_highlight(true)
+					_hover_building = b
 			if not is_instance_valid(selected_building) or selected_building.is_queued_for_deletion():
 				selected_building = null
 			if selected_building:
-				text = "Снести: %s (вернётся %s)" % [GameData.BUILDINGS[selected_building.id]["name"],
+				text = "%s — передвинуть, повернуть или снести (вернётся %s)" % [GameData.BUILDINGS[selected_building.id]["name"],
 					"половина ресурсов" if selected_building.is_complete else "всё"]
+				if not touch:
+					text += "\nM — передвинуть · R — повернуть · Delete — снести"
 			else:
-				text = "Нажмите на здание, чтобы выбрать его для сноса"
-		Tool.DEMOLISH:
-			var b: Building = null if over_ui else building_system.pick(from, dir)
-			if b != _hover_building:
-				if is_instance_valid(_hover_building):
-					_hover_building.set_highlight(false)
-				if b:
-					b.set_highlight(true)
-				_hover_building = b
-			if b:
-				text = "Снести: %s (вернётся %s)" % [GameData.BUILDINGS[b.id]["name"],
-					"половина ресурсов" if b.is_complete else "всё"]
-			else:
-				text = "Наведите на здание, чтобы снести"
+				text = "Нажмите на здание, чтобы выбрать его"
 
-	_update_ring(ring_visible, delta)
+	_update_ring(ring_visible, ring_color, delta)
 	if text != _hover_text:
 		_hover_text = text
 		hover_changed.emit(text)
 	_process_jobs(delta)
 
 
-func _update_ring(shown: bool, delta: float) -> void:
+func _update_ring(shown: bool, color: Color, delta: float) -> void:
 	if not shown:
 		_ring.visible = false
 		return
@@ -390,9 +658,10 @@ func _update_ring(shown: bool, delta: float) -> void:
 		_ring.position = _ring_target
 		_ring.scale = Vector3.ONE * _ring_scale
 	_ring.visible = true
-	_ring.position = _ring.position.lerp(_ring_target + Vector3(0, 0.08, 0), k)
+	set_ring_color(_ring, color)
+	_ring.position = _ring.position.lerp(_ring_target + Vector3(0, 0.05, 0), k)
 	var pulse := 1.0 + sin(_time * 5.0) * 0.04
-	_ring.scale = _ring.scale.lerp(Vector3(_ring_scale, 1.0, _ring_scale) * pulse, k)
+	_ring.scale = _ring.scale.lerp(Vector3(_ring_scale * pulse, 1.0, _ring_scale * pulse), k)
 
 
 func _target_info(target: Dictionary) -> Dictionary:
@@ -400,12 +669,17 @@ func _target_info(target: Dictionary) -> Dictionary:
 		var chest: Chest = target["chest"]
 		var def: Dictionary = GameData.CHESTS[chest.rarity]
 		return {"name": def["name"], "pos": chest.global_position, "radius": 1.0,
-			"time": def["open_time"], "hint": "%.1f с · животные ресурсы" % def["open_time"]}
+			"time": _action_time(def["open_time"]), "hint": "%.1f с · животные ресурсы" % def["open_time"]}
 	var p: Dictionary = target["prop"]
 	var chunk: Chunk = target["chunk"]
 	var pdef: Dictionary = GameData.PROPS[p["id"]]
 	return {"name": pdef["name"], "pos": chunk.to_global(p["pos"]), "radius": float(pdef["radius"]) * float(p["scale"]),
-		"time": pdef["time"], "hint": "%d с · даёт %s" % [pdef["time"], GameData.cost_text(pdef["drops"])]}
+		"time": _action_time(pdef["time"]), "hint": "%d с · даёт %s" % [pdef["time"], GameData.cost_text(pdef["drops"])]}
+
+
+## В творческом режиме всё добывается мгновенно.
+static func _action_time(t: float) -> float:
+	return 0.15 if GameMode.is_creative() else t
 
 
 # --- Очередь действий -----------------------------------------------------------------
@@ -433,10 +707,9 @@ func _toggle_job(target: Dictionary) -> bool:
 	job["name"] = info["name"]
 	job["time"] = float(info["time"])
 	job["elapsed"] = 0.0
-	var marker := _make_ring(_ring_material.duplicate())
-	marker.material_override.albedo_color = Color(1, 1, 1, 0.5)
+	var marker := make_ring(Color(1, 1, 1, 0.7))
 	add_child(marker)
-	marker.position = info["pos"] + Vector3(0, 0.06, 0)
+	marker.position = info["pos"] + Vector3(0, 0.04, 0)
 	marker.scale = Vector3(info["radius"], 1.0, info["radius"])
 	job["marker"] = marker
 	jobs.append(job)
@@ -495,11 +768,10 @@ func _process_jobs(delta: float) -> void:
 	job["elapsed"] += delta
 	var f: float = clampf(job["elapsed"] / job["time"], 0.0, 1.0)
 	_animate_job(job, f)
-	var marker: MeshInstance3D = job["marker"]
-	marker.material_override.albedo_color = Color(1.0, 0.9, 0.5, 0.6 + 0.3 * sin(_time * 8.0))
+	set_ring_color(job["marker"], Color(JOB_COLOR, 0.65 + 0.3 * sin(_time * 8.0)))
 	if f >= 1.0:
 		jobs.pop_front()
-		marker.queue_free()
+		job["marker"].queue_free()
 		_complete_job(job)
 		jobs_changed.emit()
 		Platform.haptic(0.45)
@@ -575,4 +847,6 @@ static func _burst_color(id: String) -> Color:
 			return Color(0.7, 0.44, 0.3)
 		"sand":
 			return Color(0.94, 0.85, 0.6)
+	if id.begins_with("bush"):
+		return Color(0.4, 0.62, 0.3)
 	return Color(0.55, 0.55, 0.56)

@@ -10,11 +10,11 @@ config_version=5
 
 [application]
 
-config/name="Тихие Земли"
+config/name="Everstead"
 config/description="Низкополигональный строительный симулятор с бесконечным миром."
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "Forward Plus")
-config/icon="res://icon.svg"
+config/icon="res://icon.png"
 config/quit_on_go_back=false
 boot_splash/bg_color=Color(0.9607843, 0.9529412, 0.9372549, 1)
 boot_splash/show_image=false
@@ -24,6 +24,7 @@ boot_splash/show_image=false
 Platform="*res://scripts/autoload/platform.gd"
 Controls="*res://scripts/autoload/controls.gd"
 Settings="*res://scripts/autoload/settings.gd"
+GameMode="*res://scripts/autoload/game_mode.gd"
 GameData="*res://scripts/autoload/game_data.gd"
 WorldState="*res://scripts/autoload/world_state.gd"
 Inventory="*res://scripts/autoload/inventory.gd"
@@ -101,4 +102,24 @@ rain={
 water_level={
 "type": "float",
 "value": 0.0
+}
+frost={
+"type": "float",
+"value": 0.0
+}
+ice={
+"type": "float",
+"value": 0.0
+}
+snowfall={
+"type": "float",
+"value": 0.0
+}
+wind_phase={
+"type": "float",
+"value": 0.0
+}
+wind_drift={
+"type": "vec2",
+"value": Vector2(0, 0)
 }

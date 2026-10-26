@@ -4,8 +4,13 @@ extends MeshInstance3D
 ## отражений. Камера отражений — зеркальная копия игровой камеры под водой;
 ## её снимок шейдер воды накладывает как отражение. Всё, что ниже воды, шейдеры
 ## мира для неё не рисуют (clip_for_reflection), поэтому дно не мешает.
+##
+## Карта течения: каждый загруженный чанк кладёт свой кусочек (WorldGen.flow_block)
+## в общую закольцованную текстуру FLOW_SIZE × FLOW_SIZE клеток по 4 м — шейдер
+## читает её по мировым координатам, поэтому сдвигать её за камерой не нужно.
 
 const WATER_LAYER := 2
+const FLOW_SIZE := 256
 
 var camera_rig: CameraRig
 var chunk_manager: ChunkManager
@@ -13,9 +18,15 @@ var chunk_manager: ChunkManager
 var _viewport: SubViewport
 var _camera: Camera3D
 var _material: ShaderMaterial
+var _flow_img: Image
+var _flow_tex: ImageTexture
+var _flow_dirty := false
 
 
 func _ready() -> void:
+	# Камера отражений ставится после того, как игровая камера сдвинулась в этом
+	# кадре, — иначе отражение отстаёт на кадр и «прыгает» при быстром движении.
+	process_priority = 100
 	layers = WATER_LAYER
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	var plane := PlaneMesh.new()
@@ -39,6 +50,11 @@ func _ready() -> void:
 	caustic_tex.noise = caustic
 	_material.set_shader_parameter("caustic_tex", caustic_tex)
 	material_override = _material
+	_flow_img = Image.create(FLOW_SIZE, FLOW_SIZE, false, Image.FORMAT_RGBA8)
+	_flow_img.fill(Color(0.5, 0.5, 1.0, 0.0))
+	_flow_tex = ImageTexture.create_from_image(_flow_img)
+	_material.set_shader_parameter("flow_map", _flow_tex)
+	_material.set_shader_parameter("flow_world_size", FLOW_SIZE * WorldGen.CHUNK_SIZE / WorldGen.FLOW_RES)
 
 	_viewport = SubViewport.new()
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
@@ -75,7 +91,20 @@ func _apply_settings() -> void:
 	_material.set_shader_parameter("reflection_enabled", 1.0 if on else 0.0)
 
 
+## Чанк загрузился: его кусочек карты течения — в общую текстуру.
+func write_flow(chunk: Chunk) -> void:
+	if chunk.flow.is_empty():
+		return
+	var n := WorldGen.FLOW_RES
+	var block := Image.create_from_data(n, n, false, Image.FORMAT_RGBA8, chunk.flow)
+	_flow_img.blit_rect(block, Rect2i(0, 0, n, n), Vector2i(posmod(chunk.coord.x * n, FLOW_SIZE), posmod(chunk.coord.y * n, FLOW_SIZE)))
+	_flow_dirty = true
+
+
 func _process(_delta: float) -> void:
+	if _flow_dirty:
+		_flow_dirty = false
+		_flow_tex.update(_flow_img)
 	if camera_rig == null:
 		return
 	var main_cam := camera_rig.camera

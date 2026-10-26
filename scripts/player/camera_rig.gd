@@ -101,12 +101,17 @@ func touch_begin() -> void:
 	_last_pan_msec = Time.get_ticks_msec()
 
 
-## Палец поднят: если камеру «бросили», она ещё немного катится.
+## Палец поднят: если камеру бросили (средний или сильный взмах), она ещё катится.
+## Медленное движение пальцем останавливает камеру сразу.
 func touch_end(fling: bool) -> void:
 	_touching = false
 	var idle := Time.get_ticks_msec() - _last_pan_msec
-	if fling and idle < 80:
-		_inertia = _touch_velocity.limit_length(_target_distance * 3.0)
+	var speed := _touch_velocity.length()
+	# Порог в размерах видимой области: ~1,3 высоты камеры в секунду.
+	var threshold := _target_distance * 1.3
+	if fling and idle < 60 and speed > threshold:
+		var k := smoothstep(threshold, threshold * 2.5, speed)
+		_inertia = _touch_velocity.limit_length(_target_distance * 3.0) * k
 	_touch_velocity = Vector3.ZERO
 
 
@@ -139,6 +144,12 @@ func touch_tilt(pixels: float) -> void:
 	_target_tilt_offset = clampf(_target_tilt_offset + pixels * 0.004, -0.35, 0.35)
 
 
+## Плавно переносит камеру к точке (например, к метке на карте).
+func fly_to(pos: Vector3) -> void:
+	_target = Vector3(pos.x, _target.y, pos.z)
+	_inertia = Vector3.ZERO
+
+
 func _point_on_ground_plane(screen: Vector2) -> Variant:
 	var from := camera.project_ray_origin(screen)
 	var dir := camera.project_ray_normal(screen)
@@ -160,7 +171,7 @@ func _process(delta: float) -> void:
 		_target.y = maxf(chunk_manager.get_height(_target.x, _target.z), WorldGen.WATER_LEVEL)
 		chunk_manager.focus = _target
 
-	var k := 1.0 - exp(-(smoothing * 2.2 if _touching else smoothing) * delta)
+	var k := 1.0 - exp(-(smoothing * 4.0 if _touching else smoothing) * delta)
 	position = position.lerp(_target, k)
 	_yaw = lerp_angle(_yaw, _target_yaw, k)
 	_distance = lerpf(_distance, _target_distance, k)

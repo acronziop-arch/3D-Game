@@ -7,6 +7,7 @@ extends Node
 ## к ресурсу. tests/validate_data.gd проверяет, что все материалы модели есть
 ## в стоимости здания — так «деревянная» церковь не получит каменных стен.
 
+const GAME_NAME := "Everstead"
 const MAX_ACTION_TIME := 30.0
 
 # --- Ресурсы -----------------------------------------------------------------
@@ -55,11 +56,17 @@ const MATERIALS := {
 	"cloth": {"color": Color(0.95, 0.9, 0.8), "res": "cloth"},
 	"leather": {"color": Color(0.64, 0.45, 0.28), "res": "leather"},
 	"wax": {"color": Color(1.0, 0.93, 0.75), "res": "wax"},
+	# Проём открытого окна — это пустота, а не материал: в стоимости его нет.
+	"opening": {"color": Color(0.09, 0.07, 0.06), "res": ""},
+	# Земля и урожай — тоже не ресурсы: их не нужно добывать.
+	"soil": {"color": Color(0.42, 0.3, 0.2), "res": ""},
+	"crop": {"color": Color(0.4, 0.62, 0.24), "res": ""},
 }
 
 # --- Объекты мира, которые можно добыть -------------------------------------
 # time — секунд на добычу (не больше MAX_ACTION_TIME), drops — что выпадает.
-# Объекты с time = 0 — просто декор (трава, цветы, кусты), их нельзя добыть.
+# Объекты с time = 0 — просто декор (трава, цветы, папоротник), их нельзя добыть.
+# kind: tree, rock, mound, ruin мешают стройке; bush и decor под зданием просто убираются.
 # place: "land" (по умолчанию), "shallow" — мелководье у берега, "float" — на воде.
 const PROPS := {
 	"tree_oak": {"name": "Дуб", "kind": "tree", "time": 7.0, "drops": {"log": 5}, "radius": 1.7, "height": 7.0},
@@ -68,19 +75,34 @@ const PROPS := {
 	"tree_spruce": {"name": "Ель", "kind": "tree", "time": 5.0, "drops": {"log": 4}, "radius": 1.6, "height": 7.2},
 	"tree_snowpine": {"name": "Ель в снегу", "kind": "tree", "time": 6.0, "drops": {"log": 4}, "radius": 1.6, "height": 7.2},
 	"tree_maple": {"name": "Клён", "kind": "tree", "time": 6.0, "drops": {"log": 4}, "radius": 1.6, "height": 6.5},
+	"tree_apple": {"name": "Яблоня", "kind": "tree", "time": 4.0, "drops": {"log": 3}, "radius": 1.3, "height": 4.6},
 	"tree_dead": {"name": "Сухое дерево", "kind": "tree", "time": 3.0, "drops": {"log": 2}, "radius": 0.9, "height": 4.5},
+	"tree_jungle": {"name": "Тропическое дерево", "kind": "tree", "time": 8.0, "drops": {"log": 6}, "radius": 2.0, "height": 11.0},
+	"cactus": {"name": "Кактус", "kind": "tree", "time": 3.0, "drops": {"log": 1}, "radius": 0.7, "height": 3.6},
 	"rock": {"name": "Валун", "kind": "rock", "time": 6.0, "drops": {"stone": 4}, "radius": 1.3, "height": 1.3},
 	"clay": {"name": "Залежь глины", "kind": "mound", "time": 5.0, "drops": {"clay": 3}, "radius": 1.2, "height": 0.6, "max_height": 5.0},
 	"sand": {"name": "Песчаная куча", "kind": "mound", "time": 3.0, "drops": {"sand": 4}, "radius": 1.2, "height": 0.7},
 	"ore_coal": {"name": "Угольная жила", "kind": "rock", "time": 9.0, "drops": {"coal": 3}, "radius": 1.3, "height": 1.4},
 	"ore_copper": {"name": "Медная жила", "kind": "rock", "time": 12.0, "drops": {"copper_ore": 3}, "radius": 1.3, "height": 1.4},
 	"ore_iron": {"name": "Железная жила", "kind": "rock", "time": 15.0, "drops": {"iron_ore": 3}, "radius": 1.3, "height": 1.4},
-	"bush": {"name": "Куст", "kind": "decor", "time": 0.0},
+	"bush": {"name": "Куст", "kind": "bush", "time": 2.5, "drops": {"log": 1}, "radius": 0.9, "height": 1.1},
+	"fern": {"name": "Папоротник", "kind": "decor", "time": 0.0},
+	"rubble": {"name": "Груда камней", "kind": "rock", "time": 3.0, "drops": {"stone": 2}, "radius": 1.2, "height": 0.8},
+	"ruin_wall": {"name": "Руины стены", "kind": "ruin", "time": 6.0, "drops": {"stone": 3, "stone_block": 1}, "radius": 2.4, "height": 2.4},
+	"ruin_house": {"name": "Развалины дома", "kind": "ruin", "time": 10.0, "drops": {"stone_block": 3, "stone": 3}, "radius": 3.2, "height": 3.0},
+	"ruin_column": {"name": "Обломок колонны", "kind": "ruin", "time": 4.0, "drops": {"stone_block": 2}, "radius": 1.0, "height": 3.2},
+	"ruin_tower": {"name": "Руины башни", "kind": "ruin", "time": 12.0, "drops": {"stone_block": 4, "stone": 2}, "radius": 2.8, "height": 4.8},
 	"grass": {"name": "Трава", "kind": "decor", "time": 0.0},
 	"flowers": {"name": "Цветы", "kind": "decor", "time": 0.0},
 	"reeds": {"name": "Камыш", "kind": "decor", "time": 0.0, "place": "shallow"},
 	"lily": {"name": "Кувшинки", "kind": "decor", "time": 0.0, "place": "float"},
 }
+
+## Мешает ли объект стройке (деревья, камни, залежи, руины). Кусты и декор под
+## новым зданием просто убираются.
+static func blocks_building(prop_id: String) -> bool:
+	return PROPS[prop_id]["kind"] in ["tree", "rock", "mound", "ruin"]
+
 
 # --- Рецепты мастерских ------------------------------------------------------
 # station — здание, которое должно быть построено, чтобы рецепт был доступен.
@@ -107,6 +129,8 @@ const BUILDING_CATEGORIES := {
 	"special": "Особые",
 	"defense": "Оборона",
 	"water": "На воде",
+	"yard": "Двор",
+	"garden": "Сад",
 }
 
 const BUILDINGS := {
@@ -160,6 +184,43 @@ const BUILDINGS := {
 		"cost": {"log": 3}, "desc": "Секция забора из заострённых брёвен."},
 	"keep": {"name": "Крепость", "category": "defense", "time": 30.0,
 		"cost": {"stone_block": 40, "plank": 6, "glass": 6}, "desc": "Двухэтажная каменная крепость с зубцами."},
+	"fort_wood": {"name": "Деревянный острог", "category": "defense", "time": 24.0,
+		"cost": {"log": 40, "plank": 16}, "desc": "Частокол с угловыми башнями и воротами."},
+	"castle": {"name": "Каменный замок", "category": "defense", "time": 30.0,
+		"cost": {"stone_block": 60, "plank": 10, "iron_ingot": 2},
+		"desc": "Круглые башни, зубчатые стены и ворота с решёткой."},
+	"citadel": {"name": "Кирпичная цитадель", "category": "defense", "time": 30.0,
+		"cost": {"brick": 48, "stone_block": 16, "plank": 10, "glass": 6},
+		"desc": "Высокая башня под черепицей с башенками по углам."},
+	# Двор
+	"campfire": {"name": "Костёр", "category": "yard", "time": 2.0, "light": true,
+		"cost": {"stone": 3, "log": 2}, "desc": "Костёр в кольце камней со скамейками.",
+		"fire": [[Vector3(0, 0.12, 0), 1.0]]},
+	"torch": {"name": "Факел", "category": "yard", "time": 1.0, "light": true,
+		"cost": {"log": 1, "stone": 1}, "desc": "Факел на шесте. Освещает дорожки ночью.",
+		"fire": [[Vector3(0, 2.02, 0), 0.42]]},
+	"fence_stone": {"name": "Каменная ограда", "category": "yard", "time": 2.0, "light": true,
+		"cost": {"stone": 4}, "desc": "Секция низкой ограды 4 м. Секции цепляются друг к другу.",
+		"snap": {"group": "fence", "len": 4.0}},
+	"path_dirt": {"name": "Тропинка", "category": "yard", "time": 0.4, "light": true, "tilt": true,
+		"cost": {}, "desc": "Утоптанная земля. Ведите пальцем или мышью — тропинка ляжет следом.",
+		"snap": {"group": "path", "len": 2.0, "grid": true}},
+	"path_wood": {"name": "Дощатая дорожка", "category": "yard", "time": 0.5, "light": true, "tilt": true,
+		"cost": {"plank": 1}, "desc": "Дорожка из досок. Ведите пальцем или мышью — дорожка ляжет следом.",
+		"snap": {"group": "path", "len": 2.0, "grid": true}},
+	"path_stone": {"name": "Булыжная дорожка", "category": "yard", "time": 0.5, "light": true, "tilt": true,
+		"cost": {"stone": 1}, "desc": "Мощёная камнем. Ведите пальцем или мышью — дорожка ляжет следом.",
+		"snap": {"group": "path", "len": 2.0, "grid": true}},
+	"path_brick": {"name": "Кирпичная дорожка", "category": "yard", "time": 0.5, "light": true, "tilt": true,
+		"cost": {"brick": 1}, "desc": "Кирпич ёлочкой. Ведите пальцем или мышью — дорожка ляжет следом.",
+		"snap": {"group": "path", "len": 2.0, "grid": true}},
+	# Сад: грядки и огород — декорация; копать можно только землю (не настил).
+	"garden_bed": {"name": "Грядка", "category": "garden", "time": 2.0, "light": true, "ground_only": true,
+		"cost": {"plank": 2}, "desc": "Грядка в дощатой рамке. Культуру можно выбрать и сменить.",
+		"crops": [Rect2(-0.5, -1.5, 1.0, 3.0)], "crop_top": 0.27},
+	"vegetable_garden": {"name": "Огород", "category": "garden", "time": 6.0, "ground_only": true,
+		"cost": {"plank": 6, "log": 2}, "desc": "Три гряды за штакетником. Культуру можно выбрать и сменить.",
+		"crops": [Rect2(-2.45, -2.3, 1.1, 4.4), Rect2(-0.55, -2.3, 1.1, 4.4), Rect2(1.35, -2.3, 1.1, 4.4)], "crop_top": 0.17},
 	# На воде
 	"platform": {"name": "Деревянный настил", "category": "water", "time": 4.0, "place": "water",
 		"cost": {"plank": 6, "log": 4}, "desc": "Блок 4×4 м на сваях. На нём можно строить, как на суше."},
@@ -181,14 +242,14 @@ const SEASONS := [
 ]
 
 const WEATHERS := {
-	"clear": {"name": "Ясно", "clouds": 0.12, "overcast": 0.0, "wind": 0.18, "rain": 0.0, "snow": 0.0, "fog": 0.0, "storm": 0.0},
-	"cloudy": {"name": "Облачно", "clouds": 0.55, "overcast": 0.15, "wind": 0.32, "rain": 0.0, "snow": 0.0, "fog": 0.0, "storm": 0.0},
+	"clear": {"name": "Ясно", "clouds": 0.12, "overcast": 0.0, "wind": 0.14, "rain": 0.0, "snow": 0.0, "fog": 0.0, "storm": 0.0},
+	"cloudy": {"name": "Облачно", "clouds": 0.55, "overcast": 0.15, "wind": 0.26, "rain": 0.0, "snow": 0.0, "fog": 0.0, "storm": 0.0},
 	"overcast": {"name": "Пасмурно", "clouds": 0.9, "overcast": 0.6, "wind": 0.3, "rain": 0.0, "snow": 0.0, "fog": 0.15, "storm": 0.0},
-	"windy": {"name": "Ветрено", "clouds": 0.4, "overcast": 0.1, "wind": 0.92, "rain": 0.0, "snow": 0.0, "fog": 0.0, "storm": 0.0},
-	"rain": {"name": "Дождь", "clouds": 0.88, "overcast": 0.65, "wind": 0.4, "rain": 0.65, "snow": 0.0, "fog": 0.25, "storm": 0.0},
-	"storm": {"name": "Гроза", "clouds": 1.0, "overcast": 0.92, "wind": 0.95, "rain": 1.0, "snow": 0.0, "fog": 0.35, "storm": 1.0},
+	"windy": {"name": "Ветрено", "clouds": 0.4, "overcast": 0.1, "wind": 0.68, "rain": 0.0, "snow": 0.0, "fog": 0.0, "storm": 0.0},
+	"rain": {"name": "Дождь", "clouds": 0.88, "overcast": 0.65, "wind": 0.32, "rain": 0.65, "snow": 0.0, "fog": 0.25, "storm": 0.0},
+	"storm": {"name": "Гроза", "clouds": 1.0, "overcast": 0.92, "wind": 0.72, "rain": 1.0, "snow": 0.0, "fog": 0.35, "storm": 1.0},
 	"snow": {"name": "Снегопад", "clouds": 0.85, "overcast": 0.55, "wind": 0.25, "rain": 0.0, "snow": 0.7, "fog": 0.3, "storm": 0.0},
-	"blizzard": {"name": "Метель", "clouds": 1.0, "overcast": 0.8, "wind": 1.0, "rain": 0.0, "snow": 1.0, "fog": 0.65, "storm": 0.0},
+	"blizzard": {"name": "Метель", "clouds": 1.0, "overcast": 0.8, "wind": 0.78, "rain": 0.0, "snow": 1.0, "fog": 0.65, "storm": 0.0},
 	"fog": {"name": "Туман", "clouds": 0.5, "overcast": 0.45, "wind": 0.05, "rain": 0.0, "snow": 0.0, "fog": 1.0, "storm": 0.0},
 }
 

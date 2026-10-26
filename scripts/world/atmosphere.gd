@@ -23,6 +23,8 @@ var _leaves_material: ParticleProcessMaterial
 var _forest := 0.0
 var _forest_timer := 0.0
 var _cloud_offset := Vector2.ZERO
+var _wind_phase := 0.0
+var _wind_drift := Vector2.ZERO
 var _flash := 0.0
 var _next_lightning := 6.0
 
@@ -49,10 +51,6 @@ func _ready() -> void:
 	_rain = _make_rain()
 	_snow = _make_snow()
 	_leaves = _make_leaves()
-	Settings.changed.connect(func(key: String) -> void:
-		if key == "shadows":
-			sun.shadow_enabled = Settings.get_value("shadows"))
-	sun.shadow_enabled = Settings.get_value("shadows")
 
 
 func _make_rain() -> GPUParticles3D:
@@ -249,6 +247,17 @@ func _process(delta: float) -> void:
 	RenderingServer.global_shader_parameter_set("spring", Weather.spring_amount())
 	RenderingServer.global_shader_parameter_set("night", 1.0 - daylight)
 	RenderingServer.global_shader_parameter_set("rain", Weather.rain)
+	RenderingServer.global_shader_parameter_set("frost", clampf(Weather.winter_amount() * 0.7 + Weather.snow * 0.5 + Weather.snow_cover * 0.3, 0.0, 1.0))
+	RenderingServer.global_shader_parameter_set("ice", Weather.ice)
+	RenderingServer.global_shader_parameter_set("snowfall", Weather.snow)
+	# Фаза качания и снос ряби копятся по кадрам: при смене погоды меняется
+	# только скорость, поэтому деревья и вода не «проматываются» вперёд.
+	_wind_phase = fmod(_wind_phase + delta * (1.0 + Weather.wind * 1.6), TAU * 1000.0)
+	_wind_drift = (_wind_drift + Weather.wind_dir * (0.12 + Weather.wind * 0.35) * delta)
+	if _wind_drift.length() > 6000.0:
+		_wind_drift = Vector2.ZERO
+	RenderingServer.global_shader_parameter_set("wind_phase", _wind_phase)
+	RenderingServer.global_shader_parameter_set("wind_drift", _wind_drift)
 
 
 static func _aim(light: DirectionalLight3D, toward_light: Vector3) -> void:

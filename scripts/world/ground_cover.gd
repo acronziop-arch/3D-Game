@@ -1,18 +1,26 @@
 class_name GroundCover
 extends RefCounted
-## Покров земли: густая трава и опавшие листья. Это не отдельные объекты, а
-## тысячи экземпляров MultiMesh на чанк: координаты считаются в рабочем потоке
-## (WorldGen.generate_chunk) и сразу пишутся в буфер MultiMesh.
+## Покров земли: густая низкая и высокая трава, цветы и опавшие листья. Это не
+## отдельные объекты, а тысячи экземпляров MultiMesh на чанк: координаты считаются
+## в рабочем потоке (WorldGen.generate_chunk) и сразу пишутся в буфер MultiMesh.
 ## Трава берёт цвет земли под собой, качается волнами ветра, желтеет осенью и
-## прячется под снег. Листьев на земле становится больше к концу осени.
+## прячется под снег. Цветам цвет лепестков задаёт экземпляр. Листьев на земле
+## становится больше к концу осени.
 
 ## Floats на экземпляр в буфере MultiMesh: 12 — трансформация, 4 — цвет, 4 — свои данные.
 const GRASS_STRIDE := 16
 const LITTER_STRIDE := 20
 
+## Цвета лепестков: поляна одного цвета смотрится естественнее пёстрой каши.
+const FLOWER_COLORS := [Color(0.96, 0.33, 0.36), Color(0.99, 0.85, 0.3), Color(0.97, 0.97, 0.97),
+	Color(0.68, 0.5, 0.96), Color(0.99, 0.58, 0.78), Color(0.35, 0.55, 0.98)]
+
 static var _grass_mesh: ArrayMesh
+static var _tall_mesh: ArrayMesh
+static var _flower_mesh: ArrayMesh
 static var _litter_mesh: ArrayMesh
 static var _grass_material: ShaderMaterial
+static var _flower_material: ShaderMaterial
 static var _litter_material: ShaderMaterial
 
 
@@ -20,17 +28,23 @@ static var _litter_material: ShaderMaterial
 static func grass_mesh() -> ArrayMesh:
 	if _grass_mesh:
 		return _grass_mesh
+	_grass_mesh = _blades(14, 0.46, Vector2(0.28, 0.66), 0.038, 7)
+	return _grass_mesh
+
+
+## Пучок изогнутых травинок: count штук в круге radius, высота heights.x..heights.y.
+static func _blades(count: int, radius: float, heights: Vector2, width: float, seed_value: int) -> ArrayMesh:
 	var rng := RandomNumberGenerator.new()
-	rng.seed = 7
+	rng.seed = seed_value
 	var verts := PackedVector3Array()
 	var uvs := PackedVector2Array()
-	for b in 14:
+	for b in count:
 		var a := rng.randf() * TAU
-		var r := sqrt(rng.randf()) * 0.46
+		var r := sqrt(rng.randf()) * radius
 		var base := Vector3(cos(a) * r, 0.0, sin(a) * r)
 		var lean_dir := Vector3(cos(a + rng.randf_range(-0.6, 0.6)), 0.0, sin(a + rng.randf_range(-0.6, 0.6)))
-		var h := rng.randf_range(0.28, 0.66) * (1.0 - r * 0.5)
-		var side := Vector3(-lean_dir.z, 0.0, lean_dir.x) * rng.randf_range(0.03, 0.045)
+		var h := rng.randf_range(heights.x, heights.y) * (1.0 - r * 0.5)
+		var side := Vector3(-lean_dir.z, 0.0, lean_dir.x) * width * rng.randf_range(0.8, 1.2)
 		var mid := base + lean_dir * h * 0.15 + Vector3(0, h * 0.55, 0)
 		var tip := base + lean_dir * h * 0.42 + Vector3(0, h, 0)
 		var pts := [base - side, base + side, mid + side * 0.7, mid - side * 0.7]
@@ -50,10 +64,60 @@ static func grass_mesh() -> ArrayMesh:
 	normals.resize(verts.size())
 	normals.fill(Vector3.UP)
 	arrays[Mesh.ARRAY_NORMAL] = normals
-	_grass_mesh = ArrayMesh.new()
-	_grass_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	_grass_mesh.custom_aabb = AABB(Vector3(-0.9, 0, -0.9), Vector3(1.8, 0.9, 1.8))
-	return _grass_mesh
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.custom_aabb = AABB(Vector3(-1.0, 0, -1.0), Vector3(2.0, heights.y + 0.3, 2.0))
+	return mesh
+
+
+## Высокая трава: длинные широкие стебли, у части — колоски на макушке.
+static func tall_grass_mesh() -> ArrayMesh:
+	if _tall_mesh:
+		return _tall_mesh
+	_tall_mesh = _blades(10, 0.42, Vector2(0.75, 1.3), 0.05, 13)
+	return _tall_mesh
+
+
+## Пучок цветов: стебли (UV.x = 0) и головки-«звёздочки» (UV.x = 1, цвет от экземпляра).
+static func flower_mesh() -> ArrayMesh:
+	if _flower_mesh:
+		return _flower_mesh
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 21
+	var verts := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	for f in 6:
+		var a := rng.randf() * TAU
+		var base := Vector3(cos(a), 0, sin(a)) * sqrt(rng.randf()) * 0.35
+		var h := rng.randf_range(0.25, 0.5)
+		var top := base + Vector3(rng.randf_range(-0.05, 0.05), h, rng.randf_range(-0.05, 0.05))
+		var side := Vector3(0.018, 0, 0.0).rotated(Vector3.UP, a)
+		for p: Vector3 in [base - side, base + side, top + side, base - side, top + side, top - side]:
+			verts.append(p)
+			uvs.append(Vector2(0.0, p.y / h))
+		# Головка: пять лепестков веером.
+		var r := rng.randf_range(0.07, 0.11)
+		var spin := rng.randf() * TAU
+		for k in 5:
+			var a0 := spin + TAU * k / 5.0
+			var tip := top + Vector3(cos(a0) * r, 0.025, sin(a0) * r)
+			var l := top + Vector3(cos(a0 - 0.45) * r * 0.55, 0.012, sin(a0 - 0.45) * r * 0.55)
+			var rr := top + Vector3(cos(a0 + 0.45) * r * 0.55, 0.012, sin(a0 + 0.45) * r * 0.55)
+			for p: Vector3 in [top + Vector3(0, 0.02, 0), l, tip, top + Vector3(0, 0.02, 0), tip, rr]:
+				verts.append(p)
+				uvs.append(Vector2(1.0, 1.0))
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	var normals := PackedVector3Array()
+	normals.resize(verts.size())
+	normals.fill(Vector3.UP)
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	_flower_mesh = ArrayMesh.new()
+	_flower_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_flower_mesh.custom_aabb = AABB(Vector3(-0.6, 0, -0.6), Vector3(1.2, 0.7, 1.2))
+	return _flower_mesh
 
 
 ## Россыпь из 18 листьев на земле: бурые, рыжие, жёлтые, красные.
@@ -102,6 +166,15 @@ static func grass_material(fade_end: float) -> ShaderMaterial:
 		_grass_material.shader = load("res://shaders/grass.gdshader")
 	_grass_material.set_shader_parameter("fade_end", fade_end)
 	return _grass_material
+
+
+static func flower_material(fade_end: float) -> ShaderMaterial:
+	if _flower_material == null:
+		_flower_material = ShaderMaterial.new()
+		_flower_material.shader = load("res://shaders/grass.gdshader")
+		_flower_material.set_shader_parameter("flower", 1.0)
+	_flower_material.set_shader_parameter("fade_end", fade_end)
+	return _flower_material
 
 
 static func litter_material(fade_end: float) -> ShaderMaterial:

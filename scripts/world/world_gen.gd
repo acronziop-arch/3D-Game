@@ -18,6 +18,8 @@ const EXT := RES + 3
 ## Шаг грубой сетки, на которой смешиваются цвета биомов (переходы ~30 м).
 const BLEND_STEP := 8.0
 const WATER_LEVEL := 0.0
+## Клеток карты течения на сторону чанка (по 4 м).
+const FLOW_RES := 8
 const PROP_GRID := 10
 const CHEST_CHANCE := 0.05
 const ROCK_COLOR := Color(0.52, 0.51, 0.49)
@@ -29,7 +31,18 @@ const SNOW_COLOR := Color(0.95, 0.97, 1.0)
 const FISH_DEPTH := 1.2
 
 ## Морей нет: суша всегда выше воды, вода — только в озёрах и реках.
-enum Biome { LAKE, RIVER, SHORE, PLAINS, OAK_FOREST, BIRCH_GROVE, PINE_FOREST, MAPLE_FOREST, DESERT, TUNDRA, MOUNTAIN, SNOW }
+enum Biome { LAKE, RIVER, SHORE, PLAINS, OAK_FOREST, BIRCH_GROVE, PINE_FOREST, MAPLE_FOREST, DESERT, TUNDRA, MOUNTAIN, SNOW, JUNGLE }
+
+## Руины старых поселений — редкая локация. Мир поделён на клетки RUIN_CELL м,
+## в части клеток стоит одно разрушенное поселение радиусом до RUIN_RADIUS м.
+const RUIN_CELL := 192.0
+const RUIN_CHANCE := 0.24
+const RUIN_RADIUS := 22.0
+const RUIN_KINDS := {"ruin_house": 3.0, "ruin_wall": 4.0, "ruin_column": 2.0, "rubble": 3.0}
+## Индексы особых объектов в чанке: руины и посаженные игроком деревья
+## (обычные объекты нумеруются от 0 до PROP_GRID²).
+const RUIN_INDEX := 200000
+const PLANTED_INDEX := 100000
 
 ## density — доля мест, где что-то растёт; props — веса объектов.
 const BIOMES := {
@@ -38,7 +51,7 @@ const BIOMES := {
 	Biome.SHORE: {"name": "Берег", "ground": Color(0.86, 0.8, 0.6), "density": 0.32,
 		"props": {"reeds": 6.0, "sand": 4.0, "clay": 4.0, "rock": 1.5, "grass": 4.0}},
 	Biome.PLAINS: {"name": "Равнины", "ground": Color(0.55, 0.74, 0.33), "density": 0.4,
-		"props": {"grass": 14.0, "flowers": 22.0, "bush": 10.0, "tree_oak": 3.0, "tree_birch": 2.0, "rock": 2.5, "clay": 1.0}},
+		"props": {"grass": 14.0, "flowers": 22.0, "bush": 10.0, "tree_oak": 3.0, "tree_birch": 2.0, "tree_apple": 1.2, "rock": 2.5, "clay": 1.0}},
 	Biome.OAK_FOREST: {"name": "Дубрава", "ground": Color(0.41, 0.6, 0.26), "density": 0.66,
 		"props": {"tree_oak": 46.0, "tree_birch": 5.0, "bush": 28.0, "grass": 8.0, "flowers": 4.0, "rock": 3.0}},
 	Biome.BIRCH_GROVE: {"name": "Берёзовая роща", "ground": Color(0.52, 0.71, 0.31), "density": 0.6,
@@ -47,14 +60,16 @@ const BIOMES := {
 		"props": {"tree_pine": 28.0, "tree_spruce": 26.0, "rock": 6.0, "bush": 13.0, "grass": 4.0, "ore_coal": 1.5, "ore_iron": 0.8}},
 	Biome.MAPLE_FOREST: {"name": "Кленовый лес", "ground": Color(0.5, 0.64, 0.28), "density": 0.62,
 		"props": {"tree_maple": 44.0, "tree_birch": 8.0, "tree_oak": 4.0, "bush": 20.0, "grass": 5.0, "rock": 3.0}},
-	Biome.DESERT: {"name": "Пустыня", "ground": Color(0.92, 0.79, 0.53), "density": 0.14,
-		"props": {"sand": 10.0, "tree_dead": 3.0, "rock": 4.0, "ore_copper": 1.5, "clay": 1.0}},
+	Biome.DESERT: {"name": "Пустыня", "ground": Color(0.92, 0.79, 0.53), "density": 0.2,
+		"props": {"cactus": 12.0, "sand": 8.0, "tree_dead": 2.0, "rock": 4.0, "ore_copper": 1.5, "clay": 1.0}},
 	Biome.TUNDRA: {"name": "Тундра", "ground": Color(0.87, 0.91, 0.93), "density": 0.25,
 		"props": {"tree_snowpine": 20.0, "rock": 6.0, "ore_iron": 1.2, "ore_coal": 1.2}},
 	Biome.MOUNTAIN: {"name": "Горы", "ground": Color(0.53, 0.52, 0.5), "density": 0.22,
 		"props": {"rock": 22.0, "ore_coal": 6.0, "ore_iron": 5.0, "ore_copper": 4.0, "tree_spruce": 4.0}},
 	Biome.SNOW: {"name": "Снежные вершины", "ground": Color(0.95, 0.97, 1.0), "density": 0.08,
 		"props": {"rock": 10.0, "ore_iron": 3.0}},
+	Biome.JUNGLE: {"name": "Джунгли", "ground": Color(0.27, 0.5, 0.2), "density": 0.86,
+		"props": {"tree_jungle": 44.0, "fern": 24.0, "bush": 16.0, "tree_maple": 3.0, "flowers": 4.0, "rock": 2.0}},
 }
 
 var world_seed: int
@@ -74,7 +89,7 @@ func _init(seed_value: int) -> void:
 	world_seed = seed_value
 	_continent = _make_noise(seed_value, 0.0011, 4)
 	_hills = _make_noise(seed_value + 1, 0.012, 3)
-	_ridges = _make_noise(seed_value + 2, 0.0045, 5, FastNoiseLite.FRACTAL_RIDGED)
+	_ridges = _make_noise(seed_value + 2, 0.0034, 3, FastNoiseLite.FRACTAL_RIDGED)
 	_mountain_mask = _make_noise(seed_value + 3, 0.0011, 3)
 	_temperature = _make_noise(seed_value + 4, 0.0008, 3)
 	_moisture = _make_noise(seed_value + 5, 0.001, 3)
@@ -99,17 +114,71 @@ static func _make_noise(s: int, frequency: float, octaves: int, fractal := FastN
 ## Насколько точка внутри озера (x) и реки (y), 0..1, и насколько она в пологой
 ## речной долине (z) и на берегу озера (w). Озёра и реки сходят на нет в горах.
 func water_mask(x: float, z: float) -> Vector4:
-	var mountains := smoothstep(0.08, 0.42, _mountain_mask.get_noise_2d(x, z))
+	var mountains := mountain_amount(x, z)
 	var fade := 1.0 - smoothstep(0.1, 0.55, mountains)
 	var l := _lakes.get_noise_2d(x, z)
 	var lake := smoothstep(0.3, 0.42, l) * fade
 	var shore := smoothstep(0.18, 0.36, l) * fade
-	var wx := x + _warp.get_noise_2d(x, z) * 70.0
-	var wz := z + _warp.get_noise_2d(x + 300.0, z - 300.0) * 70.0
-	var r := absf(_rivers.get_noise_2d(wx, wz))
+	var r := absf(_river_noise(x, z))
 	var river := (1.0 - smoothstep(0.015, 0.05, r)) * fade
 	var valley := (1.0 - smoothstep(0.03, 0.16, r)) * fade
 	return Vector4(lake, river, valley, shore)
+
+
+## Течение воды: x, y — направление и сила (до 1) вдоль русла реки, z — 1 в стоячей
+## воде (озёра и всё, что выкопано вне русла). Направление — вдоль линий уровня
+## шума рек, поэтому вода течёт по руслу, а не в берег.
+func water_flow(x: float, z: float) -> Vector3:
+	var mountains := mountain_amount(x, z)
+	var fade := 1.0 - smoothstep(0.1, 0.55, mountains)
+	var lake := smoothstep(0.26, 0.4, _lakes.get_noise_2d(x, z)) * fade
+	var n := _river_noise(x, z)
+	var river := (1.0 - smoothstep(0.02, 0.06, absf(n))) * fade * (1.0 - lake)
+	if river < 0.02:
+		return Vector3(0.0, 0.0, 1.0)
+	var e := 1.5
+	var g := Vector2(_river_noise(x + e, z) - _river_noise(x - e, z), _river_noise(x, z + e) - _river_noise(x, z - e))
+	if g.length_squared() < 1e-12:
+		return Vector3(0.0, 0.0, 1.0)
+	var dir := Vector2(-g.y, g.x).normalized()
+	# У берегов течение слабее, чем на стремнине.
+	var speed := smoothstep(0.0, 0.8, river)
+	return Vector3(dir.x * speed, dir.y * speed, 1.0 - speed)
+
+
+func _river_noise(x: float, z: float) -> float:
+	var wx := x + _warp.get_noise_2d(x, z) * 70.0
+	var wz := z + _warp.get_noise_2d(x + 300.0, z - 300.0) * 70.0
+	return _rivers.get_noise_2d(wx, wz)
+
+
+## Карта течения чанка для шейдера воды: FLOW_RES × FLOW_RES клеток, RGBA8
+## (направление x, y со сдвигом 0.5; стоячесть; 1 — данные есть).
+func flow_block(coord: Vector2i) -> PackedByteArray:
+	var bytes := PackedByteArray()
+	bytes.resize(FLOW_RES * FLOW_RES * 4)
+	var cell := CHUNK_SIZE / FLOW_RES
+	for j in FLOW_RES:
+		for i in FLOW_RES:
+			var f := water_flow(coord.x * CHUNK_SIZE + (i + 0.5) * cell, coord.y * CHUNK_SIZE + (j + 0.5) * cell)
+			var o := (j * FLOW_RES + i) * 4
+			bytes[o] = clampi(roundi((f.x * 0.5 + 0.5) * 255.0), 0, 255)
+			bytes[o + 1] = clampi(roundi((f.y * 0.5 + 0.5) * 255.0), 0, 255)
+			bytes[o + 2] = clampi(roundi(f.z * 255.0), 0, 255)
+			bytes[o + 3] = 255
+	return bytes
+
+
+static func _has_water(heights: PackedFloat32Array) -> bool:
+	for h in heights:
+		if h < WATER_LEVEL + 0.3:
+			return true
+	return false
+
+
+## 0 — равнина, 1 — сердце гор. Гор стало меньше: только там, где шум высокий.
+func mountain_amount(x: float, z: float) -> float:
+	return smoothstep(0.2, 0.5, _mountain_mask.get_noise_2d(x, z))
 
 
 func height_at(x: float, z: float) -> float:
@@ -118,10 +187,14 @@ func height_at(x: float, z: float) -> float:
 	var h := 5.5 + c * 9.0
 	h += _hills.get_noise_2d(x, z) * (1.3 + clampf(c + 0.2, 0.0, 1.0) * 5.0)
 	h = maxf(h, 2.2 + _hills.get_noise_2d(x * 2.0, z * 2.0) * 0.6)
-	var m := smoothstep(0.08, 0.42, _mountain_mask.get_noise_2d(x, z))
+	var m := mountain_amount(x, z)
 	if m > 0.0:
-		var r := (_ridges.get_noise_2d(x, z) + 0.6) / 1.6
-		h += m * (8.0 + r * r * 70.0)
+		# Горы реже и мягче: гребни смешаны с плавными холмами, вершины скруглены.
+		var ridge := clampf((_ridges.get_noise_2d(x, z) + 0.6) / 1.6, 0.0, 1.0)
+		var dome := (_hills.get_noise_2d(x * 0.3 + 91.0, z * 0.3 - 47.0) + 1.0) * 0.5
+		var r := lerpf(dome, ridge, 0.45)
+		r = r * r * (3.0 - 2.0 * r)
+		h += m * (5.0 + r * 32.0)
 	var w := water_mask(x, z)
 	if w.z > 0.0:
 		# Широкая пологая долина: берега спускаются к руслу без обрывов.
@@ -139,9 +212,9 @@ func biome_at(x: float, z: float, h: float) -> int:
 	if h < WATER_LEVEL - 0.15:
 		var w := water_mask(x, z)
 		return Biome.LAKE if w.x >= w.y else Biome.RIVER
-	if h > 46.0:
+	if h > 36.0:
 		return Biome.SNOW
-	if h > 26.0:
+	if h > 21.0:
 		return Biome.MOUNTAIN
 	var climate := climate_biome(x, z, h)
 	if h < WATER_LEVEL + 0.9:
@@ -155,6 +228,8 @@ func climate_biome(x: float, z: float, h := 0.0) -> int:
 	var m := _moisture.get_noise_2d(x, z) * 1.6
 	if t > 0.32 and m < 0.0:
 		return Biome.DESERT
+	if t > 0.26 and m > 0.18:
+		return Biome.JUNGLE
 	if t < -0.38:
 		return Biome.TUNDRA
 	if t < -0.12:
@@ -198,9 +273,13 @@ func find_spawn() -> Vector3:
 
 # --- Генерация чанка (рабочий поток) ---------------------------------------------
 
-## cover_density — густота травы 0..1 (из настроек; на телефоне меньше).
+## cover_density — густота травы 0..1 (из настроек).
+## extra — правки игрока для этого чанка:
+##   "cover": {Vector2i клетка 2 м: "mow" | "grass" | "tall" | "flowers"} — скошено / посеяно;
+##   "planted": [{"id", "x", "z" (локально), "rot", "scale", "t" (время посадки)}];
+##   "keep_cleared": true — на выровненной земле ничего не вырастает заново.
 func generate_chunk(coord: Vector2i, edits: Dictionary, removed: Dictionary, chest_opened: bool, out: Dictionary,
-		cover_density := 1.0) -> void:
+		cover_density := 1.0, extra := {}) -> void:
 	# Высоты с запасом в одну вершину вокруг — по ним считаются гладкие нормали на краях.
 	var heights := PackedFloat32Array()
 	heights.resize(EXT * EXT)
@@ -211,22 +290,50 @@ func generate_chunk(coord: Vector2i, edits: Dictionary, removed: Dictionary, che
 	out["heights"] = heights
 	out["colors"] = climate_colors(coord)
 	out["terrain"] = build_terrain(heights, out["colors"], coord)
+	if heights.size() > 0 and _has_water(heights):
+		out["flow"] = flow_block(coord)
+	var keep_cleared: bool = extra.get("keep_cleared", false)
 
 	var origin := Vector2(coord.x, coord.y) * CHUNK_SIZE
+	var site := ruin_site(Vector2i(floori(origin.x / RUIN_CELL), floori(origin.y / RUIN_CELL)))
 	var chest_pos := Vector3.INF
 	var chest_rng := RandomNumberGenerator.new()
 	chest_rng.seed = hash([world_seed, coord.x, coord.y, "chest"])
-	if not chest_opened and chest_rng.randf() < CHEST_CHANCE:
-		var lx := chest_rng.randf_range(4.0, CHUNK_SIZE - 4.0)
-		var lz := chest_rng.randf_range(4.0, CHUNK_SIZE - 4.0)
-		var h := sample_height(heights, coord, lx, lz)
+	var chest_roll := chest_rng.randf()
+	var chest_local := Vector2(chest_rng.randf_range(4.0, CHUNK_SIZE - 4.0), chest_rng.randf_range(4.0, CHUNK_SIZE - 4.0))
+	var chest_bonus := 0.0
+	if not site.is_empty():
+		var c: Vector2 = site["center"] - origin
+		if c.x >= 0.0 and c.y >= 0.0 and c.x < CHUNK_SIZE and c.y < CHUNK_SIZE:
+			# В центре руин всегда лежит сундук получше.
+			chest_roll = 0.0
+			chest_local = (c + Vector2(3.0, 2.5)).clamp(Vector2.ONE * 2.0, Vector2.ONE * (CHUNK_SIZE - 2.0))
+			chest_bonus = 900.0
+	if not chest_opened and chest_roll < CHEST_CHANCE:
+		var h := sample_height(heights, coord, chest_local.x, chest_local.y)
 		if h > WATER_LEVEL + 0.3:
-			chest_pos = Vector3(lx, h, lz)
-			var distance := (origin + Vector2(lx, lz)).length()
+			chest_pos = Vector3(chest_local.x, h, chest_local.y)
+			var distance := (origin + chest_local).length() + chest_bonus
 			out["chest"] = {"pos": chest_pos, "rot": chest_rng.randf() * TAU,
 				"rarity": roll_chest_rarity(chest_rng.randf(), distance)}
 
 	var props: Array[Dictionary] = []
+	# Руины этого поселения, попавшие в чанк.
+	var ruin_spots: Array[Vector2] = []
+	if not site.is_empty():
+		var items: Array = site["items"]
+		for k in items.size():
+			var item: Dictionary = items[k]
+			ruin_spots.append(item["pos"])
+			var local: Vector2 = item["pos"] - origin
+			if local.x < 0.0 or local.y < 0.0 or local.x >= CHUNK_SIZE or local.y >= CHUNK_SIZE:
+				continue
+			if removed.has(RUIN_INDEX + k):
+				continue
+			var h := sample_height(heights, coord, local.x, local.y)
+			props.append({"id": item["id"], "index": RUIN_INDEX + k, "pos": Vector3(local.x, h - 0.15, local.y), "rot": item["rot"],
+				"scale": item["scale"], "variant": k % PropFactory.VARIANTS.get(item["id"], 1), "float": false})
+
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([world_seed, coord.x, coord.y])
 	var step := CHUNK_SIZE / PROP_GRID
@@ -248,12 +355,24 @@ func generate_chunk(coord: Vector2i, edits: Dictionary, removed: Dictionary, che
 			var lz := (gj + 0.15 + jz * 0.7) * step
 			if chest_pos != Vector3.INF and Vector2(lx - chest_pos.x, lz - chest_pos.z).length() < 2.5:
 				continue
+			if keep_cleared and _is_edited(edits, coord, lx, lz):
+				continue
+			var world := origin + Vector2(lx, lz)
+			if _near_any(ruin_spots, world, 4.0):
+				continue
 			var h := sample_height(heights, coord, lx, lz)
 			# На границе биомов деревья перемешиваются: биом берётся со сдвигом до 9 м.
-			var biome := biome_at(origin.x + lx + sin(rot) * 9.0, origin.y + lz + cos(rot) * 9.0, h)
+			var biome := biome_at(world.x + sin(rot) * 9.0, world.y + cos(rot) * 9.0, h)
+			# Но на самих горах и в пустыне растёт только своё — никаких кустов на скалах.
+			var here := biome_at(world.x, world.y, h)
+			if here in [Biome.MOUNTAIN, Biome.SNOW, Biome.DESERT] and here != biome:
+				biome = here
 			var def: Dictionary = BIOMES[biome]
-			var forest := _forest.get_noise_2d(origin.x + lx, origin.y + lz)
-			if roll > float(def["density"]) * clampf(0.45 + forest * 1.6, 0.15, 1.4):
+			var forest := _forest.get_noise_2d(world.x, world.y)
+			var density := float(def["density"]) * clampf(0.45 + forest * 1.6, 0.15, 1.4)
+			if not site.is_empty() and (site["center"] as Vector2).distance_to(world) < RUIN_RADIUS:
+				density *= 0.35
+			if roll > density:
 				continue
 			var prop_id := _pick_weighted(def["props"], pick)
 			if prop_id == "":
@@ -274,11 +393,25 @@ func generate_chunk(coord: Vector2i, edits: Dictionary, removed: Dictionary, che
 						continue
 			if pdef.has("max_height") and h > float(pdef["max_height"]):
 				continue
-			if pdef["kind"] == "tree" and _slope(heights, coord, lx, lz) > 0.75:
+			var slope := _slope(heights, coord, lx, lz)
+			if pdef["kind"] == "tree" and slope > 0.75:
+				continue
+			if pdef["kind"] in ["bush", "decor"] and place == "land" and slope > 0.6:
 				continue
 			var variants: int = PropFactory.VARIANTS.get(prop_id, 1)
 			props.append({"id": prop_id, "index": index, "pos": Vector3(lx, y, lz), "rot": rot, "scale": scale,
 				"variant": int(jx * 997.0 + jz * 131.0) % variants, "float": place == "float"})
+	# Деревья, посаженные игроком.
+	var planted: Array = extra.get("planted", [])
+	for k in planted.size():
+		if removed.has(PLANTED_INDEX + k):
+			continue
+		var entry: Dictionary = planted[k]
+		var lx: float = entry["x"]
+		var lz: float = entry["z"]
+		props.append({"id": entry["id"], "index": PLANTED_INDEX + k, "pos": Vector3(lx, sample_height(heights, coord, lx, lz), lz),
+			"rot": entry["rot"], "scale": entry["scale"], "variant": k % PropFactory.VARIANTS.get(entry["id"], 1), "float": false,
+			"planted_at": entry["t"]})
 	out["props"] = props
 
 	# Места для рыб — глубокие клетки; стаи плавают между ними.
@@ -290,23 +423,82 @@ func generate_chunk(coord: Vector2i, edits: Dictionary, removed: Dictionary, che
 				fish_spots.append(Vector3((i + 1.0) * CELL, hc, (j + 1.0) * CELL))
 	out["fish_spots"] = fish_spots
 	out["has_water"] = not fish_spots.is_empty()
-	_scatter_cover(coord, heights, out["colors"], cover_density, out)
+	var cleared_edits: Dictionary = edits if keep_cleared else {}
+	_scatter_cover(coord, heights, out["colors"], cover_density, out, extra.get("cover", {}), cleared_edits)
 
 
-## Насколько густая трава в биоме (0 — нет) и лежат ли там опавшие листья.
+## Попадает ли точка (локально в чанке) на выровненную игроком землю.
+static func _is_edited(edits: Dictionary, coord: Vector2i, lx: float, lz: float) -> bool:
+	if edits.is_empty():
+		return false
+	return edits.has(Vector2i(coord.x * RES + roundi(lx / CELL), coord.y * RES + roundi(lz / CELL)))
+
+
+static func _near_any(points: Array[Vector2], p: Vector2, radius: float) -> bool:
+	for q in points:
+		if q.distance_squared_to(p) < radius * radius:
+			return true
+	return false
+
+
+## Поселение-руины в клетке мира (или пустой словарь, если там его нет):
+## {"center": Vector2, "items": [{"id", "pos": Vector2, "rot", "scale"}]}.
+## Поселения стоят только на ровной суше — не в горах и не у воды.
+func ruin_site(cell: Vector2i) -> Dictionary:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([world_seed, cell.x, cell.y, "ruin"])
+	if rng.randf() > RUIN_CHANCE:
+		return {}
+	var center := (Vector2(cell) + Vector2(rng.randf_range(0.25, 0.75), rng.randf_range(0.25, 0.75))) * RUIN_CELL
+	var h := height_at(center.x, center.y)
+	if h < 2.0 or h > 18.0 or mountain_amount(center.x, center.y) > 0.02:
+		return {}
+	var w := water_mask(center.x, center.y)
+	if w.z > 0.15 or w.w > 0.15:
+		return {}
+	for k in 8:
+		var a := k * TAU / 8.0
+		var p := center + Vector2(cos(a), sin(a)) * (RUIN_RADIUS - 4.0)
+		if absf(height_at(p.x, p.y) - h) > 3.0 or water_mask(p.x, p.y).z > 0.3:
+			return {}
+	var items := []
+	if rng.randf() < 0.6:
+		items.append({"id": "ruin_tower", "pos": center, "rot": rng.randf() * TAU, "scale": rng.randf_range(0.9, 1.1)})
+	var count := rng.randi_range(4, 7)
+	for k in count:
+		var a := k * TAU / count + rng.randf_range(-0.3, 0.3)
+		var r := rng.randf_range(7.0, RUIN_RADIUS - 3.0)
+		var id := _pick_weighted(RUIN_KINDS, rng.randf())
+		items.append({"id": id, "pos": center + Vector2(cos(a), sin(a)) * r, "rot": rng.randf() * TAU,
+			"scale": rng.randf_range(0.85, 1.1)})
+	return {"center": center, "items": items}
+
+
+## Есть ли рядом с точкой руины (для подписи «Руины» и карты).
+func ruin_near(x: float, z: float, radius := RUIN_RADIUS + 6.0) -> bool:
+	var site := ruin_site(Vector2i(floori(x / RUIN_CELL), floori(z / RUIN_CELL)))
+	return not site.is_empty() and (site["center"] as Vector2).distance_to(Vector2(x, z)) < radius
+
+
+## Насколько густая трава в биоме (0 — нет), лежат ли там опавшие листья,
+## растёт ли высокая трава и бывают ли поляны цветов.
 const COVER := {
-	Biome.PLAINS: [1.0, false], Biome.BIRCH_GROVE: [0.85, true], Biome.OAK_FOREST: [0.7, true],
-	Biome.MAPLE_FOREST: [0.7, true], Biome.PINE_FOREST: [0.5, false],
+	Biome.PLAINS: [1.0, false, true, true], Biome.BIRCH_GROVE: [0.85, true, true, true],
+	Biome.OAK_FOREST: [0.7, true, false, true], Biome.MAPLE_FOREST: [0.7, true, false, true],
+	Biome.PINE_FOREST: [0.5, false, false, false], Biome.JUNGLE: [1.0, true, true, true],
+	Biome.SHORE: [0.25, false, true, false], Biome.TUNDRA: [0.15, false, false, false],
 }
+const DEFAULT_GREEN := Color(0.45, 0.66, 0.28)
 
 
-func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: PackedColorArray, density: float, out: Dictionary) -> void:
+## Трава, высокая трава, цветы и листья на земле. Правки игрока (cover_edits)
+## важнее природы: скошенное пусто, посеянное растёт даже в пустыне.
+func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: PackedColorArray, density: float, out: Dictionary,
+		cover_edits := {}, cleared := {}) -> void:
 	var grass := PackedFloat32Array()
+	var tall := PackedFloat32Array()
+	var flowers := PackedFloat32Array()
 	var litter := PackedFloat32Array()
-	out["grass"] = grass
-	out["litter"] = litter
-	if density <= 0.0:
-		return
 	var origin := Vector2(coord.x, coord.y) * CHUNK_SIZE
 	# Биом на грубой сетке 8 м — дёшево и достаточно точно для травы.
 	var biomes := PackedByteArray()
@@ -316,7 +508,9 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 			biomes[gz * 5 + gx] = climate_biome(origin.x + gx * 8.0, origin.y + gz * 8.0)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([world_seed, coord.x, coord.y, "cover"])
-	var cells := int(CHUNK_SIZE / lerpf(1.8, 0.85, clampf(density, 0.0, 1.0)))
+	density = clampf(density, 0.05, 1.0)
+	# Шаг сетки сильно зависит от густоты: 100% — пучок на каждые ~0.6 м.
+	var cells := int(CHUNK_SIZE / lerpf(2.2, 0.62, density))
 	var step := CHUNK_SIZE / cells
 	for gj in cells:
 		for gi in cells:
@@ -325,18 +519,48 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 			var angle := rng.randf() * TAU
 			var scale := rng.randf_range(0.75, 1.3)
 			var roll := rng.randf()
-			var info: Array = COVER.get(biomes[roundi(lz / 8.0) * 5 + roundi(lx / 8.0)], [0.0, false])
-			if roll > float(info[0]):
+			var world := origin + Vector2(lx, lz)
+			var edit: String = cover_edits.get(Vector2i(floori(world.x / 2.0), floori(world.y / 2.0)), "") if not cover_edits.is_empty() else ""
+			if edit == "mow":
+				continue
+			if edit == "" and not cleared.is_empty() and _is_edited(cleared, coord, lx, lz):
+				continue
+			var info: Array = COVER.get(biomes[roundi(lz / 8.0) * 5 + roundi(lx / 8.0)], [0.0, false, false, false])
+			if edit == "" and roll > float(info[0]):
 				continue
 			var h := sample_height(heights, coord, lx, lz)
-			if h < WATER_LEVEL + 0.6 or _slope(heights, coord, lx, lz) > 0.55:
+			if h < WATER_LEVEL + (0.3 if edit != "" else 0.6) or _slope(heights, coord, lx, lz) > (0.7 if edit != "" else 0.55):
 				continue
 			var k := clampi(roundi(lz / CELL), 0, RES) * (RES + 1) + clampi(roundi(lx / CELL), 0, RES)
 			var ground := ground_color(colors[k], h, 1.0)
 			if ground.g - maxf(ground.r, ground.b) < 0.06:
-				continue
+				if edit == "":
+					continue
+				ground = DEFAULT_GREEN
 			var tint := rng.randf_range(0.93, 1.07)
-			GroundCover.write_instance(grass, Vector3(lx, h, lz), angle, scale, Color(ground.r * tint, ground.g * tint, ground.b * tint))
+			var col := Color(ground.r * tint, ground.g * tint, ground.b * tint)
+			var kind := edit
+			if kind == "":
+				kind = "grass"
+				# Поляны высокой травы и цветов — пятнами по шуму.
+				if info[2] and _forest.get_noise_2d(world.x * 2.3 + 500.0, world.y * 2.3) > 0.22:
+					kind = "tall"
+				elif info[3] and _forest.get_noise_2d(world.x * 3.1 - 800.0, world.y * 3.1) > 0.3 and roll < float(info[0]) * 0.6:
+					kind = "flowers"
+			match kind:
+				"tall":
+					GroundCover.write_instance(tall, Vector3(lx, h, lz), angle, scale, col)
+				"flowers":
+					# Поляна одного цвета: цвет зависит от клетки 10 м.
+					var patch := hash(Vector2i(floori(world.x / 10.0), floori(world.y / 10.0)) + Vector2i(world_seed, 7))
+					var petal: Color = GroundCover.FLOWER_COLORS[absi(patch) % GroundCover.FLOWER_COLORS.size()]
+					if rng.randf() < 0.2:
+						petal = GroundCover.FLOWER_COLORS[rng.randi() % GroundCover.FLOWER_COLORS.size()]
+					GroundCover.write_instance(flowers, Vector3(lx, h, lz), angle, scale * 0.9, petal)
+					# Под цветами — немного обычной травы.
+					GroundCover.write_instance(grass, Vector3(lx + 0.3, h, lz - 0.2), angle + 1.0, scale * 0.8, col)
+				_:
+					GroundCover.write_instance(grass, Vector3(lx, h, lz), angle, scale, col)
 	# Опавшие листья — в лиственных лесах.
 	var lcells := 10
 	var lstep := CHUNK_SIZE / lcells
@@ -346,14 +570,18 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 			var lz := (gj + rng.randf()) * lstep
 			var angle := rng.randf() * TAU
 			var litter_seed := rng.randf()
-			var info: Array = COVER.get(biomes[roundi(lz / 8.0) * 5 + roundi(lx / 8.0)], [0.0, false])
+			var info: Array = COVER.get(biomes[roundi(lz / 8.0) * 5 + roundi(lx / 8.0)], [0.0, false, false, false])
 			if not info[1]:
 				continue
 			var h := sample_height(heights, coord, lx, lz)
 			if h < WATER_LEVEL + 0.5 or _slope(heights, coord, lx, lz) > 0.5:
 				continue
+			if not cleared.is_empty() and _is_edited(cleared, coord, lx, lz):
+				continue
 			GroundCover.write_instance(litter, Vector3(lx, h, lz), angle, rng.randf_range(0.8, 1.3), Color.WHITE, litter_seed)
 	out["grass"] = grass
+	out["tall"] = tall
+	out["flowers"] = flowers
 	out["litter"] = litter
 
 

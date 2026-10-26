@@ -27,9 +27,6 @@ var is_android := false
 ## Браузерная версия (WebGL 2, без потоков).
 var is_web := false
 
-## Насколько облегчать графику: 0 — ПК, 1 — браузер на ПК, 2 — телефон и планшет.
-var _tier := 0
-
 var _emulated_notch := false
 var _margins := {"left": EDGE, "top": EDGE, "right": EDGE, "bottom": EDGE}
 
@@ -50,7 +47,6 @@ func _init() -> void:
 		form = Form.TABLET
 	is_touch = form != Form.DESKTOP or "--touch" in args
 	_emulated_notch = "--notch" in args
-	_tier = 2 if is_mobile() else (1 if is_web else 0)
 
 
 func _ready() -> void:
@@ -91,15 +87,12 @@ static func _looks_like_tablet() -> bool:
 	return ratio < 1.6 or diagonal > 7.5
 
 
-## Значения настроек по умолчанию, которые на телефоне и в браузере отличаются от ПК.
-func setting_defaults() -> Dictionary:
-	match _tier:
-		1:
-			return {"view_distance": 5, "grass": 0.8}
-		2:
-			var phone_scale := 0.65 if is_web else 0.75
-			return {"view_distance": 4 if is_web else 5, "render_scale": phone_scale if is_phone() else 0.7, "grass": 0.8}
-	return {}
+## Уровень качества графики для «Авто» при запуске. Браузер получает те же уровни,
+## что и приложение; если кадры не успевают, main.gd понижает уровень на ходу.
+func auto_quality() -> String:
+	if is_mobile():
+		return "medium"
+	return "high" if is_web else "ultra"
 
 
 # --- Интерфейс --------------------------------------------------------------------------------------
@@ -164,26 +157,16 @@ func haptic(strength := 0.5) -> void:
 
 # --- Графика --------------------------------------------------------------------------------------
 
-## Дальность травы и листьев на земле, м.
-func grass_distance() -> float:
-	return [70.0, 55.0, 45.0][_tier]
-
-
-## Доля травы от полной густоты (на телефоне пучков меньше).
-func grass_density_scale() -> float:
-	return [1.0, 0.7, 0.5][_tier]
-
-
 ## Доля капель дождя и снежинок.
 func particle_scale() -> float:
-	return [1.0, 0.6, 0.4][_tier]
+	return [0.35, 0.55, 0.8, 1.0][Settings.quality_level()]
 
 
 ## Разрешение отражений на воде относительно окна (в пикселях).
 func reflection_scale() -> float:
-	return [0.5, 0.4, 0.35][_tier]
+	return [0.3, 0.35, 0.45, 0.5][Settings.quality_level()]
 
 
-## Дальность мелочи (цветы, камешки), м.
+## Дальность мелочи (камешки, кустики), м.
 func decor_distance() -> float:
-	return [110.0, 90.0, 75.0][_tier]
+	return maxf(70.0, float(Settings.get_value("grass_distance")) * 1.4)

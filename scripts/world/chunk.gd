@@ -1,7 +1,13 @@
 class_name Chunk
 extends Node3D
 ## Квадрат мира 32×32 м: рельеф, объекты (через MultiMesh — тысячи
-## деревьев рисуются дёшево), рыбы в глубоких местах и, иногда, сундук.
+## деревьев рисуются дёшево), трава, цветы и листья на земле, рыбы в глубоких
+## местах и, иногда, сундук. Посаженные игроком деревья растут на глазах.
+
+## За сколько секунд саженец вырастает во взрослое дерево.
+const GROW_TIME := 150.0
+## Слои покрова: буфер из генератора, меш, шаг буфера, есть ли свои данные.
+const COVER_LAYERS := ["grass", "tall", "flowers", "litter"]
 
 var coord := Vector2i.ZERO
 var heights := PackedFloat32Array()
@@ -10,14 +16,18 @@ var colors := PackedColorArray()
 var props: Array[Dictionary] = []
 var chest: Chest
 var has_water := false
+## Карта течения воды (см. WorldGen.flow_block); пусто — воды в чанке нет.
+var flow := PackedByteArray()
 var fish: FishSchool
 
 var _terrain_mesh: MeshInstance3D
 var _multimeshes := {}
-var _grass: MultiMesh
-var _grass_buffer := PackedFloat32Array()
-var _litter: MultiMesh
-var _litter_buffer := PackedFloat32Array()
+var _prop_nodes: Array[Node] = []
+## слой -> {"mm": MultiMesh, "buffer": PackedFloat32Array, "stride": int, "node": MultiMeshInstance3D}
+var _cover := {}
+## Растущие деревья (посаженные игроком).
+var _growing: Array[Dictionary] = []
+var _grow_timer := 0.0
 
 
 func setup(chunk_coord: Vector2i, data: Dictionary) -> void:
@@ -46,6 +56,7 @@ func setup(chunk_coord: Vector2i, data: Dictionary) -> void:
 		add_child(chest)
 
 	has_water = data.get("has_water", false)
+	flow = data.get("flow", PackedByteArray())
 	if has_water and Settings.get_value("fish"):
 		fish = FishSchool.new()
 		add_child(fish)
@@ -60,8 +71,15 @@ func _apply_terrain(arrays: Array) -> void:
 
 
 func _build_props() -> void:
+	for n in _prop_nodes:
+		n.queue_free()
+	_prop_nodes.clear()
+	_multimeshes.clear()
+	_growing.clear()
 	var by_type := {}
 	for p in props:
+		if p.get("removed", false):
+			continue
 		var key := "%s_%d" % [p["id"], p.get("variant", 0)]
 		if not by_type.has(key):
 			by_type[key] = []
@@ -78,8 +96,10 @@ func _build_props() -> void:
 			var p: Dictionary = list[i]
 			p["mm"] = key
 			p["mm_i"] = i
-			p["hidden"] = false
-			mm.set_instance_transform(i, prop_transform(p))
+			p["hidden"] = p.get("hidden", false)
+			if p.has("planted_at") and not p["hidden"]:
+				_growing.append(p)
+			mm.set_instance_transform(i, Transform3D(Basis.from_scale(Vector3.ZERO), p["pos"]) if p["hidden"] else prop_transform(p))
 			mm.set_instance_color(i, _instance_tint(id, p["index"]))
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
@@ -90,20 +110,83 @@ func _build_props() -> void:
 			mmi.visibility_range_end_margin = 20.0
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		add_child(mmi)
+		_prop_nodes.append(mmi)
 		_multimeshes[key] = mm
 
 
-## Трава и опавшие листья: два MultiMesh, буферы посчитаны в рабочем потоке.
+## Добавляет посаженное игроком дерево (и перестраивает объекты чанка).
+func add_planted(p: Dictionary) -> void:
+	props.append(p)
+	_build_props()
+
+
+## Сколько вырос саженец: 0.18 → 1 за GROW_TIME секунд (даже пока игра закрыта).
+static func growth(p: Dictionary) -> float:
+	if not p.has("planted_at"):
+		return 1.0
+	var age := Time.get_unix_time_from_system() - float(p["planted_at"])
+	return lerpf(0.18, 1.0, smoothstep(0.0, GROW_TIME, age))
+
+
+func _process(delta: float) -> void:
+	if _growing.is_empty():
+		return
+	_grow_timer -= delta
+	if _grow_timer > 0.0:
+		return
+	_grow_timer = 0.5
+	for i in range(_growing.size() - 1, -1, -1):
+		var p: Dictionary = _growing[i]
+		if p.get("removed", false) or p["hidden"]:
+			_growing.remove_at(i)
+			continue
+		_multimeshes[p["mm"]].set_instance_transform(p["mm_i"], prop_transform(p))
+		if growth(p) >= 1.0:
+			_growing.remove_at(i)
+
+
+## Трава, высокая трава, цветы и опавшие листья: по MultiMesh на слой.
 func _build_cover(data: Dictionary) -> void:
-	_grass_buffer = data.get("grass", PackedFloat32Array())
-	_litter_buffer = data.get("litter", PackedFloat32Array())
-	if not _grass_buffer.is_empty():
-		_grass = _cover_multimesh(GroundCover.grass_mesh(), _grass_buffer, GroundCover.GRASS_STRIDE, false)
-		_add_cover(_grass, GroundCover.grass_material(Platform.grass_distance()), Platform.grass_distance())
-	if not _litter_buffer.is_empty():
-		_litter = _cover_multimesh(GroundCover.litter_mesh(), _litter_buffer, GroundCover.LITTER_STRIDE, true)
-		var far := Platform.grass_distance() * 1.15
-		_add_cover(_litter, GroundCover.litter_material(far), far)
+	for layer: String in COVER_LAYERS:
+		if _cover.has(layer):
+			(_cover[layer]["node"] as Node).queue_free()
+			_cover.erase(layer)
+		var buffer: PackedFloat32Array = data.get(layer, PackedFloat32Array())
+		if buffer.is_empty():
+			continue
+		var stride := GroundCover.LITTER_STRIDE if layer == "litter" else GroundCover.GRASS_STRIDE
+		var mesh: Mesh
+		var material: Material
+		var far := float(Settings.get_value("grass_distance"))
+		match layer:
+			"grass":
+				mesh = GroundCover.grass_mesh()
+				material = GroundCover.grass_material(far)
+			"tall":
+				mesh = GroundCover.tall_grass_mesh()
+				material = GroundCover.grass_material(far)
+			"flowers":
+				mesh = GroundCover.flower_mesh()
+				material = GroundCover.flower_material(far)
+			_:
+				far *= 1.15
+				mesh = GroundCover.litter_mesh()
+				material = GroundCover.litter_material(far)
+		var mm := _cover_multimesh(mesh, buffer, stride, layer == "litter")
+		var node := _add_cover(mm, material, far)
+		_cover[layer] = {"mm": mm, "buffer": buffer, "stride": stride, "node": node}
+
+
+## Новая дальность травы: чанк прячет покров, когда в нём уже ничего не видно.
+func refit_cover_distance(far: float) -> void:
+	for layer: String in _cover:
+		var d := far * (1.15 if layer == "litter" else 1.0)
+		(_cover[layer]["node"] as GeometryInstance3D).visibility_range_end = d + WorldGen.CHUNK_SIZE * 0.75
+
+
+## Пересчитывает покров (после покоса, посева или смены густоты травы).
+func rebuild_cover(data: Dictionary) -> void:
+	_build_cover(data)
 
 
 static func _cover_multimesh(mesh: Mesh, buffer: PackedFloat32Array, stride: int, custom: bool) -> MultiMesh:
@@ -117,7 +200,7 @@ static func _cover_multimesh(mesh: Mesh, buffer: PackedFloat32Array, stride: int
 	return mm
 
 
-func _add_cover(mm: MultiMesh, material: Material, distance: float) -> void:
+func _add_cover(mm: MultiMesh, material: Material, distance: float) -> MultiMeshInstance3D:
 	var mmi := MultiMeshInstance3D.new()
 	mmi.multimesh = mm
 	mmi.material_override = material
@@ -126,15 +209,18 @@ func _add_cover(mm: MultiMesh, material: Material, distance: float) -> void:
 	# когда в нём точно ничего не видно (полдиагонали чанка — 23 м).
 	mmi.visibility_range_end = distance + WorldGen.CHUNK_SIZE * 0.75
 	add_child(mmi)
+	return mmi
 
 
-## Убирает траву и листья в прямоугольнике (мировые XZ), например под зданием.
+## Убирает траву, цветы и листья в прямоугольнике (мировые XZ), например под зданием.
 func clear_cover(rect: Rect2) -> void:
 	var local := Rect2(rect.position - Vector2(position.x, position.z), rect.size)
-	if _grass and GroundCover.hide_in_rect(_grass_buffer, GroundCover.GRASS_STRIDE, local):
-		_grass.buffer = _grass_buffer
-	if _litter and GroundCover.hide_in_rect(_litter_buffer, GroundCover.LITTER_STRIDE, local):
-		_litter.buffer = _litter_buffer
+	for layer: String in _cover:
+		var c: Dictionary = _cover[layer]
+		var buffer: PackedFloat32Array = c["buffer"]
+		if GroundCover.hide_in_rect(buffer, c["stride"], local):
+			c["buffer"] = buffer
+			(c["mm"] as MultiMesh).buffer = buffer
 
 
 func _instance_tint(id: String, index: int) -> Color:
@@ -146,7 +232,7 @@ func _instance_tint(id: String, index: int) -> Color:
 
 
 static func prop_transform(p: Dictionary) -> Transform3D:
-	var s: float = p["scale"]
+	var s: float = p["scale"] * growth(p)
 	return Transform3D(Basis(Vector3.UP, p["rot"]).scaled(Vector3(s, s, s)), p["pos"])
 
 
@@ -257,9 +343,9 @@ func rebuild_terrain() -> void:
 			_multimeshes[p["mm"]].set_instance_transform(p["mm_i"], prop_transform(p))
 	if is_instance_valid(chest):
 		chest.position.y = height_local(chest.position.x, chest.position.z)
-	if _grass:
-		GroundCover.refit_heights(_grass_buffer, GroundCover.GRASS_STRIDE, height_local)
-		_grass.buffer = _grass_buffer
-	if _litter:
-		GroundCover.refit_heights(_litter_buffer, GroundCover.LITTER_STRIDE, height_local)
-		_litter.buffer = _litter_buffer
+	for layer: String in _cover:
+		var c: Dictionary = _cover[layer]
+		var buffer: PackedFloat32Array = c["buffer"]
+		GroundCover.refit_heights(buffer, c["stride"], height_local)
+		c["buffer"] = buffer
+		(c["mm"] as MultiMesh).buffer = buffer

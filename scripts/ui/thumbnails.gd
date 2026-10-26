@@ -1,14 +1,18 @@
 class_name Thumbnails
 extends Node
-## Миниатюры зданий для меню стройки: каждое здание фотографируется в отдельном
-## маленьком мире (свой свет, прозрачный фон). По одному зданию за кадр, чтобы
-## не было подтормаживаний. Если поменять модель — миниатюра обновится сама.
+## Миниатюры зданий для меню стройки. Готовые снимки лежат в assets/thumbs
+## (их делает tools/bake_thumbnails.gd). Если снимка нет — здание фотографируется
+## прямо в игре в отдельном маленьком мире (свой свет, прозрачный фон),
+## по одному зданию за кадр, чтобы не было подтормаживаний.
 
 signal thumbnail_ready(building_id: String, texture: Texture2D)
 
 const SIZE := Vector2i(192, 144)
+const BAKED_DIR := "res://assets/thumbs/"
 
 var textures := {}
+## Размер снимка (инструмент запекания снимает крупнее).
+var size := SIZE
 var _queue: Array[String] = []
 var _viewport: SubViewport
 var _camera: Camera3D
@@ -19,7 +23,7 @@ var _wait := 0
 
 func _ready() -> void:
 	_viewport = SubViewport.new()
-	_viewport.size = SIZE
+	_viewport.size = size
 	_viewport.own_world_3d = true
 	_viewport.transparent_bg = true
 	_viewport.msaa_3d = Viewport.MSAA_4X
@@ -46,13 +50,28 @@ func _ready() -> void:
 	_viewport.add_child(_pivot)
 
 
-func request(ids: Array) -> void:
+## Готовая миниатюра здания или fallback, пока её нет.
+func texture_for(id: String, fallback: Texture2D) -> Texture2D:
+	if not textures.has(id):
+		var path := BAKED_DIR + id + ".png"
+		if ResourceLoader.exists(path):
+			textures[id] = load(path)
+	return textures.get(id, fallback)
+
+
+## force — снять заново, даже если готовый снимок есть (tools/bake_thumbnails.gd).
+func request(ids: Array, force := false) -> void:
 	# Без видеокарты (запуск --headless) фотографировать нечем.
 	if DisplayServer.get_name() == "headless":
 		return
 	for id: String in ids:
-		if not textures.has(id) and not _queue.has(id):
+		if (force or texture_for(id, null) == null) and not _queue.has(id):
 			_queue.append(id)
+
+
+## Есть ли ещё здания в очереди на снимок.
+func is_busy() -> bool:
+	return _current != "" or not _queue.is_empty()
 
 
 func _process(_delta: float) -> void:

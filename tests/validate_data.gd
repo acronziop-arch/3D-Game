@@ -70,7 +70,8 @@ func _check_references() -> void:
 			if not GD.PROPS.has(prop):
 				_fail("биом %d: неизвестный объект %s" % [biome, prop])
 	for mat: String in GD.MATERIALS:
-		if not GD.RESOURCES.has(GD.MATERIALS[mat]["res"]):
+		var res: String = GD.MATERIALS[mat]["res"]
+		if res != "" and not GD.RESOURCES.has(res):
 			_fail("материал %s: неизвестный ресурс" % mat)
 
 
@@ -86,7 +87,8 @@ func _check_material_rule() -> void:
 				_fail("здание %s: неизвестный материал %s" % [id, mat])
 				continue
 			var res: String = GD.MATERIALS[mat]["res"]
-			if not cost.has(res):
+			# Пустой ресурс — проём окна: из воздуха, стоимость не нужна.
+			if res != "" and not cost.has(res):
 				_fail("здание %s: на модели есть «%s», но в стоимости нет «%s»" % [id, mat, GD.RESOURCES[res]["name"]])
 		if not GD.BUILDING_CATEGORIES.has(GD.BUILDINGS[id]["category"]):
 			_fail("здание %s: неизвестная категория" % id)

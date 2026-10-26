@@ -27,11 +27,11 @@ void vertex() {
 		float gust = 0.65 + 0.35 * sin(TIME * 0.55 + phase * 0.2) * sin(TIME * 0.21 + phase * 0.07);
 		float s = wind_strength * gust * sway;
 		vec2 d = normalize(wind_dir + vec2(0.0001));
-		float bend = flex * s * (0.7 + 0.3 * sin(TIME * (1.2 + wind_strength * 1.5) + phase));
+		float bend = flex * s * (0.7 + 0.3 * sin(wind_phase * 1.2 + phase));
 		VERTEX.xz += d * bend * 0.9;
 		VERTEX.y -= bend * bend * 0.12;
 		if (kind > 0.5) {
-			float t = TIME * (3.5 + wind_strength * 6.0);
+			float t = wind_phase * 3.5;
 			VERTEX += vec3(sin(t + VERTEX.x * 2.1 + seed_v * 6.0),
 				sin(t * 0.9 + VERTEX.z * 1.7) * 0.5,
 				cos(t * 1.1 + VERTEX.y * 2.3)) * 0.03 * (0.2 + s * 1.5) * flex;

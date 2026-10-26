@@ -5,8 +5,10 @@ extends RefCounted
 ## на лету тем же кодом, что и в tools/export_models.gd.
 
 const BUILDING_MATERIALS := {
-	"glass": {"roughness_base": 0.06, "specular_base": 0.8, "porosity": 0.0,
+	"glass": {"roughness_base": 0.06, "specular_base": 0.8, "porosity": 0.0, "glass": 1.0,
 		"emission_color": Color(1.0, 0.72, 0.38), "emission_night": 1.8},
+	"opening": {"roughness_base": 0.95, "specular_base": 0.1, "porosity": 0.0,
+		"emission_color": Color(1.0, 0.66, 0.32), "emission_night": 0.9},
 	"wax": {"roughness_base": 0.6, "emission_color": Color(1.0, 0.78, 0.45), "emission_day": 0.35, "emission_night": 2.4},
 	"iron": {"roughness_base": 0.42, "metallic_base": 0.6, "porosity": 0.3},
 	"copper": {"roughness_base": 0.45, "metallic_base": 0.4, "porosity": 0.3},
@@ -132,9 +134,9 @@ static func building(id: String) -> Dictionary:
 	return data
 
 
-## Имя материала поверхности без хвостовых цифр: экспорт glTF делает имена
-## уникальными (log, log2…), а Blender добавляет «.001».
-static func _surface_material_name(mesh: Mesh, surface: int) -> String:
+## Имя поверхности без хвостовых цифр: экспорт glTF делает имена уникальными
+## (log, log2…), а Blender добавляет «.001». Вид «материал__пометка».
+static func _surface_key(mesh: Mesh, surface: int) -> String:
 	var m := mesh.surface_get_material(surface)
 	if m == null:
 		return ""
@@ -142,6 +144,17 @@ static func _surface_material_name(mesh: Mesh, surface: int) -> String:
 	while n.length() > 0 and n[-1] in "0123456789":
 		n = n.left(-1)
 	return n.trim_suffix(".")
+
+
+## Материал поверхности (stone_block, glass…) без пометки.
+static func _surface_material_name(mesh: Mesh, surface: int) -> String:
+	return _surface_key(mesh, surface).get_slice("__", 0)
+
+
+## Пометка поверхности: «opening» — двери и окна, иначе пусто.
+static func surface_tag(mesh: Mesh, surface: int) -> String:
+	var key := _surface_key(mesh, surface)
+	return key.get_slice("__", 1) if "__" in key else ""
 
 
 ## Ставит материалы зданий на все поверхности меша.
