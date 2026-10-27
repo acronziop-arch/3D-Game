@@ -2,8 +2,10 @@ extends Node3D
 ## Точка входа: связывает системы между собой, показывает стартовый экран со
 ## списком миров и строит выбранный мир. `-- --new-world` — сразу новый мир.
 
-## Автосохранение раз в 5 минут (и сразу, когда игру сворачивают).
+## Автосохранение раз в 5 минут (и сразу, когда игру сворачивают). В браузере —
+## раз в минуту: вкладку могут закрыть, не дав записать сохранение.
 const AUTOSAVE_INTERVAL := 300.0
+const AUTOSAVE_INTERVAL_WEB := 60.0
 
 ## Авто-качество: замеряем частоту кадров окнами по PERF_WINDOW секунд.
 const PERF_WINDOW := 4.0
@@ -184,6 +186,7 @@ func _on_world_ready() -> void:
 		chunk_manager.finalize_per_frame = _normal_chunk_pace[0]
 		chunk_manager.max_tasks_in_flight = _normal_chunk_pace[1]
 	_perf_grace = 10.0
+	_autosave = AUTOSAVE_INTERVAL_WEB if Platform.is_web else AUTOSAVE_INTERVAL
 	building_system.restore_from_save()
 	_paths.restore()
 	_markers.refresh()
@@ -323,7 +326,7 @@ func _process(delta: float) -> void:
 	_watch_performance(delta)
 	_autosave -= delta
 	if _autosave <= 0.0:
-		_autosave = AUTOSAVE_INTERVAL
+		_autosave = AUTOSAVE_INTERVAL_WEB if Platform.is_web else AUTOSAVE_INTERVAL
 		WorldState.save_game()
 
 
