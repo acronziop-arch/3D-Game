@@ -165,7 +165,8 @@ func _process(delta: float) -> void:
 	if _inertia.length_squared() > 0.0001:
 		_target += _inertia * delta
 		_inertia *= exp(-4.0 * delta)
-	_target_yaw += (Input.get_action_strength("cam_rotate_left") - Input.get_action_strength("cam_rotate_right")) * rotate_speed * delta
+	# Q (слева на клавиатуре) — камера уходит влево, E — вправо.
+	_target_yaw += (Input.get_action_strength("cam_rotate_right") - Input.get_action_strength("cam_rotate_left")) * rotate_speed * delta
 
 	if chunk_manager:
 		_target.y = maxf(chunk_manager.get_height(_target.x, _target.z), WorldGen.WATER_LEVEL)

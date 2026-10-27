@@ -25,7 +25,7 @@ ROWS = [r.split() for r in NAMES]
 # Со второго листа почти всё; с первого — то, что там нарисовано правильнее.
 FROM_SHEET1 = {"cat_decor", "cat_defense", "cat_production", "tool_demolish"}
 # Нарисованы здесь же, кодом (rotate_icon): с листа они вырезаются неровно.
-DRAWN = {"rotate"}
+DRAWN = {"rotate", "auto"}
 EXTRA_SHEET1 = ["wool", "help", "scroll", "compass", "lantern", "potion", "flower_pot", "house_blue"]
 
 
@@ -262,66 +262,61 @@ def badge_icon(base_path, out_path, up, color, size=128):
     canvas.resize((size, size), Image.LANCZOS).save(out_path)
 
 
-def rotate_icon(out_path, size=128):
-    """Стрелка поворота: объёмная серая трубка по кругу с наконечником (по часовой)."""
-    s = 4
-    n = size * s
-    yy, xx = np.mgrid[0:n, 0:n].astype(np.float64) + 0.5
-    cx, cy = n * 0.53, n * 0.49
-    R = n * 0.305
-    t = n * 0.094          # полутолщина трубки
-    a_tail = math.radians(-58.0)
-    a_head = math.radians(219.0)
-    # --- Трубка: расстояние до средней линии дуги (с круглым концом у хвоста).
-    vx, vy = xx - cx, yy - cy
-    r = np.hypot(vx, vy)
-    ang = np.arctan2(vy, vx)
-    rel = np.mod(ang - a_tail, 2 * math.pi)
-    span = a_head - a_tail
-    on_arc = rel <= span
-    d_line = np.abs(r - R)
-    tail = np.array([cx + R * math.cos(a_tail), cy + R * math.sin(a_tail)])
-    headp = np.array([cx + R * math.cos(a_head), cy + R * math.sin(a_head)])
-    d_tail = np.hypot(xx - tail[0], yy - tail[1])
-    d_headc = np.hypot(xx - headp[0], yy - headp[1])
-    d_center = np.where(on_arc, d_line, np.minimum(d_tail, d_headc))
-    d_tube = d_center - t
-    h_tube = np.sqrt(np.clip(t * t - d_center ** 2, 0, None))
-    # --- Наконечник: скруглённый треугольник у конца дуги.
-    tang = np.array([-math.sin(a_head), math.cos(a_head)])
+# --- Иконки, нарисованные кодом: объёмные серые «трубки», как у остальных иконок ---------------
+
+def _seg_dist(xx, yy, a, b):
+    px, py = xx - a[0], yy - a[1]
+    ex, ey = b[0] - a[0], b[1] - a[1]
+    h = np.clip((px * ex + py * ey) / (ex * ex + ey * ey), 0, 1)
+    return np.hypot(px - ex * h, py - ey * h)
+
+
+def _tube(dc, t):
+    """Круглая трубка радиуса t вокруг линии (dc — расстояние до неё): (до поверхности, высота)."""
+    return dc - t, np.sqrt(np.clip(t * t - dc ** 2, 0, None))
+
+
+def _tube_arc(xx, yy, c, R, t, a0, a1):
+    """Трубка по дуге окружности от угла a0 до a1 (по часовой, радианы) с круглыми концами."""
+    vx, vy = xx - c[0], yy - c[1]
+    on_arc = np.mod(np.arctan2(vy, vx) - a0, 2 * math.pi) <= a1 - a0
+    ends = [np.array([c[0] + R * math.cos(a), c[1] + R * math.sin(a)]) for a in (a0, a1)]
+    d_ends = np.minimum(*[np.hypot(xx - e[0], yy - e[1]) for e in ends])
+    return _tube(np.where(on_arc, np.abs(np.hypot(vx, vy) - R), d_ends), t)
+
+
+def _arrow_head(xx, yy, c, R, t, a, tilt_deg=12.0, scale=1.0):
+    """Скруглённый наконечник в конце дуги (угол a), направлен по часовой."""
+    headp = np.array([c[0] + R * math.cos(a), c[1] + R * math.sin(a)])
+    tang = np.array([-math.sin(a), math.cos(a)])
     # Немного внутрь круга — наконечник продолжает изгиб.
-    tilt = math.radians(12.0)
-    ct, st = math.cos(tilt), math.sin(tilt)
+    ct, st = math.cos(math.radians(tilt_deg)), math.sin(math.radians(tilt_deg))
     tang = np.array([tang[0] * ct + tang[1] * st, -tang[0] * st + tang[1] * ct])
     side = np.array([-tang[1], tang[0]])
-    hw, L, back = t * 2.35, t * 2.55, t * 0.5
+    hw, L, back = t * 2.35 * scale, t * 2.55 * scale, t * 0.5
     base_c = headp - tang * back
     pts = [base_c + side * hw, base_c - side * hw, base_c + tang * L]
     rr = t * 0.32
     # Скругление: треугольник сжимаем на rr и берём расстояние минус rr.
     g = sum(pts) / 3.0
-    inset = []
-    for p in pts:
-        v = g - p
-        inset.append(p + v / np.linalg.norm(v) * rr * 2.0)
-    def seg_dist(ax, ay, bx, by):
-        px, py = xx - ax, yy - ay
-        ex, ey = bx - ax, by - ay
-        h = np.clip((px * ex + py * ey) / (ex * ex + ey * ey), 0, 1)
-        return np.hypot(px - ex * h, py - ey * h)
-    dist = np.minimum(np.minimum(seg_dist(*inset[0], *inset[1]), seg_dist(*inset[1], *inset[2])),
-                      seg_dist(*inset[2], *inset[0]))
-    def cross(a, b):
-        return (b[0] - a[0]) * (yy - a[1]) - (b[1] - a[1]) * (xx - a[0])
+    inset = [p + (g - p) / np.linalg.norm(g - p) * rr * 2.0 for p in pts]
+    dist = np.minimum(np.minimum(_seg_dist(xx, yy, inset[0], inset[1]), _seg_dist(xx, yy, inset[1], inset[2])),
+                      _seg_dist(xx, yy, inset[2], inset[0]))
+
+    def cross(p, q):
+        return (q[0] - p[0]) * (yy - p[1]) - (q[1] - p[1]) * (xx - p[0])
     c0, c1, c2 = cross(inset[0], inset[1]), cross(inset[1], inset[2]), cross(inset[2], inset[0])
     inside = ((c0 >= 0) & (c1 >= 0) & (c2 >= 0)) | ((c0 <= 0) & (c1 <= 0) & (c2 <= 0))
-    d_head = np.where(inside, -dist, dist) - rr
+    d = np.where(inside, -dist, dist) - rr
     bevel = t * 1.35
-    k = np.clip(-d_head / bevel, 0, 1)
-    h_head = bevel * np.sqrt(1 - (1 - k) ** 2) * 1.02
-    # --- Объём: высота -> нормаль -> свет (сверху слева), как у остальных иконок.
-    h = np.maximum(h_tube, h_head)
-    d = np.minimum(d_tube, d_head)
+    k = np.clip(-d / bevel, 0, 1)
+    return d, bevel * np.sqrt(1 - (1 - k) ** 2) * 1.02
+
+
+def _render_tubes(parts, out_path, size, s):
+    """Объём: высота -> нормаль -> свет сверху слева, тёмная кромка, мягкая тень."""
+    d = np.minimum.reduce([p[0] for p in parts])
+    h = np.maximum.reduce([p[1] for p in parts])
     gy, gx = np.gradient(h)
     nx, ny, nz = -gx, -gy, np.ones_like(h)
     ln = np.sqrt(nx * nx + ny * ny + nz * nz)
@@ -349,6 +344,45 @@ def rotate_icon(out_path, size=128):
     arr[..., :3] = np.where(a > 0.003, arr[..., :3] / np.maximum(a, 0.003), 0)
     out = Image.fromarray(arr.clip(0, 255).astype(np.uint8), "RGBA")
     finish(out).save(out_path)
+
+
+def rotate_icon(out_path, size=128):
+    """Стрелка поворота: объёмная серая трубка по кругу с наконечником (по часовой)."""
+    s = 4
+    n = size * s
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float64) + 0.5
+    c = (n * 0.53, n * 0.49)
+    R, t = n * 0.305, n * 0.094
+    a_tail, a_head = math.radians(-58.0), math.radians(219.0)
+    _render_tubes([_tube_arc(xx, yy, c, R, t, a_tail, a_head), _arrow_head(xx, yy, c, R, t, a_head)],
+        out_path, size, s)
+
+
+def auto_icon(out_path, size=128):
+    """«Авто»: буква А в кольце из двух дуг, у левой — наконечник (по часовой)."""
+    s = 4
+    n = size * s
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float64) + 0.5
+    c = (n * 0.52, n * 0.49)
+    R, t = n * 0.335, n * 0.068
+    parts = [
+        _tube_arc(xx, yy, c, R, t, math.radians(-72.0), math.radians(58.0)),
+        _tube_arc(xx, yy, c, R, t, math.radians(92.0), math.radians(206.0)),
+        _arrow_head(xx, yy, c, R, t, math.radians(206.0), 12.0, 1.05),
+    ]
+    # Буква А из трёх трубок потолще.
+    ta = n * 0.054
+    top = np.array([c[0], c[1] - n * 0.18])
+    left = np.array([c[0] - n * 0.13, c[1] + n * 0.17])
+    right = np.array([c[0] + n * 0.13, c[1] + n * 0.17])
+    bar_y = c[1] + n * 0.06
+    k = (bar_y - top[1]) / (left[1] - top[1])
+    parts += [
+        _tube(_seg_dist(xx, yy, top, left), ta),
+        _tube(_seg_dist(xx, yy, top, right), ta),
+        _tube(_seg_dist(xx, yy, top + (left - top) * k, top + (right - top) * k), ta * 0.9),
+    ]
+    _render_tubes(parts, out_path, size, s)
 
 
 def icons_in_band(im, bg, y0, y1, expected):
@@ -398,4 +432,5 @@ if __name__ == "__main__":
     badge_icon(os.path.join(out, "scroll.png"), os.path.join(out, "import.png"), False, (70, 138, 214))
     print("   share, import")
     rotate_icon(os.path.join(out, "rotate.png"))
-    print("   rotate")
+    auto_icon(os.path.join(out, "auto.png"))
+    print("   rotate, auto")

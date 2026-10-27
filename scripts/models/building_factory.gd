@@ -160,7 +160,7 @@ static func _free_segments(a: float, b: float, v0: float, v1: float, holes: Arra
 ## holes — Rect2(u, v, ширина, высота) в координатах стены. Возвращает проёмы,
 ## подогнанные к рядам кладки (под них потом ставятся рамы).
 static func wall_body(g: Geo, rng: RandomNumberGenerator, length: float, height: float, style: String,
-		holes: Array = [], thickness := 0.4, row_offset := 0) -> Array:
+		holes: Array = [], thickness := 0.4, row_offset := 0, insets: Array = []) -> Array:
 	var s: Dictionary = STYLES[style]
 	var ch: float = s["course"]
 	var courses := maxi(1, roundi(height / ch))
@@ -176,7 +176,9 @@ static func wall_body(g: Geo, rng: RandomNumberGenerator, length: float, height:
 		return snapped
 	for row in courses:
 		var v := row * ch
-		for seg in _free_segments(0.0, length, v, v + ch, snapped):
+		# По углам — угловые камни (quoins): ряд стены кончается у них, а не заходит внутрь.
+		var inset: Vector2 = insets[row] if row < insets.size() else Vector2.ZERO
+		for seg in _free_segments(inset.x, length - inset.y, v, v + ch, snapped):
 			if seg.y - seg.x < 0.05:
 				continue
 			if style == "log":
@@ -412,16 +414,44 @@ static func door_canopy(g: Geo, rng: RandomNumberGenerator, rect: Rect2, mat: St
 
 
 ## Угловые камни (перевязка углов), как на референсе крепости.
+## Выступ угловых камней за угол стены.
+const QUOIN_OUT := 0.085
+
+
+## Длина углового камня ряда i в углу (sx, sz): вдоль X (along_x) или вдоль Z.
+## Длинные и короткие камни чередуются — так кладут углы настоящих домов.
+static func _quoin_size(sx: float, sz: float, i: int, along_x: bool) -> float:
+	var long := (i + int(sx > 0) + int(sz > 0)) % 2 == 0
+	return (0.62 if long else 0.4) if along_x else (0.4 if long else 0.62)
+
+
+## Сколько от начала и конца каждого ряда стены занимают угловые камни (см. walls).
+static func _quoin_insets(side: String, height: float, course: float) -> Array:
+	# Углы в начале и в конце стены и ось, вдоль которой она идёт.
+	var corners := {
+		"front": [Vector2(-1, 1), Vector2(1, 1), true],
+		"right": [Vector2(1, 1), Vector2(1, -1), false],
+		"back": [Vector2(1, -1), Vector2(-1, -1), true],
+		"left": [Vector2(-1, -1), Vector2(-1, 1), false],
+	}
+	var info: Array = corners[side]
+	var a: Vector2 = info[0]
+	var b: Vector2 = info[1]
+	var out := []
+	for i in maxi(1, roundi(height / course)):
+		out.append(Vector2(_quoin_size(a.x, a.y, i, info[2]), _quoin_size(b.x, b.y, i, info[2])) - Vector2.ONE * (QUOIN_OUT - 0.01))
+	return out
+
+
 static func quoins(g: Geo, rng: RandomNumberGenerator, w: float, d: float, y0: float, height: float, mat: String, course: float) -> void:
 	var courses := maxi(1, roundi(height / course))
 	course = height / courses
-	var dp := 0.085
+	var dp := QUOIN_OUT
 	for sx: float in [-1.0, 1.0]:
 		for sz: float in [-1.0, 1.0]:
 			for i in courses:
-				var long := (i + int(sx > 0) + int(sz > 0)) % 2 == 0
-				var qa := 0.62 if long else 0.4
-				var qb := 0.4 if long else 0.62
+				var qa := _quoin_size(sx, sz, i, true)
+				var qb := _quoin_size(sx, sz, i, false)
 				var c := col(mat, rng, 0.06).lightened(0.04)
 				g.box(mat, Vector3(sx * (w * 0.5 - qa * 0.5 + dp), y0 + (i + 0.5) * course, sz * (d * 0.5 - qb * 0.5 + dp)),
 					Vector3(qa, course - 0.04, qb), c, 0.05)
@@ -454,7 +484,10 @@ static func walls(g: Geo, rng: RandomNumberGenerator, w: float, d: float, y0: fl
 			holes.append(Rect2(length * 0.5 + o["u"] - o["w"] * 0.5, o.get("v", 0.0), o["w"], o["h"]))
 			kinds.append(o.get("type", "window"))
 		g.push(wall_frame(info[0], info[1]))
-		var snapped := wall_body(g, rng, length, height, style, holes, thickness, row_offsets[side])
+		var insets := []
+		if opts.get("quoins", false):
+			insets = _quoin_insets(side, height, STYLES[style]["course"])
+		var snapped := wall_body(g, rng, length, height, style, holes, thickness, row_offsets[side], insets)
 		for i in snapped.size():
 			if kinds[i] == "door":
 				door(g, rng, snapped[i], door_mat, frame_mat, thickness)
@@ -2119,7 +2152,9 @@ static func _barrels(g: Geo, rng: RandomNumberGenerator) -> void:
 	_barrel(g, rng, Vector3(-0.4, 0, 0))
 	_barrel(g, rng, Vector3(0.3, 0, -0.25), 0.9, 0.33)
 	_barrel(g, rng, Vector3(0.55, 0.3, 0.55), 0.8, 0.3, Basis(Vector3.BACK, PI * 0.5) * Basis(Vector3.RIGHT, 0.3))
-	g.box("plank", Vector3(-0.4, 0.82, 0), Vector3(0.5, 0.04, 0.5), col("plank", rng), 0.01)
+	# Круглая деревянная крышка с ручкой на стоящей бочке.
+	g.cylinder("plank", Vector3(-0.4, 0.795, 0), 0.265, 0.265, 0.035, 14, col("plank", rng), true, true)
+	g.box("plank_dark", Vector3(-0.4, 0.85, 0), Vector3(0.2, 0.035, 0.05), col("plank_dark", rng), 0.01)
 
 
 static func _crates(g: Geo, rng: RandomNumberGenerator) -> void:
