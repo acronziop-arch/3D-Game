@@ -81,7 +81,7 @@ var _hover_panel: PanelContainer
 var _hover_label: RichTextLabel
 var _hint_panel: PanelContainer
 var _hint_label: RichTextLabel
-var _actions: VBoxContainer
+var _actions: GridContainer
 var _actions_key := ""
 var _rotate_hold: Button
 var _hint_max_width := 600.0
@@ -967,12 +967,13 @@ func _on_hover_changed(text: String) -> void:
 # --- Кнопки действий ------------------------------------------------------------------------------
 
 func _build_actions() -> void:
-	_actions = VBoxContainer.new()
+	# Колонка кнопок действий; если кнопок много и не хватает высоты — две колонки.
+	_actions = GridContainer.new()
 	_actions.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
 	_actions.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_actions.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	_actions.alignment = BoxContainer.ALIGNMENT_END
-	_actions.add_theme_constant_override("separation", 8)
+	_actions.add_theme_constant_override("v_separation", 8)
+	_actions.add_theme_constant_override("h_separation", 8)
 	_actions.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_actions)
 
@@ -1019,7 +1020,7 @@ func _rotate_button() -> Button:
 func _update_actions() -> void:
 	var bs := interaction.building_system
 	var selected_crop: String = interaction.selected_building.crop if is_instance_valid(interaction.selected_building) else ""
-	var key := "%d|%s|%s|%s|%s|%s|%s|%s|%d|%s|%s|%s" % [interaction.tool, bs.selected_id, bs.moving != null,
+	var key := "%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" % [interaction.tool, bs.selected_id, bs.moving != null,
 		is_instance_valid(interaction.selected_building), not interaction.jobs.is_empty(), _drawer_open,
 		interaction.nature_mode, interaction.flatten_offset_text(), bs.crop_choice, selected_crop,
 		interaction.selected_building.get_instance_id() if is_instance_valid(interaction.selected_building) else 0]
@@ -1028,6 +1029,7 @@ func _update_actions() -> void:
 		return
 	_actions_key = key
 	for c in _actions.get_children():
+		_actions.remove_child(c)
 		c.queue_free()
 	var to_harvest := func() -> void: interaction.set_tool(Interaction.Tool.HARVEST)
 	match interaction.tool:
@@ -1081,9 +1083,12 @@ func _update_actions() -> void:
 		Interaction.Tool.HARVEST:
 			if not interaction.jobs.is_empty():
 				_action_button("close", "Очередь").pressed.connect(interaction.cancel_all_jobs)
+	# Не залезаем на часы и шестерёнку сверху: лишние кнопки — во вторую колонку.
+	var m := Platform.safe_margins() if _touch else {"top": 16.0, "bottom": 16.0}
+	var room: float = _root.get_viewport_rect().size.y - m["top"] - _clock_row.size.y - 16.0 - m["bottom"]
+	var count := _actions.get_child_count()
+	_actions.columns = 2 if count * (58.0 + 8.0) - 8.0 > room else 1
 	for c in _actions.get_children():
-		if c.is_queued_for_deletion():
-			continue
 		c.modulate.a = 0.0
 		c.create_tween().tween_property(c, "modulate:a", 1.0, 0.15)
 
