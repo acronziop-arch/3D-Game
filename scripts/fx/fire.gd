@@ -2,6 +2,8 @@ class_name Fire
 extends Node3D
 ## Живой огонь костра и факела: несколько язычков пламени (шейдер с бегущим
 ## шумом), искры, дым и мерцающий тёплый свет. size — высота пламени, м.
+## В дождь, снегопад и сильный ветер огонь гаснет (остаётся дымок от углей),
+## а когда непогода стихает — разгорается снова.
 
 var size := 1.0
 
@@ -10,6 +12,12 @@ var _flames: Array[MeshInstance3D] = []
 var _materials: Array[ShaderMaterial] = []
 var _t := 0.0
 var _seed := 0.0
+## 1 — горит, 0 — погас.
+var _burn := 1.0
+var _embers: GPUParticles3D
+var _smoke: GPUParticles3D
+## Сколько ещё дымят угли после того, как огонь погас, с.
+var _smolder := 0.0
 
 static var _noise: NoiseTexture2D
 static var _ember_mat: StandardMaterial3D
@@ -18,6 +26,7 @@ static var _smoke_mat: StandardMaterial3D
 
 func _ready() -> void:
 	_seed = randf() * 10.0
+	_burn = 0.0 if is_put_out() else 1.0
 	if _noise == null:
 		var n := FastNoiseLite.new()
 		n.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
@@ -51,8 +60,10 @@ func _ready() -> void:
 		add_child(mi)
 		_flames.append(mi)
 		_materials.append(m)
-	add_child(_make_embers())
-	add_child(_make_smoke())
+	_embers = _make_embers()
+	add_child(_embers)
+	_smoke = _make_smoke()
+	add_child(_smoke)
 	_light = OmniLight3D.new()
 	_light.light_color = Color(1.0, 0.62, 0.3)
 	_light.omni_range = 4.0 + size * 4.0
@@ -169,16 +180,32 @@ func _make_smoke() -> GPUParticles3D:
 	return p
 
 
+## Погода, при которой огонь не горит.
+static func is_put_out() -> bool:
+	return Weather.rain > 0.35 or Weather.snow > 0.35 or Weather.wind > 0.6
+
+
 func _process(delta: float) -> void:
 	_t += delta
+	var out := is_put_out()
+	var was := _burn
+	# Гаснет за пару секунд, разгорается медленнее.
+	_burn = move_toward(_burn, 0.0 if out else 1.0, delta / (2.0 if out else 5.0))
+	if was > 0.05 and _burn <= 0.05:
+		_smolder = 14.0
+	_smolder = maxf(_smolder - delta, 0.0)
+	_embers.emitting = _burn > 0.45
+	_smoke.emitting = _burn > 0.2 or _smolder > 0.0
+	_light.visible = _burn > 0.01
 	# Мерцание: два наложенных колебания и немного случайности.
 	var flicker := 0.82 + 0.1 * sin(_t * 9.3 + _seed) + 0.06 * sin(_t * 23.0 + _seed * 2.0) + randf() * 0.04
 	var dark := 1.0 - Weather.daylight()
-	_light.light_energy = (0.7 + size * 0.9) * flicker * lerpf(0.45, 1.5, dark)
+	_light.light_energy = (0.7 + size * 0.9) * flicker * lerpf(0.45, 1.5, dark) * _burn
 	_light.position.x = sin(_t * 5.0) * 0.03 * size
 	for m in _materials:
 		m.set_shader_parameter("darkness", dark)
 	# Под дождём пламя чуть ниже.
-	var k := 1.0 - Weather.rain * 0.25
+	var k := (1.0 - Weather.rain * 0.25) * _burn
 	for f in _flames:
-		f.scale = Vector3(1.0, k * (0.94 + 0.08 * sin(_t * 7.0 + f.get_index())), 1.0)
+		f.visible = _burn > 0.02
+		f.scale = Vector3(lerpf(0.35, 1.0, _burn), maxf(k, 0.01) * (0.94 + 0.08 * sin(_t * 7.0 + f.get_index())), 1.0)

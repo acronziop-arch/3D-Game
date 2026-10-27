@@ -515,11 +515,16 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 	var step := CHUNK_SIZE / cells
 	for gj in cells:
 		for gi in cells:
+			# Все случайные числа клетки берём сразу: если клетку скосили или
+			# выровняли, остальной покров чанка остаётся ровно таким же, как был.
 			var lx := (gi + rng.randf()) * step
 			var lz := (gj + rng.randf()) * step
 			var angle := rng.randf() * TAU
 			var scale := rng.randf_range(0.75, 1.3)
 			var roll := rng.randf()
+			var tint := rng.randf_range(0.93, 1.07)
+			var odd_petal := rng.randf()
+			var odd_pick := rng.randi()
 			var world := origin + Vector2(lx, lz)
 			var edit: String = cover_edits.get(Vector2i(floori(world.x / 2.0), floori(world.y / 2.0)), "") if not cover_edits.is_empty() else ""
 			if edit == "mow":
@@ -538,7 +543,6 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 				if edit == "":
 					continue
 				ground = DEFAULT_GREEN
-			var tint := rng.randf_range(0.93, 1.07)
 			var col := Color(ground.r * tint, ground.g * tint, ground.b * tint)
 			var kind := edit
 			if kind == "":
@@ -555,8 +559,8 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 					# Поляна одного цвета: цвет зависит от клетки 10 м.
 					var patch := hash(Vector2i(floori(world.x / 10.0), floori(world.y / 10.0)) + Vector2i(world_seed, 7))
 					var petal: Color = GroundCover.FLOWER_COLORS[absi(patch) % GroundCover.FLOWER_COLORS.size()]
-					if rng.randf() < 0.2:
-						petal = GroundCover.FLOWER_COLORS[rng.randi() % GroundCover.FLOWER_COLORS.size()]
+					if odd_petal < 0.2:
+						petal = GroundCover.FLOWER_COLORS[odd_pick % GroundCover.FLOWER_COLORS.size()]
 					GroundCover.write_instance(flowers, Vector3(lx, h, lz), angle, scale * 0.9, petal)
 					# Под цветами — немного обычной травы.
 					GroundCover.write_instance(grass, Vector3(lx + 0.3, h, lz - 0.2), angle + 1.0, scale * 0.8, col)
@@ -571,6 +575,7 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 			var lz := (gj + rng.randf()) * lstep
 			var angle := rng.randf() * TAU
 			var litter_seed := rng.randf()
+			var litter_scale := rng.randf_range(0.8, 1.3)
 			var info: Array = COVER.get(biomes[roundi(lz / 8.0) * 5 + roundi(lx / 8.0)], [0.0, false, false, false])
 			if not info[1]:
 				continue
@@ -579,7 +584,7 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 				continue
 			if not cleared.is_empty() and _is_edited(cleared, coord, lx, lz):
 				continue
-			GroundCover.write_instance(litter, Vector3(lx, h, lz), angle, rng.randf_range(0.8, 1.3), Color.WHITE, litter_seed)
+			GroundCover.write_instance(litter, Vector3(lx, h, lz), angle, litter_scale, Color.WHITE, litter_seed)
 	out["grass"] = grass
 	out["tall"] = tall
 	out["flowers"] = flowers

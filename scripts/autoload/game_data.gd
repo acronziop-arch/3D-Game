@@ -266,9 +266,19 @@ const BUILDINGS := {
 		"cost": {"plank": 2}, "desc": "Скамейка со спинкой."},
 	"signpost": {"name": "Указатель", "category": "decor", "time": 0.5, "light": true, "group": "decor",
 		"cost": {"log": 1, "plank": 2, "stone": 1}, "desc": "Столб со стрелками-указателями."},
-	# Саженец: ставится как постройка, а вырастает настоящим деревом.
+	# Саженцы: ставятся как постройки, а вырастают настоящими деревьями.
 	"apple_tree": {"name": "Яблоня", "category": "garden", "time": 0.0, "plant": "tree_apple",
 		"cost": {}, "desc": "Саженец яблони. Сразу ставится и потихоньку вырастает."},
+	"sapling_oak": {"name": "Дуб", "category": "garden", "time": 0.0, "plant": "tree_oak",
+		"cost": {}, "desc": "Саженец дуба — вырастет в раскидистое дерево."},
+	"sapling_birch": {"name": "Берёза", "category": "garden", "time": 0.0, "plant": "tree_birch",
+		"cost": {}, "desc": "Саженец берёзы с белым стволом."},
+	"sapling_maple": {"name": "Клён", "category": "garden", "time": 0.0, "plant": "tree_maple",
+		"cost": {}, "desc": "Саженец клёна — осенью он самый яркий."},
+	"sapling_pine": {"name": "Сосна", "category": "garden", "time": 0.0, "plant": "tree_pine",
+		"cost": {}, "desc": "Саженец сосны с высокой кроной-зонтиком."},
+	"sapling_spruce": {"name": "Ель", "category": "garden", "time": 0.0, "plant": "tree_spruce",
+		"cost": {}, "desc": "Саженец ели — зелёная и зимой."},
 	# На воде
 	"platform": {"name": "Деревянный настил", "category": "water", "time": 4.0, "place": "water",
 		"cost": {"plank": 6, "log": 4}, "desc": "Блок 4×4 м на сваях. На нём можно строить, как на суше."},

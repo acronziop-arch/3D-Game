@@ -29,8 +29,8 @@ const TOOLS := [
 	[Interaction.Tool.NATURE, "tool_nature", "Природа", "4"],
 	[Interaction.Tool.EDIT, "tool_edit", "Правка", "5"],
 ]
-const NATURE_ICONS := {"mow": "mow", "grass": "grass_short", "tall": "grass_tall", "flowers": "flower", "tree": "tool_nature"}
-const NATURE_SHORT := {"mow": "Косить", "grass": "Трава", "tall": "Высокая", "flowers": "Цветы", "tree": "Дерево"}
+const NATURE_ICONS := {"mow": "mow", "grass": "grass_short", "tall": "grass_tall", "flowers": "flower"}
+const NATURE_SHORT := {"mow": "Косить", "grass": "Трава", "tall": "Высокая", "flowers": "Цветы"}
 ## Ширина колонки кнопок действий (вместе с отступом).
 const ACTIONS_WIDTH := 74.0
 
@@ -78,9 +78,9 @@ var _job_icon: TextureRect
 var _job_label: Label
 var _job_bar: ProgressBar
 var _hover_panel: PanelContainer
-var _hover_label: Label
+var _hover_label: RichTextLabel
 var _hint_panel: PanelContainer
-var _hint_label: Label
+var _hint_label: RichTextLabel
 var _actions: VBoxContainer
 var _actions_key := ""
 var _rotate_hold: Button
@@ -99,6 +99,8 @@ func _ready() -> void:
 	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.theme = UiStyle.make_theme()
+	# Иконки — картинки 128 px: при уменьшении берутся мип-уровни, без ряби.
+	_root.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	add_child(_root)
 	thumbnails = Thumbnails.new()
 	add_child(thumbnails)
@@ -662,7 +664,7 @@ func _make_card(id: String) -> Dictionary:
 	b.gui_input.connect(func(e: InputEvent) -> void:
 		# Недоступная карточка: сразу говорим, чего не хватает.
 		if b.disabled and e is InputEventMouseButton and not (e as InputEventMouseButton).pressed:
-			show_message("Не хватает: %s" % GameData.cost_text(Inventory.missing(def["cost"]))))
+			show_message("Не хватает: %s" % Rich.cost(Inventory.missing(def["cost"]))))
 	var box := VBoxContainer.new()
 	box.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	box.offset_left = 6
@@ -926,8 +928,7 @@ func _build_hover() -> void:
 	_hover_panel.add_theme_stylebox_override("panel", UiStyle.box(Color(UiStyle.BASE, 0.97), 10, 9, 2, UiStyle.BRAND, true))
 	_hover_panel.visible = false
 	_root.add_child(_hover_panel)
-	_hover_label = UiStyle.label("", 14, UiStyle.TEXT, 700)
-	_hover_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hover_label = Rich.label(14)
 	_hover_panel.add_child(_hover_label)
 
 
@@ -940,9 +941,8 @@ func _build_hint() -> void:
 	_hint_panel.visible = false
 	_hint_panel.modulate.a = 0.0
 	_bottom.add_child(_hint_panel)
-	_hint_label = UiStyle.label("", 13, UiStyle.TEXT, 700)
-	_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	# Подсказка с разметкой: заголовок, значки ресурсов, клавиши и причина отказа.
+	_hint_label = Rich.label(int(_px(15, 13)))
 	_hint_panel.add_child(_hint_label)
 
 
@@ -952,15 +952,14 @@ func _on_hover_changed(text: String) -> void:
 			# Сейчас в строке сообщение — подсказку покажем после него.
 			_hint_panel.set_meta("normal_text", text)
 			return
+		_hint_panel.set_meta("current", text)
 		if text != "":
-			_hint_label.text = text
 			# Длинная подсказка переносится и не выходит за края экрана.
-			Notices.fit_label(_hint_label, text, _hint_max_width)
+			Rich.fit(_hint_label, text, _hint_max_width)
 			_hint_panel.reset_size()
 		UiStyle.fade(_hint_panel, text != "", 0.2)
 		return
-	_hover_label.text = text
-	Notices.fit_label(_hover_label, text, 420.0)
+	Rich.fit(_hover_label, text, 460.0, false)
 	_hover_panel.reset_size()
 	_hover_panel.visible = text != ""
 
@@ -1022,9 +1021,9 @@ func _update_actions() -> void:
 	var selected_crop: String = interaction.selected_building.crop if is_instance_valid(interaction.selected_building) else ""
 	var key := "%d|%s|%s|%s|%s|%s|%s|%s|%d|%s|%s|%s" % [interaction.tool, bs.selected_id, bs.moving != null,
 		is_instance_valid(interaction.selected_building), not interaction.jobs.is_empty(), _drawer_open,
-		interaction.nature_mode, interaction.flatten_offset_text(), interaction.tree_species, bs.crop_choice, selected_crop,
+		interaction.nature_mode, interaction.flatten_offset_text(), bs.crop_choice, selected_crop,
 		interaction.selected_building.get_instance_id() if is_instance_valid(interaction.selected_building) else 0]
-	key += "|%s|%d" % [bs.path_mode, interaction.selected_path]
+	key += "|%d" % interaction.selected_path
 	if key == _actions_key:
 		return
 	_actions_key = key
@@ -1044,11 +1043,7 @@ func _update_actions() -> void:
 					var c: Dictionary = CropPatch.CROPS[bs.crop_choice]
 					_action_button(c["icon"], c["name"], true).pressed.connect(interaction.next_crop)
 				if bs.is_path():
-					# Дорожки: плитками или плавной лентой за пальцем.
-					_action_button("path_tiles", "Плитки", bs.path_mode == "tiles").pressed.connect(
-						func() -> void: interaction.set_path_mode("tiles"))
-					_action_button("path_smooth", "Плавная", bs.path_mode == "auto").pressed.connect(
-						func() -> void: interaction.set_path_mode("auto"))
+					# Дорожка ложится плавной лентой следом за пальцем.
 					_action_button("close", "Отмена").pressed.connect(to_harvest)
 				else:
 					_rotate_button()
@@ -1065,18 +1060,10 @@ func _update_actions() -> void:
 			_action_button("minus", "Уже").pressed.connect(func() -> void: interaction.resize_brush(-1.0))
 		Interaction.Tool.NATURE:
 			for mode: String in NATURE_ICONS:
-				var label: String = NATURE_SHORT[mode]
-				if mode == "tree" and interaction.nature_mode == "tree":
-					label = interaction.tree_species_name()
-				var b := _action_button(NATURE_ICONS[mode], label, interaction.nature_mode == mode)
-				b.pressed.connect(func() -> void:
-					if mode == "tree" and interaction.nature_mode == "tree":
-						interaction.next_tree_species()
-					else:
-						interaction.set_nature_mode(mode))
-			if interaction.nature_mode != "tree":
-				_action_button("plus", "Шире").pressed.connect(func() -> void: interaction.resize_brush(1.0))
-				_action_button("minus", "Уже").pressed.connect(func() -> void: interaction.resize_brush(-1.0))
+				_action_button(NATURE_ICONS[mode], NATURE_SHORT[mode], interaction.nature_mode == mode).pressed.connect(
+					func() -> void: interaction.set_nature_mode(mode))
+			_action_button("plus", "Шире").pressed.connect(func() -> void: interaction.resize_brush(1.0))
+			_action_button("minus", "Уже").pressed.connect(func() -> void: interaction.resize_brush(-1.0))
 		Interaction.Tool.EDIT:
 			if interaction.selected_path >= 0:
 				_action_button("trash", "Убрать").pressed.connect(interaction.remove_selected_path)
@@ -1119,11 +1106,10 @@ func show_message(text: String) -> void:
 
 func _flash_hint(text: String) -> void:
 	if not _hint_panel.has_meta("flash"):
-		_hint_panel.set_meta("normal_text", _hint_label.text)
+		_hint_panel.set_meta("normal_text", _hint_panel.get_meta("current", ""))
 	_hint_panel.set_meta("flash", Notices.SHOW_TIME)
-	_hint_label.text = text
-	Notices.fit_label(_hint_label, text, _hint_max_width)
-	_hint_label.add_theme_color_override("font_color", UiStyle.BRAND_DARK)
+	Rich.fit(_hint_label, text, _hint_max_width)
+	_hint_label.add_theme_color_override("default_color", UiStyle.BRAND_DARK)
 	_hint_panel.reset_size()
 	UiStyle.fade(_hint_panel, true, 0.2)
 
@@ -1267,7 +1253,7 @@ func _process(delta: float) -> void:
 			_hint_panel.set_meta("flash", left)
 		else:
 			_hint_panel.remove_meta("flash")
-			_hint_label.remove_theme_color_override("font_color")
+			_hint_label.add_theme_color_override("default_color", UiStyle.TEXT)
 			_on_hover_changed(str(_hint_panel.get_meta("normal_text", "")))
 	_info_timer -= delta
 	if _info_timer <= 0.0:

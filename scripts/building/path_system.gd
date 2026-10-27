@@ -88,7 +88,7 @@ func extend(at: Vector3) -> String:
 		if not _pay(step_len):
 			_rebuild_preview()
 			finish()
-			return "Не хватает: %s" % GameData.cost_text(Inventory.missing(cost_of(_type)))
+			return "Не хватает: %s" % Rich.cost(Inventory.missing(cost_of(_type)), 16)
 		_points.append(q)
 		_length += step_len
 	_rebuild_preview()

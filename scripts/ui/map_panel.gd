@@ -1,13 +1,15 @@
 class_name MapPanel
 extends Control
 ## Большая карта: открывается нажатием на мини-карту. Листается пальцем или
-## мышью, масштаб — щипком или колесом. Нажатие на пустое место ставит метку
+## мышью; масштаб постоянный (щипок и колесо его не меняют). Нажатие на пустое место ставит метку
 ## (цвет и значок на выбор), нажатие на метку — изменить или удалить её.
 ## «Показать» переносит камеру к выбранной точке.
 
 signal closed
 signal markers_changed
 
+## Сколько метров мира помещается в карту по высоте — масштаб постоянный.
+const MAP_METERS := 520.0
 const COLORS := ["#E05A4E", "#F09A3E", "#F2C94C", "#62B04E", "#4E8FD6", "#9B6BD8"]
 const ICONS := ["flag", "home", "star", "castle", "tree", "pick", "heart", "camp"]
 const ICON_NAMES := {"flag": "Флаг", "home": "Деревня", "star": "Звезда", "castle": "Крепость", "tree": "Лес",
@@ -30,7 +32,6 @@ var _drag_from := Vector2.ZERO
 var _dragging := false
 var _moved := 0.0
 var _touches := {}
-var _pinch := 0.0
 
 
 func setup(chunk_manager: ChunkManager, rig: CameraRig, buildings: BuildingSystem) -> void:
@@ -92,7 +93,7 @@ func _ready() -> void:
 	box.add_child(header)
 	map = Minimap.new()
 	map.follow_camera = false
-	map.view_meters = 900.0
+	map.view_meters = MAP_METERS
 	map.corner_radius = 16.0
 	map.mouse_filter = Control.MOUSE_FILTER_STOP
 	map.gui_input.connect(_on_map_input)
@@ -216,24 +217,15 @@ func _on_map_input(event: InputEvent) -> void:
 			_touches[t.index] = t.position
 		else:
 			_touches.erase(t.index)
-		_pinch = 0.0
 	elif event is InputEventScreenDrag:
 		var d := event as InputEventScreenDrag
 		_touches[d.index] = d.position
 		if _touches.size() >= 2:
-			var keys := _touches.keys()
-			var dist: float = (_touches[keys[0]] as Vector2).distance_to(_touches[keys[1]])
-			if _pinch > 0.0:
-				map.view_meters = clampf(map.view_meters * _pinch / maxf(dist, 1.0), 120.0, 1800.0)
-			_pinch = dist
+			# Двумя пальцами карту не масштабируем — только не даём это считать нажатием.
 			_moved = 999.0
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
-			map.view_meters = maxf(map.view_meters * 0.85, 120.0)
-		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
-			map.view_meters = minf(map.view_meters * 1.18, 1800.0)
-		elif mb.button_index == MOUSE_BUTTON_LEFT:
+		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
 				_dragging = true
 				_moved = 0.0

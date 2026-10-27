@@ -109,8 +109,8 @@ func _check_icons() -> void:
 	for c: String in GD.BUILDING_CATEGORIES:
 		names.append("cat_" + c)
 	for n: String in names:
-		if not ResourceLoader.exists("res://assets/icons/%s.svg" % n):
-			_fail("нет иконки assets/icons/%s.svg — запустите tools/make_icons.py" % n)
+		if not ResourceLoader.exists("res://assets/icons/%s.png" % n):
+			_fail("нет иконки assets/icons/%s.png — запустите tools/extract_icons.py" % n)
 
 
 func _check_sources() -> void:

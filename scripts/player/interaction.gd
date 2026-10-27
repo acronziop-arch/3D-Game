@@ -31,9 +31,7 @@ const NATURE_MODES := {
 	"grass": "Сеять траву",
 	"tall": "Высокая трава",
 	"flowers": "Сажать цветы",
-	"tree": "Сажать деревья",
 }
-const TREE_SPECIES := ["tree_oak", "tree_birch", "tree_apple", "tree_pine", "tree_maple", "tree_spruce"]
 
 @export var brush_radius := 5.0
 @export var flatten_speed := 4.0
@@ -48,7 +46,6 @@ var jobs: Array[Dictionary] = []
 ## Поправка высоты выравнивания, м (0 — авто: по высоте точки нажатия).
 var flatten_offset := 0.0
 var nature_mode := "mow"
-var tree_species := 0
 var selected_building: Building
 ## Выбранная в правке плавная дорожка (−1 — нет).
 var selected_path := -1
@@ -261,15 +258,6 @@ func set_nature_mode(mode: String) -> void:
 	options_changed.emit()
 
 
-func next_tree_species() -> void:
-	tree_species = (tree_species + 1) % TREE_SPECIES.size()
-	options_changed.emit()
-
-
-func tree_species_name() -> String:
-	return GameData.PROPS[TREE_SPECIES[tree_species]]["name"]
-
-
 ## Ставит здание на место призрака (кнопка «Построить» на телефоне, ЛКМ на ПК).
 func confirm_build() -> void:
 	if building_system.selected_id == "":
@@ -369,16 +357,8 @@ func remove_selected_path() -> void:
 		return
 	var refund := path_system.remove(selected_path)
 	selected_path = -1
-	message.emit("Дорожка убрана" + ("" if refund.is_empty() else " · вернули %s" % GameData.cost_text(refund)))
+	message.emit("Дорожка убрана" + ("" if refund.is_empty() else "   вернули %s" % Rich.cost(refund, 16)))
 	Platform.haptic(0.4)
-	options_changed.emit()
-
-
-## Дорожки: режим «Плитки» или «Плавная».
-func set_path_mode(mode: String) -> void:
-	building_system.path_mode = mode
-	_end_build_paint()
-	_end_smooth_path()
 	options_changed.emit()
 
 
@@ -504,9 +484,7 @@ func touch_tap(screen: Vector2) -> void:
 			elif ground != null:
 				_touch_anchor = ground
 		Tool.NATURE:
-			if nature_mode == "tree" and ground != null:
-				_plant_tree(ground)
-			elif ground != null:
+			if ground != null:
 				chunk_manager.paint_cover(ground, brush_radius * 0.5, nature_mode)
 				Platform.haptic(0.15)
 		Tool.EDIT:
@@ -547,8 +525,6 @@ func touch_drag_begin(screen: Vector2) -> bool:
 			_start_flatten(ground)
 			return true
 		Tool.NATURE:
-			if nature_mode == "tree":
-				return false
 			_touch_point = screen
 			_painting = true
 			_paint_timer = 0.0
@@ -586,16 +562,6 @@ func _start_flatten(ground: Vector3) -> void:
 	_flatten_target = snappedf(maxf(ground.y + flatten_offset, WorldGen.WATER_LEVEL - 4.0), 0.25)
 
 
-func _plant_tree(ground: Vector3) -> void:
-	var reason := chunk_manager.plant_tree(ground, TREE_SPECIES[tree_species])
-	if reason != "":
-		message.emit(reason)
-		Platform.haptic(0.2)
-	else:
-		Fx.burst(self, ground + Vector3(0, 0.3, 0), Color(0.5, 0.75, 0.35), 10, 0.12)
-		Platform.haptic(0.35)
-
-
 func _primary_action() -> void:
 	match tool:
 		Tool.HARVEST:
@@ -616,11 +582,8 @@ func _primary_action() -> void:
 		Tool.NATURE:
 			if _ground == null:
 				return
-			if nature_mode == "tree":
-				_plant_tree(_ground)
-			else:
-				_painting = true
-				_paint_timer = 0.0
+			_painting = true
+			_paint_timer = 0.0
 		Tool.EDIT:
 			_edit_pick(_hover_building, _ground)
 
@@ -671,11 +634,11 @@ func _process(delta: float) -> void:
 				var info := _target_info(_hover)
 				_ring_target = info["pos"]
 				_ring_scale = info["radius"]
-				text = "%s — %s" % [info["name"], info["hint"]]
+				text = Rich.title(info["name"]) + Rich.SEP + info["hint"]
 			elif not over_ui:
 				_hover_building = building_system.pick(from, dir)
 				if _hover_building:
-					text = GameData.BUILDINGS[_hover_building.id]["name"]
+					text = Rich.title(GameData.BUILDINGS[_hover_building.id]["name"])
 		Tool.BUILD:
 			building_system.update_ghost(_touch_anchor if touch else _ground, delta)
 			if not touch:
@@ -685,35 +648,29 @@ func _process(delta: float) -> void:
 			if id == "":
 				text = "Выберите здание в меню стройки"
 			elif building_system.moving:
-				text = "Переносим: %s" % GameData.BUILDINGS[id]["name"]
+				text = Rich.title("Переносим: %s" % GameData.BUILDINGS[id]["name"])
 				if not building_system.is_valid and building_system.invalid_reason != "":
-					text += "\n" + building_system.invalid_reason
+					text += "\n" + Rich.bad(building_system.invalid_reason)
 				elif touch:
-					text += "\nТяните здание пальцем · ✓ — поставить"
+					text += "\n" + Rich.muted("Тяните здание пальцем, %s — поставить" % Rich.icon("check", 16))
 				else:
-					text += "\nЛКМ — поставить · R / Shift+R — повернуть · ПКМ — отмена"
+					text += "\n" + Rich.muted("%s поставить   %s повернуть   %s отмена" % [Rich.key("ЛКМ"), Rich.key("R"), Rich.key("ПКМ")])
 			elif building_system.is_smooth_path():
 				var cost := PathSystem.cost_of(building_system.path_type())
-				text = "%s · %s" % [GameData.BUILDINGS[id]["name"],
-					"бесплатно" if cost.is_empty() else "%s за 2 м" % GameData.cost_text(cost)]
-				text += "\nВедите пальцем по земле — дорожка ляжет следом" if touch else "\nЗажмите ЛКМ и ведите — дорожка ляжет следом"
-			elif building_system.is_paintable():
-				var def: Dictionary = GameData.BUILDINGS[id]
-				text = "%s · %s за плитку" % [def["name"], "бесплатно" if def["cost"].is_empty() else GameData.cost_text(def["cost"])]
-				if not building_system.is_valid and building_system.invalid_reason != "":
-					text += "\n" + building_system.invalid_reason
-				else:
-					text += "\nНажмите, куда положить плитку, или ведите пальцем" if touch else "\nЛКМ — положить плитку, зажать и вести — несколько подряд"
+				text = Rich.title(GameData.BUILDINGS[id]["name"]) + Rich.SEP + Rich.cost(cost, 18, true) \
+					+ ("" if cost.is_empty() else Rich.muted(" за 2 м"))
+				text += "\n" + Rich.muted("Ведите пальцем по земле — дорожка ляжет следом" if touch
+					else "Зажмите %s и ведите — дорожка ляжет следом" % Rich.key("ЛКМ"))
 			else:
 				var def: Dictionary = GameData.BUILDINGS[id]
-				var time_text := "сразу" if GameMode.is_creative() or def["time"] <= 0.0 else "%d с" % def["time"]
-				text = "%s · %s · %s" % [def["name"], time_text, "бесплатно" if def["cost"].is_empty() else GameData.cost_text(def["cost"])]
+				text = Rich.title(def["name"]) + Rich.SEP + Rich.time(0.0 if GameMode.is_creative() else def["time"]) \
+					+ Rich.SEP + Rich.cost(def["cost"], 18, true)
 				if not building_system.is_valid and building_system.invalid_reason != "":
-					text += "\n" + building_system.invalid_reason
+					text += "\n" + Rich.bad(building_system.invalid_reason)
 				elif touch:
-					text += "\nТяните здание пальцем или нажмите, куда поставить"
+					text += "\n" + Rich.muted("Тяните здание пальцем или нажмите, куда поставить")
 				else:
-					text += "\nЛКМ — построить · R / Shift+R или Ctrl+колесо — повернуть · ПКМ — отмена"
+					text += "\n" + Rich.muted("%s построить   %s повернуть   %s отмена" % [Rich.key("ЛКМ"), Rich.key("R"), Rich.key("ПКМ")])
 		Tool.FLATTEN:
 			if _ground != null:
 				ring_visible = true
@@ -722,26 +679,25 @@ func _process(delta: float) -> void:
 				ring_color = BRUSH_COLOR
 				if _flattening:
 					chunk_manager.flatten(_ground, brush_radius, _flatten_target, flatten_speed * delta)
-			var mode := "высота: %s" % flatten_offset_text()
+			var mode := "%s %s" % [Rich.icon("tool_flatten", 16), flatten_offset_text()]
+			text = Rich.title("Выравнивание") + Rich.SEP + mode + Rich.SEP + Rich.muted("кисть %d м" % roundi(brush_radius))
 			if touch:
-				text = "Проведите пальцем — выровнять · %s · кисть %d м\nКамера — двумя пальцами" % [mode, roundi(brush_radius)]
+				text += "\n" + Rich.muted("Проведите пальцем — выровнять; камера — двумя пальцами")
 			else:
-				text = "Зажмите ЛКМ — выровнять · %s (PgUp / PgDn) · [ ] — кисть %d м" % [mode, roundi(brush_radius)]
+				text += "\n" + Rich.muted("%s выровнять   %s высота   %s кисть" % [Rich.key("ЛКМ"), Rich.key("PgUp/PgDn"), Rich.key("[ ]")])
 		Tool.NATURE:
 			if _ground != null:
 				ring_visible = true
 				_ring_target = _ground
-				_ring_scale = 1.2 if nature_mode == "tree" else brush_radius * 0.5
+				_ring_scale = brush_radius * 0.5
 				ring_color = NATURE_COLOR
-				if _painting and nature_mode != "tree":
+				if _painting:
 					_paint_timer -= delta
 					if _paint_timer <= 0.0:
 						_paint_timer = 0.12
 						chunk_manager.paint_cover(_ground, brush_radius * 0.5, nature_mode)
-			if nature_mode == "tree":
-				text = "Нажмите, куда посадить: %s. Дерево вырастет за пару минут" % tree_species_name()
-			else:
-				text = "%s — %s" % [NATURE_MODES[nature_mode], "проведите пальцем" if touch else "зажмите ЛКМ"]
+			text = Rich.title(NATURE_MODES[nature_mode]) + "\n" + Rich.muted("Проведите пальцем по земле" if touch
+				else "Зажмите %s и ведите" % Rich.key("ЛКМ")) + Rich.muted("   деревья — в «Стройка» → «Сад»")
 		Tool.EDIT:
 			if not touch:
 				var b: Building = null if over_ui else building_system.pick(from, dir)
@@ -754,10 +710,10 @@ func _process(delta: float) -> void:
 			if not is_instance_valid(selected_building) or selected_building.is_queued_for_deletion():
 				selected_building = null
 			if selected_building:
-				text = "%s — передвинуть, повернуть или снести (вернётся %s)" % [GameData.BUILDINGS[selected_building.id]["name"],
-					"половина ресурсов" if selected_building.is_complete else "всё"]
+				text = Rich.title(GameData.BUILDINGS[selected_building.id]["name"]) + Rich.SEP \
+					+ Rich.muted("при сносе вернётся %s" % ("половина" if selected_building.is_complete else "всё"))
 				if not touch:
-					text += "\nM — передвинуть · R — повернуть · Delete — снести"
+					text += "\n" + Rich.muted("%s передвинуть   %s повернуть   %s снести" % [Rich.key("M"), Rich.key("R"), Rich.key("Delete")])
 			else:
 				text = "Нажмите на здание, чтобы выбрать его"
 
@@ -788,12 +744,12 @@ func _target_info(target: Dictionary) -> Dictionary:
 		var chest: Chest = target["chest"]
 		var def: Dictionary = GameData.CHESTS[chest.rarity]
 		return {"name": def["name"], "pos": chest.global_position, "radius": 1.0,
-			"time": _action_time(def["open_time"]), "hint": "%.1f с · животные ресурсы" % def["open_time"]}
+			"time": _action_time(def["open_time"]), "hint": Rich.time(def["open_time"]) + Rich.SEP + Rich.muted("шкуры, шерсть, воск")}
 	var p: Dictionary = target["prop"]
 	var chunk: Chunk = target["chunk"]
 	var pdef: Dictionary = GameData.PROPS[p["id"]]
 	return {"name": pdef["name"], "pos": chunk.to_global(p["pos"]), "radius": float(pdef["radius"]) * float(p["scale"]),
-		"time": _action_time(pdef["time"]), "hint": "%d с · даёт %s" % [pdef["time"], GameData.cost_text(pdef["drops"])]}
+		"time": _action_time(pdef["time"]), "hint": Rich.time(pdef["time"]) + Rich.SEP + Rich.muted("даёт ") + Rich.cost(pdef["drops"])}
 
 
 ## В творческом режиме всё добывается мгновенно.

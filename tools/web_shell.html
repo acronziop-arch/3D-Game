@@ -409,6 +409,12 @@ const engine = new Engine(GODOT_CONFIG);
 	}, 4500);
 
 	// iPhone и iPad: подсказываем, как запускать игру во весь экран (полноэкранного режима в Safari нет).
+	// Safari позволяет масштабировать страницу щипком даже с user-scalable=no — запрещаем.
+	['gesturestart', 'gesturechange', 'gestureend'].forEach((type) => {
+		document.addEventListener(type, (e) => e.preventDefault(), { passive: false });
+	});
+	document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+
 	const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent)
 		|| (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 	if (isIOS && !navigator.standalone) {

@@ -35,9 +35,9 @@ func show_text(text: String) -> void:
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	panel.add_theme_stylebox_override("panel", UiStyle.box(Color(UiStyle.BASE, 0.97), 18, 10, 2, UiStyle.BRAND, true))
-	var label := UiStyle.label(text, font_size, UiStyle.TEXT, 700)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	fit_label(label, text, max_width - 24.0)
+	# Сообщение с разметкой: значки ресурсов вместо названий, красная причина отказа.
+	var label := Rich.label(font_size)
+	Rich.fit(label, text, max_width - 24.0)
 	panel.add_child(label)
 	add_child(panel)
 	move_child(panel, 0)

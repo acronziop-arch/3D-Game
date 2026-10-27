@@ -37,8 +37,6 @@ var over_water := false
 var moving: Building
 ## Культура для новых грядок.
 var crop_choice := "wheat"
-## Дорожки: "tiles" — плитками, "auto" — плавная лента за пальцем.
-var path_mode := "tiles"
 
 var _ghost: Node3D
 var _ghost_materials: Array[ShaderMaterial] = []
@@ -56,7 +54,7 @@ var _paint_last: Building
 
 func _ready() -> void:
 	_cross = Sprite3D.new()
-	_cross.texture = load("res://assets/icons/cross.svg")
+	_cross.texture = load("res://assets/icons/cross.png")
 	_cross.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_cross.no_depth_test = true
 	_cross.pixel_size = 0.012
@@ -293,7 +291,7 @@ func is_path(id := selected_id) -> bool:
 
 ## Выбрана дорожка в режиме «Плавная».
 func is_smooth_path() -> bool:
-	return moving == null and is_path() and path_mode == "auto"
+	return moving == null and is_path()
 
 
 ## Вид дорожки для PathSystem: dirt / wood / stone / brick.
@@ -454,7 +452,7 @@ func _validate(target: Vector3, angle: float) -> Dictionary:
 				-0.45 if GameData.BUILDINGS[selected_id].has("snap") else -0.15), mode):
 			result["reason"] = "Мешает другое здание"
 		elif moving == null and not Inventory.has_all(cost):
-			result["reason"] = "Не хватает: %s" % GameData.cost_text(Inventory.missing(cost))
+			result["reason"] = "Не хватает: %s" % Rich.cost(Inventory.missing(cost), 16)
 	return result
 
 

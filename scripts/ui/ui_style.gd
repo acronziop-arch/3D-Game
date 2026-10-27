@@ -32,7 +32,7 @@ static func font(weight := 600) -> FontVariation:
 
 static func icon(icon_name: String) -> Texture2D:
 	if not _icons.has(icon_name):
-		var path := "res://assets/icons/%s.svg" % icon_name
+		var path := "res://assets/icons/%s.png" % icon_name
 		_icons[icon_name] = load(path) if ResourceLoader.exists(path) else null
 	return _icons[icon_name]
 
