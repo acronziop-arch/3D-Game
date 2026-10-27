@@ -789,6 +789,19 @@ const engine = new Engine(GODOT_CONFIG);
 		});
 	}
 
+	// Страницу прячут или закрывают (свернули Safari, перезагрузили) — игра сохраняет мир.
+	const saveNow = () => {
+		if (window.everstead && window.everstead.onHide) {
+			window.everstead.onHide();
+		}
+	};
+	document.addEventListener('visibilitychange', () => {
+		if (document.visibilityState === 'hidden') {
+			saveNow();
+		}
+	});
+	window.addEventListener('pagehide', saveNow);
+
 	// Игра сама сообщает, как идёт подготовка, и когда мир готов.
 	window.everstead = {
 		progress: (fraction, text) => setProgress(DOWNLOAD_SHARE + (1 - DOWNLOAD_SHARE) * fraction, text),

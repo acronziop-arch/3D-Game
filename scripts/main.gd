@@ -19,6 +19,8 @@ var _perf_grace := 10.0
 var _warmup: ShaderWarmup
 var _world_ready := false
 var _normal_chunk_pace := []
+## JS-функция «страницу спрятали» (в браузере): держим ссылку, чтобы её не собрал сборщик мусора.
+var _on_page_hide: JavaScriptObject
 
 @onready var chunk_manager: ChunkManager = $ChunkManager
 @onready var camera_rig: CameraRig = $CameraRig
@@ -189,6 +191,13 @@ func _on_world_ready() -> void:
 	hud.hide_loading()
 	if OS.has_feature("web"):
 		JavaScriptBridge.eval("window.everstead && window.everstead.ready()")
+		# Вкладку спрятали или перезагружают — сохраняем сразу, не дожидаясь автосохранения.
+		_on_page_hide = JavaScriptBridge.create_callback(func(_args: Array) -> void:
+			WorldState.camera_state = camera_rig.get_state()
+			WorldState.save_game())
+		var everstead: Variant = JavaScriptBridge.get_interface("everstead")
+		if everstead:
+			everstead.onHide = _on_page_hide
 	if WorldState.buildings.is_empty():
 		hud.show_message("Добро пожаловать в «%s»! Срубите пару деревьев и постройте лесопилку." % WorldState.world_name)
 	else:
@@ -286,6 +295,15 @@ func _station_distance(station: String) -> float:
 		if is_instance_valid(b) and b.id == station and b.is_complete:
 			best = minf(best, Vector2(b.position.x - focus.x, b.position.z - focus.z).length())
 	return best
+
+
+func _exit_tree() -> void:
+	# Сцена уходит (выход в главное меню) — JS больше не должен звать её сохранение.
+	if _on_page_hide:
+		var everstead: Variant = JavaScriptBridge.get_interface("everstead")
+		if everstead:
+			everstead.onHide = null
+		_on_page_hide = null
 
 
 ## «В главное меню»: сохраняем мир и показываем стартовый экран заново.
