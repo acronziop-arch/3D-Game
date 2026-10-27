@@ -441,8 +441,7 @@ func _validate(target: Vector3, angle: float) -> Dictionary:
 			result["reason"] = "Мешают деревья или камни — добудьте их" + _key("1")
 		elif chunk_manager.has_chest_in_rect(Building.footprint_for(selected_id, target, angle)):
 			result["reason"] = "Здесь лежит сундук"
-		elif mode != "water" and _overlaps(Building.obb_for(selected_id, target, angle,
-				-0.45 if GameData.BUILDINGS[selected_id].has("snap") else -0.15), mode):
+		elif mode != "water" and _blocked(target, angle, -0.45 if GameData.BUILDINGS[selected_id].has("snap") else -0.15):
 			result["reason"] = "Мешает другое здание"
 		elif moving == null and not Inventory.has_all(cost):
 			result["reason"] = "Не хватает: %s" % Rich.cost(Inventory.missing(cost), 16)
@@ -537,6 +536,55 @@ func _props_inside(box: Dictionary) -> bool:
 		if Building.obb_has_point(box, Vector2(pos.x, pos.z)):
 			return true
 	return false
+
+
+## Куда сдвинуть призрак после постройки, чтобы следующая не легла на только что
+## поставленную: ближайшее свободное место справа от неё (как видит камера), слева,
+## дальше или ближе. right — направление «вправо» на экране.
+func free_spot_near(p: Vector3, right: Vector3) -> Vector3:
+	right = Vector3(right.x, 0, right.z).normalized()
+	if right == Vector3.ZERO:
+		right = Vector3.RIGHT
+	var fwd := Vector3(-right.z, 0, right.x)
+	var r: Rect2 = ModelLibrary.building(selected_id)["base"]
+	var step := maxf(r.size.x, r.size.y) + 0.4
+	for k: float in [1.0, 2.0]:
+		for dir: Vector3 in [right, -right, fwd, -fwd]:
+			var t := p + dir * step * k
+			t = Vector3(snappedf(t.x, GRID), 0, snappedf(t.z, GRID))
+			var check := _validate(t, _yaw)
+			# Нехватка ресурсов — не помеха месту.
+			if check["reason"] == "" or check["reason"].begins_with("Не хватает"):
+				t.y = check["y"]
+				return t
+	var t := p + right * step
+	t.y = chunk_manager.get_height(t.x, t.z)
+	return t
+
+
+## Мешает ли другая постройка на суше. Сталкиваются пятна у земли (без свесов крыш,
+## козырьков и вывесок): мелочь встаёт вплотную к стенам и друг к другу. Два высоких
+## здания сравниваются целиком — иначе их крыши вошли бы одна в другую.
+func _blocked(target: Vector3, angle: float, shrink: float) -> bool:
+	var group: String = GameData.BUILDINGS[selected_id].get("group", "")
+	var tall := _is_tall(selected_id)
+	var base := Building.base_obb_for(selected_id, target, angle, shrink)
+	var full := Building.obb_for(selected_id, target, angle, shrink)
+	for b in buildings:
+		if not is_instance_valid(b) or b == moving or b.id == "platform":
+			continue
+		if group in OVERLAP_GROUPS and GameData.BUILDINGS[b.id].get("group", "") == group:
+			continue
+		if tall and _is_tall(b.id):
+			if Building.obb_overlap(full, b.obb()):
+				return true
+		elif Building.obb_overlap(base, Building.base_obb_for(b.id, b.position, b.yaw)):
+			return true
+	return false
+
+
+static func _is_tall(id: String) -> bool:
+	return (ModelLibrary.building(id)["bounds"] as AABB).end.y > 2.2
 
 
 func _overlaps(box: Dictionary, mode: String) -> bool:

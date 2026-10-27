@@ -272,6 +272,10 @@ func confirm_build() -> void:
 	Platform.haptic(0.7)
 	if was_moving:
 		set_tool(Tool.EDIT)
+	elif _touch_anchor != null and building_system.selected_id != "":
+		# Следующая постройка — рядом, а не поверх только что поставленной.
+		# (Мышью место выбирают сами, а на экране призрак стоит, где стоял.)
+		_touch_anchor = building_system.free_spot_near(_touch_anchor, camera_rig.camera.global_basis.x)
 
 
 ## Дорожка: первая плитка сразу, дальше — следом за мышью или пальцем.

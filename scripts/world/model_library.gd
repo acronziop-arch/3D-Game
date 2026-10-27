@@ -152,6 +152,8 @@ static func building(id: String) -> Dictionary:
 		data["bounds"] = (data["mesh"] as Mesh).get_aabb()
 		data["materials"] = [] as Array[String]
 		data["plant"] = plant
+		var pb: AABB = data["bounds"]
+		data["base"] = Rect2(pb.position.x, pb.position.z, pb.size.x, pb.size.z)
 		_buildings[id] = data
 		return data
 	var path := "res://models/buildings/%s.glb" % id
@@ -190,6 +192,8 @@ static func building(id: String) -> Dictionary:
 				mats.append(n)
 	data["bounds"] = box
 	data["materials"] = mats
+	# Пятно у земли (без свесов крыш) — по нему постройки ставятся вплотную.
+	data["base"] = Footprints.BASE.get(id, Rect2(box.position.x, box.position.z, box.size.x, box.size.z))
 	_buildings[id] = data
 	return data
 

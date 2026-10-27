@@ -12,15 +12,27 @@ const GD := preload("res://scripts/autoload/game_data.gd")
 
 func _init() -> void:
 	var only := OS.get_cmdline_user_args()
+	# `-- --footprints` — только пересчитать пятна построек, модели не трогать.
+	if "--footprints" in only:
+		var footprints := {}
+		for id: String in GD.BUILDINGS:
+			if not GD.BUILDINGS[id].has("plant"):
+				footprints[id] = _footprint(BuildingFactory.build(id)["static"])
+		_save_footprints(footprints)
+		print("Пятна построек: %d" % footprints.size())
+		quit()
+		return
 	for dir in ["res://models/buildings", "res://models/props", "res://models/fish"]:
 		DirAccess.make_dir_recursive_absolute(dir)
 	var total := 0
+	var footprints: Dictionary = Footprints.BASE.duplicate()
 	for id: String in GD.BUILDINGS:
 		if not only.is_empty() and not id in only:
 			continue
 		if GD.BUILDINGS[id].has("plant"):
 			continue
-		total += _export_building(id)
+		total += _export_building(id, footprints)
+	_save_footprints(footprints)
 	for id: String in PropFactory.VARIANTS:
 		if not only.is_empty() and not id in only:
 			continue
@@ -40,10 +52,11 @@ func _init() -> void:
 	quit()
 
 
-func _export_building(id: String) -> int:
+func _export_building(id: String, footprints: Dictionary) -> int:
 	var data := BuildingFactory.build(id)
 	var g: Geo = data["static"]
 	g.encode_stages()
+	footprints[id] = _footprint(g)
 	var root := Node3D.new()
 	root.name = id
 	_add_mesh(root, "Full", g.build_mesh())
@@ -62,6 +75,26 @@ func _export_building(id: String) -> int:
 	_save(root, "res://models/buildings/%s.glb" % id)
 	print("%-14s %6d треугольников" % [id, tris])
 	return tris
+
+
+## Пятно у земли: у низкой мелочи (бочки, скамья) — вся модель, у зданий — до 0.6 м.
+static func _footprint(g: Geo) -> Rect2:
+	return g.base_rect(INF if g.aabb().end.y < 1.6 else 0.6)
+
+
+## Пятна построек у земли — в scripts/models/footprints.gd (по ним проверяется,
+## не стоят ли постройки друг в друге; читать вершины из моделей в игре дорого).
+func _save_footprints(footprints: Dictionary) -> void:
+	var ids := footprints.keys()
+	ids.sort()
+	var lines := PackedStringArray()
+	for id: String in ids:
+		var r: Rect2 = footprints[id]
+		lines.append('\t"%s": Rect2(%.3f, %.3f, %.3f, %.3f),' % [id, r.position.x, r.position.y, r.size.x, r.size.y])
+	var f := FileAccess.open("res://scripts/models/footprints.gd", FileAccess.WRITE)
+	f.store_string("class_name Footprints\nextends RefCounted\n## Пятна построек у земли (XZ, в координатах модели): без свесов крыш, вывесок\n" +
+		"## и козырьков. Файл пишет tools/export_models.gd — руками не править.\n\nconst BASE := {\n" +
+		"\n".join(lines) + "\n}\n")
 
 
 func _add_mesh(parent: Node, node_name: String, mesh: Mesh) -> MeshInstance3D:

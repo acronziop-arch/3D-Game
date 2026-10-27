@@ -71,6 +71,14 @@ static func obb_for(building_id: String, pos: Vector3, angle: float, grow := 0.0
 	return {"c": Vector2(c.x, c.z), "h": half.max(Vector2.ONE * 0.05), "a": angle}
 
 
+## То же по пятну у земли (без свесов крыш, козырьков и вывесок).
+static func base_obb_for(building_id: String, pos: Vector3, angle: float, grow := 0.0) -> Dictionary:
+	var r: Rect2 = ModelLibrary.building(building_id)["base"]
+	var c := pos + Basis(Vector3.UP, angle) * Vector3(r.get_center().x, 0, r.get_center().y)
+	var half := r.size * 0.5 + Vector2.ONE * grow
+	return {"c": Vector2(c.x, c.z), "h": half.max(Vector2.ONE * 0.05), "a": angle}
+
+
 static func _obb_axes(o: Dictionary) -> Array[Vector2]:
 	var a: float = o["a"]
 	# Поворот вокруг Y на угол a: локальная X — (cos, -sin), локальная Z — (sin, cos) в плоскости XZ.

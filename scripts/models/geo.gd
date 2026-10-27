@@ -400,6 +400,27 @@ func aabb() -> AABB:
 	return box
 
 
+## Пятно модели у земли (XZ): по вершинам не выше max_y. Свесы крыш, вывески и козырьки
+## сюда не входят — по пятну проверяется, не стоят ли постройки друг в друге.
+func base_rect(max_y: float) -> Rect2:
+	var rect := Rect2()
+	var first := true
+	for mat: String in _surfaces:
+		for v: Vector3 in _surfaces[mat]["v"]:
+			if v.y > max_y:
+				continue
+			var p := Vector2(v.x, v.z)
+			if first:
+				rect = Rect2(p, Vector2.ZERO)
+				first = false
+			else:
+				rect = rect.expand(p)
+	if first:
+		var box := aabb()
+		return Rect2(box.position.x, box.position.z, box.size.x, box.size.z)
+	return rect
+
+
 static func _material_stub(mat: String) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.resource_name = mat
