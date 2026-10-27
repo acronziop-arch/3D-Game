@@ -4,7 +4,10 @@ extends Node3D
 ## ложится ровная лента — не из плиток. Линия сглаживается, лента повторяет
 ## рельеф, концы скруглены, узор рисует шейдер path.gdshader. Трава под дорожкой
 ## убирается. Дорожки хранятся в WorldState.paths:
-##   {"type": "dirt" | "wood" | "stone" | "brick", "points": PackedVector2Array, "width": float}
+##   {"type": "dirt" | "wood" | "stone" | "brick", "points": PackedVector2Array, "width": float,
+##    "layer": int — порядок: где дорожки перекрываются, видна та, у которой слой выше}
+## Новая дорожка ложится под старые, которые пересекает: она обрывается ровно по их
+## краю. Начатая у конца дорожки того же вида — продолжает её, без шва в узоре.
 
 const WIDTH := 1.6
 ## Шаг записи точек за пальцем и шаг ленты, м.
@@ -12,6 +15,10 @@ const RECORD_STEP := 0.6
 const MESH_STEP := 0.35
 const LIFT := 0.045
 const KINDS := {"dirt": 0, "wood": 1, "stone": 2, "brick": 3}
+## Порядок отрисовки дорожек (render_priority): все — раньше воды, кольца кисти и огня;
+## у старших слоёв — позже, то есть поверх. Рисуемая сейчас — под всеми.
+const PRIORITY_TOP := -40
+const PRIORITY_DRAWING := -100
 ## Сколько метров дорожки даёт одна «плитка» стоимости.
 const METERS_PER_COST := 2.0
 
@@ -29,6 +36,8 @@ var _length := 0.0
 ## До какой точки рисуемой дорожки трава уже убрана.
 var _faded_upto := 0
 var _selected := -1
+## Дорожка того же вида, которую сейчас продолжают (−1 — рисуется новая).
+var _continuing := -1
 
 
 ## Стоимость участка дорожки (как у плитки того же вида).
@@ -36,14 +45,21 @@ static func cost_of(path_type: String) -> Dictionary:
 	return GameData.BUILDINGS["path_" + path_type]["cost"]
 
 
-func material_for(path_type: String) -> ShaderMaterial:
-	if not _materials.has(path_type):
+func material_for(path_type: String, priority := PRIORITY_TOP) -> ShaderMaterial:
+	var key := "%s:%d" % [path_type, priority]
+	if not _materials.has(key):
 		var m := ShaderMaterial.new()
 		m.shader = load("res://shaders/path.gdshader")
 		m.set_shader_parameter("kind", KINDS.get(path_type, 0))
 		m.set_shader_parameter("width", WIDTH)
-		_materials[path_type] = m
-	return _materials[path_type]
+		m.render_priority = priority
+		_materials[key] = m
+	return _materials[key]
+
+
+## Материал дорожки из WorldState.paths с её местом в порядке перекрытия.
+func _material_of(entry: Dictionary) -> ShaderMaterial:
+	return material_for(entry["type"], PRIORITY_TOP + maxi(int(entry.get("layer", 0)), PRIORITY_DRAWING - PRIORITY_TOP + 1))
 
 
 # --- Рисование ------------------------------------------------------------------------------
@@ -63,12 +79,66 @@ func begin(path_type: String, at: Vector3) -> String:
 	_length = 0.0
 	_paid_meters = 0.0
 	_preview = MeshInstance3D.new()
-	_preview.material_override = material_for(_type)
+	_preview.material_override = material_for(_type, PRIORITY_DRAWING)
 	_preview.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_preview.layers = Chunk.DETAIL_LAYER
 	add_child(_preview)
 	_faded_upto = 0
+	# Начали у конца дорожки того же вида — продолжаем её (одна лента, узор без шва).
+	_continuing = _end_near(path_type, Vector2(at.x, at.z))
+	if _continuing >= 0:
+		var pts: PackedVector2Array = WorldState.paths[_continuing]["points"]
+		if pts[0].distance_to(Vector2(at.x, at.z)) < pts[pts.size() - 1].distance_to(Vector2(at.x, at.z)):
+			pts = pts.duplicate()
+			pts.reverse()
+		_points = pts.duplicate()
+		_faded_upto = _points.size()
+		if is_instance_valid(_meshes[_continuing]):
+			_meshes[_continuing].visible = false
+		_preview.material_override = _material_of(WorldState.paths[_continuing])
+		_rebuild_preview()
+	else:
+		_points[0] = _onto_path(_points[0])
 	return ""
+
+
+## Точка на другой дорожке переносится на её середину: тогда скруглённый конец новой
+## дорожки целиком уходит под старую, и новая начинается ровно от её края.
+func _onto_path(p: Vector2, skip := -1) -> Vector2:
+	var best := p
+	var best_d := INF
+	for i in WorldState.paths.size():
+		if i == skip:
+			continue
+		var entry: Dictionary = WorldState.paths[i]
+		var half := float(entry.get("width", WIDTH)) * 0.5
+		if not _bounds(entry).has_point(p):
+			continue
+		var pts: PackedVector2Array = entry["points"]
+		for k in pts.size() - 1:
+			var q := Geometry2D.get_closest_point_to_segment(p, pts[k], pts[k + 1])
+			var d := q.distance_to(p)
+			if d < half and d < best_d:
+				best_d = d
+				best = q
+	return best
+
+
+## Дорожка вида path_type, конец которой рядом с точкой (−1 — нет такой).
+func _end_near(path_type: String, p: Vector2) -> int:
+	var best := -1
+	var best_d := WIDTH * 0.75
+	for i in WorldState.paths.size():
+		var entry: Dictionary = WorldState.paths[i]
+		if entry["type"] != path_type:
+			continue
+		var pts: PackedVector2Array = entry["points"]
+		for q in [pts[0], pts[pts.size() - 1]]:
+			var d := (q as Vector2).distance_to(p)
+			if d < best_d:
+				best_d = d
+				best = i
+	return best
 
 
 ## Палец ушёл дальше: добавляем точки. Пустая строка — всё хорошо; иначе причина остановки.
@@ -151,16 +221,51 @@ func finish() -> void:
 	if is_instance_valid(_preview):
 		_preview.queue_free()
 	_preview = null
+	var continuing := _continuing
+	_continuing = -1
 	if _points.size() < 2 or _length < 0.3:
-		# Нечаянное касание — дорожки нет.
+		# Нечаянное касание — дорожки нет (продолжаемая остаётся, как была).
 		_points = PackedVector2Array()
+		if continuing >= 0 and is_instance_valid(_meshes[continuing]):
+			_meshes[continuing].visible = true
 		return
-	WorldState.paths.append({"type": _type, "points": _points, "width": WIDTH})
-	var i := WorldState.paths.size() - 1
-	_meshes.append(null)
+	_points[_points.size() - 1] = _onto_path(_points[_points.size() - 1], continuing)
+	var i := continuing
+	if i >= 0:
+		WorldState.paths[i]["points"] = _points
+		_meshes[i].visible = true
+	else:
+		WorldState.paths.append({"type": _type, "points": _points, "width": WIDTH})
+		i = WorldState.paths.size() - 1
+		WorldState.paths[i]["layer"] = _layer_under(i)
+		_meshes.append(null)
 	_build(i)
 	_clear_ground(WorldState.paths[i], null, true)
 	_points = PackedVector2Array()
+
+
+## Слой новой дорожки i: ниже всех более старых, которые она пересекает (слой 0 — верхний).
+func _layer_under(i: int) -> int:
+	var entry: Dictionary = WorldState.paths[i]
+	var layer := 0
+	for k in i:
+		var other: Dictionary = WorldState.paths[k]
+		if _paths_touch(entry, other):
+			layer = mini(layer, int(other.get("layer", 0)) - 1)
+	return layer
+
+
+static func _paths_touch(a: Dictionary, b: Dictionary) -> bool:
+	if not _bounds(a).intersects(_bounds(b)):
+		return false
+	var reach := (float(a.get("width", WIDTH)) + float(b.get("width", WIDTH))) * 0.5
+	var pa: PackedVector2Array = a["points"]
+	var pb: PackedVector2Array = b["points"]
+	for p in pa:
+		for k in pb.size() - 1:
+			if Geometry2D.get_closest_point_to_segment(p, pb[k], pb[k + 1]).distance_to(p) < reach:
+				return true
+	return false
 
 
 func _rebuild_preview() -> void:
@@ -177,6 +282,9 @@ func restore() -> void:
 			m.queue_free()
 	_meshes.clear()
 	for i in WorldState.paths.size():
+		# Старые сохранения слоёв не знали: считаем по порядку постройки.
+		if not WorldState.paths[i].has("layer"):
+			WorldState.paths[i]["layer"] = _layer_under(i)
 		_meshes.append(null)
 		_build(i)
 
@@ -194,7 +302,7 @@ func _build(i: int) -> void:
 	mi.mesh = _mesh_from(arrays)
 	# Вершины остаются под рукой: при выравнивании земли сдвигаются только те, что под кистью.
 	mi.set_meta("arrays", arrays)
-	mi.material_override = material_for(entry["type"])
+	mi.material_override = _material_of(entry)
 
 
 ## Земля под частью дорожки i изменилась: вершины в rect встают на новую высоту.
@@ -301,7 +409,8 @@ func _split(i: int, parts: Array[PackedVector2Array]) -> void:
 	_meshes.remove_at(i)
 	WorldState.paths.remove_at(i)
 	for k in parts.size():
-		WorldState.paths.insert(i + k, {"type": entry["type"], "points": parts[k], "width": entry.get("width", WIDTH)})
+		WorldState.paths.insert(i + k, {"type": entry["type"], "points": parts[k], "width": entry.get("width", WIDTH),
+			"layer": entry.get("layer", 0)})
 		_meshes.insert(i + k, null)
 		_build(i + k)
 
@@ -357,12 +466,16 @@ func pick(at: Vector3) -> int:
 	return best if best_d <= WIDTH * 0.6 else -1
 
 
+## Выделенная дорожка подсвечивается своим же шейдером (параметр highlight): поверх
+## ленты, сдвинутой к камере, отдельный слой подсветки был бы не виден.
 func select(i: int) -> void:
 	if _selected >= 0 and _selected < _meshes.size() and is_instance_valid(_meshes[_selected]):
-		_meshes[_selected].material_overlay = null
+		_meshes[_selected].material_override = _material_of(WorldState.paths[_selected])
 	_selected = i
 	if i >= 0 and i < _meshes.size() and is_instance_valid(_meshes[i]):
-		_meshes[i].material_overlay = Building.highlight_material()
+		var m := _material_of(WorldState.paths[i]).duplicate() as ShaderMaterial
+		m.set_shader_parameter("highlight", 1.0)
+		_meshes[i].material_override = m
 
 
 func selected() -> int:

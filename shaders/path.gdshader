@@ -2,7 +2,10 @@
 // UV — (поперёк, м: от −w/2 до w/2; вдоль, м), UV2 — (сколько до начала, сколько до конца, м).
 // Узор рисует шейдер: утоптанная земля, доски, булыжник или кирпич. Концы скруглены.
 shader_type spatial;
-render_mode diffuse_burley, specular_schlick_ggx, cull_disabled;
+// Дорожки рисуются после непрозрачного мира и не пишут глубину: где они перекрываются,
+// сверху та, что нарисована позже (порядок задаёт render_priority материала) — без мерцания,
+// а здания, трава и холмы их по-прежнему закрывают.
+render_mode diffuse_burley, specular_schlick_ggx, cull_disabled, depth_draw_never;
 
 #include "res://shaders/world.gdshaderinc"
 
@@ -130,4 +133,5 @@ void fragment() {
 	ALBEDO = c;
 	ROUGHNESS = rough;
 	SPECULAR = night_specular(0.3);
+	ALPHA = 1.0;
 }
