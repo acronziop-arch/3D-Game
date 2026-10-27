@@ -190,8 +190,37 @@ func _build(i: int) -> void:
 		mi.layers = Chunk.DETAIL_LAYER
 		add_child(mi)
 		_meshes[i] = mi
-	mi.mesh = build_mesh(entry["points"], entry.get("width", WIDTH))
+	var arrays := build_arrays(entry["points"], entry.get("width", WIDTH))
+	mi.mesh = _mesh_from(arrays)
+	# Вершины остаются под рукой: при выравнивании земли сдвигаются только те, что под кистью.
+	mi.set_meta("arrays", arrays)
 	mi.material_override = material_for(entry["type"])
+
+
+## Земля под частью дорожки i изменилась: вершины в rect встают на новую высоту.
+func _refit(i: int, rect: Rect2) -> void:
+	var mi := _meshes[i]
+	if not is_instance_valid(mi) or not mi.has_meta("arrays") or (mi.get_meta("arrays") as Array).is_empty():
+		_build(i)
+		return
+	var arrays: Array = mi.get_meta("arrays")
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+	# Наклон берётся по точкам в 0.7 м вокруг вершины — их тоже задело.
+	var area := rect.grow(0.8)
+	var changed := false
+	for v in verts.size():
+		var q := Vector2(verts[v].x, verts[v].z)
+		if area.has_point(q):
+			var vert := verts[v]
+			vert.y = chunk_manager.get_height(q.x, q.y) + LIFT
+			verts[v] = vert
+			normals[v] = _ground_normal(q)
+			changed = true
+	if changed:
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		arrays[Mesh.ARRAY_NORMAL] = normals
+		mi.mesh = _mesh_from(arrays)
 
 
 ## Чанк загрузился или земля изменилась: дорожки в нём ложатся на рельеф заново,
@@ -201,7 +230,7 @@ func on_chunk_loaded(chunk: Chunk) -> void:
 	for i in WorldState.paths.size():
 		var entry: Dictionary = WorldState.paths[i]
 		if _bounds(entry).intersects(area):
-			_build(i)
+			_refit(i, area)
 			_clear_ground(entry, chunk)
 
 
@@ -209,6 +238,72 @@ func refresh_area(rect: Rect2) -> void:
 	for i in WorldState.paths.size():
 		if _bounds(WorldState.paths[i]).intersects(rect):
 			_build(i)
+
+
+## Землю выравнивают (несколько раз в секунду, пока идёт мазок): дорожки сразу ложатся
+## на новую поверхность, а там, где земля ушла под воду, дорожка обрывается.
+func on_terrain_changed(rect: Rect2) -> void:
+	for i in range(WorldState.paths.size() - 1, -1, -1):
+		var entry: Dictionary = WorldState.paths[i]
+		if not _bounds(entry).intersects(rect):
+			continue
+		var parts := _dry_parts(entry["points"], rect)
+		if parts.size() == 1 and parts[0].size() == (entry["points"] as PackedVector2Array).size():
+			_refit(i, rect)
+		else:
+			_split(i, parts)
+
+
+## Куски дорожки над водой (точки, где земля ушла под воду, выпадают). Проверяются
+## только точки в rect: вне его земля не менялась, там дорожка и была на суше.
+func _dry_parts(pts: PackedVector2Array, rect: Rect2) -> Array[PackedVector2Array]:
+	var parts: Array[PackedVector2Array] = []
+	var cur := PackedVector2Array()
+	for k in pts.size():
+		var p := pts[k]
+		var wet := rect.has_point(p) and _is_wet(p)
+		if not wet and k > 0:
+			# Узкий проток между двумя точками тоже рвёт дорожку.
+			var m := (p + pts[k - 1]) * 0.5
+			if rect.has_point(m) and _is_wet(m):
+				_keep_part(parts, cur)
+				cur = PackedVector2Array()
+		if wet:
+			_keep_part(parts, cur)
+			cur = PackedVector2Array()
+		else:
+			cur.append(p)
+	_keep_part(parts, cur)
+	return parts
+
+
+func _is_wet(p: Vector2) -> bool:
+	return chunk_manager.get_height(p.x, p.y) < WorldGen.WATER_LEVEL + 0.05
+
+
+static func _keep_part(parts: Array[PackedVector2Array], pts: PackedVector2Array) -> void:
+	if pts.size() < 2:
+		return
+	var length := 0.0
+	for k in pts.size() - 1:
+		length += pts[k].distance_to(pts[k + 1])
+	if length >= 0.3:
+		parts.append(pts)
+
+
+## Дорожка i распалась на куски (часть ушла под воду): вместо неё — куски того же вида.
+func _split(i: int, parts: Array[PackedVector2Array]) -> void:
+	if _selected >= i:
+		select(-1)
+	var entry: Dictionary = WorldState.paths[i]
+	if is_instance_valid(_meshes[i]):
+		_meshes[i].queue_free()
+	_meshes.remove_at(i)
+	WorldState.paths.remove_at(i)
+	for k in parts.size():
+		WorldState.paths.insert(i + k, {"type": entry["type"], "points": parts[k], "width": entry.get("width", WIDTH)})
+		_meshes.insert(i + k, null)
+		_build(i + k)
 
 
 static func _bounds(entry: Dictionary) -> Rect2:
@@ -338,11 +433,24 @@ static func _smooth(raw: PackedVector2Array) -> PackedVector2Array:
 
 ## Лента шириной width вдоль точек: 5 вершин поперёк, высота — по земле.
 func build_mesh(raw: PackedVector2Array, width: float) -> ArrayMesh:
-	if raw.size() < 2:
+	return _mesh_from(build_arrays(raw, width))
+
+
+static func _mesh_from(arrays: Array) -> ArrayMesh:
+	if arrays.is_empty():
 		return null
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## Массивы ленты для ArrayMesh (пустой — дорожка слишком короткая).
+func build_arrays(raw: PackedVector2Array, width: float) -> Array:
+	if raw.size() < 2:
+		return []
 	var pts := _smooth(raw)
 	if pts.size() < 2:
-		return null
+		return []
 	var half := width * 0.5
 	# Продлеваем концы на полширины — туда шейдер рисует скругления.
 	var t0 := (pts[1] - pts[0]).normalized()
@@ -390,9 +498,7 @@ func build_mesh(raw: PackedVector2Array, width: float) -> ArrayMesh:
 	arrays[Mesh.ARRAY_TEX_UV] = uvs
 	arrays[Mesh.ARRAY_TEX_UV2] = uv2s
 	arrays[Mesh.ARRAY_INDEX] = indices
-	var mesh := ArrayMesh.new()
-	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	return mesh
+	return arrays
 
 
 func _ground_normal(q: Vector2) -> Vector3:

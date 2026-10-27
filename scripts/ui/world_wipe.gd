@@ -44,6 +44,22 @@ void fragment() {
 	add_child(_rect)
 
 
+## Подготовка графики: полоса один кадр рисуется уже прошедшей (прозрачной) —
+## шейдер собирается под экраном загрузки, а не при первой смене погоды.
+func warm() -> void:
+	if is_playing():
+		return
+	var img := Image.create(1, 1, false, Image.FORMAT_RGB8)
+	_rect.texture = ImageTexture.create_from_image(img)
+	_material.set_shader_parameter("progress", 1.0)
+	_rect.visible = true
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if _tween == null or not _tween.is_running():
+		_rect.visible = false
+		_rect.texture = null
+
+
 func is_playing() -> bool:
 	return _rect.visible
 

@@ -64,12 +64,17 @@ var _category_buttons := {}
 var _build_grid: Container
 var _build_scroll: SmoothScroll
 var _build_cards := {}
+var _card_styles := {}
 var _category := "production"
 ## Открыта ли лента зданий (на ПК — меню стройки).
 var _drawer_open := false
 var _craft_panel: PanelContainer
 var _craft_scroll: SmoothScroll
 var _craft_rows := {}
+var _drops: ScreenDrops
+var _wipe: WorldWipe
+## Очередь ремесла, которая сейчас нарисована (чтобы не пересобирать её без нужды).
+var _craft_queue_key := "-"
 var _craft_progress: ProgressBar
 var _craft_queue: HBoxContainer
 var _craft_queue_scroll: SmoothScroll
@@ -107,7 +112,8 @@ func _ready() -> void:
 	add_child(thumbnails)
 	thumbnails.thumbnail_ready.connect(_on_thumbnail)
 	# Капли дождя и снежинки на экране — под всем интерфейсом.
-	_root.add_child(ScreenDrops.new())
+	_drops = ScreenDrops.new()
+	_root.add_child(_drops)
 	# Надписи над миром — самый нижний слой интерфейса.
 	_labels = WorldLabels.new()
 	_root.add_child(_labels)
@@ -139,11 +145,11 @@ func _ready() -> void:
 		show_message("Мир сохранён" if WorldState.save_game() else "Не удалось сохранить"))
 	_settings.menu_requested.connect(func() -> void: menu_requested.emit())
 	# Время, сезон и погода из настроек меняются сразу — за косой чёрной полосой.
-	var wipe := WorldWipe.new()
-	add_child(wipe)
+	_wipe = WorldWipe.new()
+	add_child(_wipe)
 	Settings.changed.connect(func(key: String) -> void:
 		if key in ["time_mode", "season_mode", "weather_mode"] and Settings.get_value(key) != "auto":
-			wipe.play(Weather.snap_to_settings))
+			_wipe.play(Weather.snap_to_settings))
 	# Сообщения — поверх всех окон, чтобы их было видно и при открытых настройках.
 	_build_toast()
 	_build_loading()
@@ -161,6 +167,41 @@ func _ready() -> void:
 	thumbnails.request(GameData.BUILDINGS.keys())
 	Platform.layout_changed.connect(_apply_layout)
 	_apply_layout.call_deferred()
+
+
+## Подготовка под экраном загрузки (шаги для ShaderWarmup): каждое окно один кадр
+## рисуется целиком — текст раскладывается, буквы нужных размеров попадают в кэш шрифта,
+## значки и рамки — в видеопамять; собираются шейдеры капель и смены погоды. Тогда
+## первое открытие окна в игре не подтормаживает.
+func warmup_steps() -> Array[Callable]:
+	var steps: Array[Callable] = []
+	var panels: Array[Control] = [_build_panel, _craft_panel, _all_panel, _settings, _map_panel]
+	for i in panels.size() + 1:
+		steps.append(func() -> Variant:
+			if i > 0:
+				_warm_panel(panels[i - 1], false)
+			if i < panels.size():
+				_warm_panel(panels[i], true)
+			return null)
+	steps.append(func() -> Variant:
+		_drops.warm()
+		_wipe.warm()
+		return null)
+	return steps
+
+
+func _warm_panel(panel: Control, shown: bool) -> void:
+	if panel == _build_panel:
+		# Все карточки сразу, а не только открытой вкладки.
+		for id: String in _build_cards:
+			_build_cards[id]["button"].visible = shown or GameData.BUILDINGS[id]["category"] == _category
+	elif panel == _settings and shown:
+		_settings.open()
+	elif panel == _map_panel and shown:
+		_map_panel.open()
+	UiStyle.fade_now(panel, shown)
+	if panel == _craft_panel and shown:
+		_refresh_crafting()
 
 
 func bind(target: Interaction) -> void:
@@ -648,6 +689,12 @@ func _build_build_panel() -> void:
 	_build_grid.add_theme_constant_override("separation", _px(8, 6))
 	box.add_child(_build_scroll)
 	_build_scroll.add_child(_build_grid)
+	# Карточки чуть прозрачные — сквозь них виден рисунок фона меню.
+	_card_styles = {
+		"normal": UiStyle.box(Color(UiStyle.SURFACE, 0.72), 14, 8),
+		"selected": UiStyle.box(UiStyle.BRAND.lightened(0.35), 14, 8, 2, UiStyle.BRAND_DARK),
+		"disabled": UiStyle.box(Color(UiStyle.SURFACE, 0.55), 14, 8),
+	}
 	for id: String in GameData.BUILDINGS:
 		_build_cards[id] = _make_card(id)
 		_build_grid.add_child(_build_cards[id]["button"])
@@ -706,7 +753,22 @@ func _make_card(id: String) -> Dictionary:
 	cost.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cost.custom_minimum_size.x = w - 14.0
 	box.add_child(cost)
-	return {"button": b, "thumb": thumb, "cost": cost, "time": time_label}
+	# Строка стоимости собирается один раз; при обновлении меняется только цвет чисел.
+	var cost_labels := {}
+	for res: String in def["cost"]:
+		var item := HBoxContainer.new()
+		item.add_theme_constant_override("separation", 1)
+		item.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		item.add_child(UiStyle.icon_rect(res, int(_px(16, 14))))
+		var l := UiStyle.label(str(def["cost"][res]), int(_px(14, 12)), UiStyle.TEXT, 800)
+		item.add_child(l)
+		cost.add_child(item)
+		cost_labels[res] = l
+	if def["cost"].is_empty():
+		cost.add_child(UiStyle.label("бесплатно", int(_px(13, 11)), UiStyle.MUTED, 800))
+	b.add_theme_stylebox_override("normal", _card_styles["normal"])
+	b.add_theme_stylebox_override("disabled", _card_styles["disabled"])
+	return {"button": b, "thumb": thumb, "cost_labels": cost_labels, "time": time_label, "state": {}}
 
 
 func _on_thumbnail(id: String, tex: Texture2D) -> void:
@@ -714,8 +776,12 @@ func _on_thumbnail(id: String, tex: Texture2D) -> void:
 		_build_cards[id]["thumb"].texture = tex
 
 
+## Карточки меню стройки. Пока меню закрыто, ничего не делаем (ресурсы меняются часто —
+## каждая добыча), а при открытии обновляем; меняются только цвета и подписи, без новых узлов.
 func _refresh_build_cards() -> void:
 	if _build_cards.is_empty():
+		return
+	if not _drawer_open:
 		return
 	var creative := GameMode.is_creative()
 	for id: String in _build_cards:
@@ -725,31 +791,26 @@ func _refresh_build_cards() -> void:
 		b.visible = def["category"] == _category
 		if not b.visible:
 			continue
-		var holder: HFlowContainer = card["cost"]
-		for c in holder.get_children():
-			c.queue_free()
-		for res: String in def["cost"]:
-			var item := HBoxContainer.new()
-			item.add_theme_constant_override("separation", 1)
-			item.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			item.add_child(UiStyle.icon_rect(res, int(_px(16, 14))))
+		var state: Dictionary = card["state"]
+		var labels: Dictionary = card["cost_labels"]
+		for res: String in labels:
 			var enough := creative or Inventory.count(res) >= int(def["cost"][res])
-			item.add_child(UiStyle.label(str(def["cost"][res]), int(_px(14, 12)), UiStyle.TEXT if enough else UiStyle.BAD, 800))
-			holder.add_child(item)
-		if def["cost"].is_empty():
-			holder.add_child(UiStyle.label("бесплатно", int(_px(13, 11)), UiStyle.MUTED, 800))
+			if state.get(res) != enough:
+				state[res] = enough
+				(labels[res] as Label).add_theme_color_override("font_color", UiStyle.TEXT if enough else UiStyle.BAD)
 		var affordable := Inventory.has_all(def["cost"])
 		var time_label: Label = card["time"]
 		# Чего не хватает — видно прямо на карточке, а выбрать её нельзя.
 		time_label.text = ("сразу" if creative or def["time"] <= 0.0 else "%d с" % ceili(def["time"])) if affordable else "Не хватает"
-		time_label.add_theme_color_override("font_color", UiStyle.MUTED if affordable else UiStyle.BAD)
+		if state.get("affordable") != affordable:
+			state["affordable"] = affordable
+			time_label.add_theme_color_override("font_color", UiStyle.MUTED if affordable else UiStyle.BAD)
+			b.disabled = not affordable
+			b.modulate = Color.WHITE if affordable else Color(1, 1, 1, 0.62)
 		var selected := interaction != null and interaction.building_system.selected_id == id
-		b.disabled = not affordable
-		# Карточки чуть прозрачные — сквозь них виден рисунок фона меню.
-		b.add_theme_stylebox_override("normal", UiStyle.box(UiStyle.BRAND.lightened(0.35) if selected else Color(UiStyle.SURFACE, 0.72), 14, 8,
-			2 if selected else 0, UiStyle.BRAND_DARK))
-		b.add_theme_stylebox_override("disabled", UiStyle.box(Color(UiStyle.SURFACE, 0.55), 14, 8))
-		b.modulate = Color.WHITE if affordable else Color(1, 1, 1, 0.62)
+		if state.get("selected") != selected:
+			state["selected"] = selected
+			b.add_theme_stylebox_override("normal", _card_styles["selected" if selected else "normal"])
 
 
 # --- Ремесло --------------------------------------------------------------------------------------
@@ -825,7 +886,12 @@ func _build_craft_panel() -> void:
 		info.add_theme_constant_override("separation", 2 if not _touch else 0)
 		var formula := HBoxContainer.new()
 		formula.add_theme_constant_override("separation", 6)
-		var ins := HBoxContainer.new()
+		var ins := UiStyle.cost_row(r["in"], int(_px(20, 18)))
+		var in_labels := {}
+		var k := 0
+		for res: String in r["in"]:
+			in_labels[res] = ins.get_child(k).get_child(1)
+			k += 1
 		formula.add_child(ins)
 		formula.add_child(UiStyle.icon_rect("arrow", 18))
 		formula.add_child(UiStyle.cost_row(r["out"], int(_px(20, 18)), false))
@@ -847,28 +913,41 @@ func _build_craft_panel() -> void:
 				Platform.haptic(0.3))
 		line.add_child(b)
 		rows.add_child(row)
-		_craft_rows[id] = {"button": b, "sub": sub, "ins": ins}
+		_craft_rows[id] = {"button": b, "sub": sub, "in_labels": in_labels, "state": {}}
 
 
+## Окно ремесла. Как и меню стройки, обновляется, только когда открыто, и без новых
+## узлов: меняются подписи и цвета. Очередь пересобирается, только если она изменилась.
 func _refresh_crafting() -> void:
 	if _craft_rows.is_empty():
+		return
+	if not _craft_panel.get_meta("fade_target", false):
 		return
 	for id: String in _craft_rows:
 		var r: Dictionary = GameData.RECIPES[id]
 		var row: Dictionary = _craft_rows[id]
+		var state: Dictionary = row["state"]
 		var reason := Crafting.check(id)
 		var station: String = GameData.BUILDINGS[r["station"]]["name"]
 		var time_text := "сразу" if GameMode.is_creative() else "%d с" % r["time"]
 		row["sub"].text = "%s · %s%s" % [station, time_text, "" if reason == "" else " · " + reason]
-		row["sub"].add_theme_color_override("font_color", UiStyle.MUTED if reason == "" else UiStyle.BAD)
-		row["button"].disabled = reason != ""
-		var ins: HBoxContainer = row["ins"]
-		for c in ins.get_children():
-			c.queue_free()
-		ins.add_child(UiStyle.cost_row(r["in"], int(_px(20, 18))))
+		if state.get("ok") != (reason == ""):
+			state["ok"] = reason == ""
+			row["sub"].add_theme_color_override("font_color", UiStyle.MUTED if reason == "" else UiStyle.BAD)
+			row["button"].disabled = reason != ""
+		var labels: Dictionary = row["in_labels"]
+		for res: String in labels:
+			var enough := Inventory.count(res) >= int(r["in"][res])
+			if state.get(res) != enough:
+				state[res] = enough
+				(labels[res] as Label).add_theme_color_override("font_color", UiStyle.TEXT if enough else UiStyle.BAD)
+	var groups := Crafting.grouped()
+	var key := str(groups)
+	if key == _craft_queue_key:
+		return
+	_craft_queue_key = key
 	for c in _craft_queue.get_children():
 		c.queue_free()
-	var groups := Crafting.grouped()
 	if groups.is_empty():
 		_craft_status.text = "Очередь пуста"
 	else:
@@ -1328,11 +1407,12 @@ func _place_labels() -> void:
 ## Раз в четверть секунды: не ушли ли мы далеко от мастерских (рецепты блокируются).
 func _refresh_craft_status() -> void:
 	var paused := Crafting.is_paused()
-	if paused and not _craft_status.text.begins_with("Пауза"):
+	if paused != _craft_status.text.begins_with("Пауза"):
+		# Подпись очереди пишется заново вместе с очередью.
+		_craft_queue_key = "-"
 		_refresh_crafting()
-		_craft_status.text = "Пауза — мастерская далеко:"
-	elif not paused and _craft_status.text.begins_with("Пауза"):
-		_refresh_crafting()
+		if paused:
+			_craft_status.text = "Пауза — мастерская далеко:"
 	for id: String in _craft_rows:
 		var reason := Crafting.check(id)
 		if (reason != "") != (_craft_rows[id]["button"] as Button).disabled:

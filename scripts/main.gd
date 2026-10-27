@@ -20,6 +20,8 @@ var _perf_frames := 0
 var _perf_grace := 10.0
 var _warmup: ShaderWarmup
 var _world_ready := false
+## Модели ещё подгружаются в фоне (ModelLibrary.preload_step).
+var _preloading_models := false
 var _normal_chunk_pace := []
 ## JS-функция «страницу спрятали» (в браузере): держим ссылку, чтобы её не собрал сборщик мусора.
 var _on_page_hide: JavaScriptObject
@@ -45,6 +47,12 @@ func _ready() -> void:
 		# мир строится в главном потоке, по чанку за кадр.
 		chunk_manager.use_threads = false
 		chunk_manager.max_tasks_in_flight = 1
+	elif Platform.threaded():
+		# Потоки есть: стартовый кусок мира больше, пройденное держим загруженным дольше,
+		# новые чанки строятся сразу в нескольких потоках.
+		chunk_manager.initial_radius = 4
+		chunk_manager.keep_margin = 3
+		chunk_manager.max_tasks_in_flight = maxi(chunk_manager.max_tasks_in_flight, 4)
 	chunk_manager.chunk_loaded.connect(building_system.on_chunk_loaded)
 	chunk_manager.chunk_loaded.connect(Minimap.explore)
 	chunk_manager.chunk_loaded.connect(water.write_flow)
@@ -53,6 +61,9 @@ func _ready() -> void:
 	_paths.chunk_manager = chunk_manager
 	add_child(_paths)
 	chunk_manager.chunk_loaded.connect(_paths.on_chunk_loaded)
+	# Землю выравнивают: здания и дорожки встают на неё сразу, во время мазка.
+	chunk_manager.terrain_changed.connect(building_system.reground_area)
+	chunk_manager.terrain_changed.connect(_paths.on_terrain_changed)
 	# После пересева травы в чанке снова убираем её под зданиями и дорожками.
 	chunk_manager.building_hook = func(chunk: Chunk) -> void:
 		building_system.on_chunk_loaded(chunk)
@@ -104,6 +115,19 @@ func _ready() -> void:
 	_warmup = ShaderWarmup.new()
 	_warmup.name = "ShaderWarmup"
 	_warmup.steps = _warmup_steps()
+	# Солнце и луна: день, сумерки, ночь (дальше их снова ведёт Atmosphere).
+	var moon: DirectionalLight3D = atmosphere.moon
+	_warmup.light_setups = [
+		func() -> void:
+			sun.visible = true
+			moon.visible = false,
+		func() -> void:
+			sun.visible = true
+			moon.visible = true,
+		func() -> void:
+			sun.visible = false
+			moon.visible = true,
+	]
 	_warmup.progress.connect(func(f: float) -> void: _report_loading(f * WARMUP_SHARE, "Готовим графику…"))
 	_warmup.finished.connect(_on_warmup_done)
 	add_child(_warmup)
@@ -147,7 +171,7 @@ func _start_world() -> void:
 	# Под экраном загрузки рывки не видны — стартовый кусок мира строим быстрее.
 	_normal_chunk_pace = [chunk_manager.finalize_per_frame, chunk_manager.max_tasks_in_flight]
 	chunk_manager.finalize_per_frame = 4
-	chunk_manager.max_tasks_in_flight = maxi(chunk_manager.max_tasks_in_flight, 4)
+	chunk_manager.max_tasks_in_flight = maxi(chunk_manager.max_tasks_in_flight, 6 if Platform.threaded() else 4)
 	chunk_manager.running = true
 	_report_loading(WARMUP_SHARE, "Строим мир…")
 
@@ -172,11 +196,27 @@ func _warmup_steps() -> Array[Callable]:
 		func() -> Variant: return ShaderWarmup.multimesh(ModelLibrary.fish_material(), false, true, false),
 		func() -> Variant: return Interaction.make_ring(Color.WHITE),
 		func() -> Variant: return Fire.new(),
-		# Вода — последней: её шейдер самый тяжёлый.
+		# Всё, что впервые появляется уже в игре: выделение, всплески и пыль стройки,
+		# искры сундука, метки, вода на рисовой грядке, дождь, снег и листопад.
+		func() -> Variant: return ShaderWarmup.quad(Building.highlight_material(), false),
+		func() -> Variant:
+			var burst := Fx.burst_node(Color.WHITE, 2)
+			burst.emitting = true
+			return burst,
+		func() -> Variant: return ShaderWarmup.cpu_particles(Chest.sparkle_material(Color.WHITE)),
+		func() -> Variant: return ShaderWarmup.quad(Markers.pole_material()),
+		func() -> Variant: return ShaderWarmup.quad(Markers.flag_material(Color.WHITE)),
+		func() -> Variant: return ShaderWarmup.quad(CropPatch.rice_water(), false),
+		func() -> Variant: return atmosphere.warmup_node(),
+		# Вода — последней: её шейдер самый тяжёлый. Сначала кусочек при разном
+		# освещении (как у остальных материалов), потом — сама водная гладь.
+		func() -> Variant: return ShaderWarmup.quad(water.material_override, false),
 		func() -> Variant:
 			water.visible = true
 			return null,
 	]
+	# Окна интерфейса, капли на экране и смена погоды.
+	steps.append_array(hud.warmup_steps())
 	return steps
 
 
@@ -197,6 +237,10 @@ func _on_world_ready() -> void:
 	building_system.restore_from_save()
 	_paths.restore()
 	_markers.refresh()
+	# С потоками остальные модели подгружаются в фоне, без рывков в игре.
+	if Platform.threaded():
+		ModelLibrary.begin_preload()
+		_preloading_models = true
 	_report_loading(1.0, "Готово!")
 	hud.hide_loading()
 	if OS.has_feature("web"):
@@ -365,6 +409,8 @@ func _process(delta: float) -> void:
 		return
 	WorldState.camera_state = camera_rig.get_state()
 	_watch_performance(delta)
+	if _preloading_models:
+		_preloading_models = ModelLibrary.preload_step()
 	_autosave -= delta
 	if _autosave <= 0.0:
 		_autosave = AUTOSAVE_INTERVAL_WEB if Platform.is_web else AUTOSAVE_INTERVAL

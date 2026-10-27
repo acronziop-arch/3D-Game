@@ -28,6 +28,9 @@ static var _materials := {}
 static var _terrain_material: ShaderMaterial
 static var _foliage_material: ShaderMaterial
 static var _fish_material: ShaderMaterial
+## Фоновая подгрузка моделей (см. begin_preload): ещё в очереди и грузятся сейчас.
+static var _preload_queue: Array[String] = []
+static var _preloading: Array[String] = []
 
 
 static func terrain_material() -> ShaderMaterial:
@@ -75,6 +78,50 @@ static func _first_mesh(path: String) -> Mesh:
 		break
 	node.free()
 	return found
+
+
+## Модели зданий, деревьев, камней и рыб с диска загружаются заранее, в фоновых потоках:
+## иначе первое здание каждого вида (или редкие руины) грузилось бы прямо в игре — с рывком.
+static func begin_preload() -> void:
+	_preload_queue.clear()
+	for dir: String in ["res://models/buildings/", "res://models/props/", "res://models/fish/"]:
+		for f: String in ResourceLoader.list_directory(dir):
+			if f.get_extension() != "glb":
+				continue
+			# Уже разобранные (то, что есть вокруг) не грузим второй раз.
+			var file := f.get_basename()
+			if _buildings.has(file) or _meshes.has(file) or _meshes.has("fish_" + file):
+				continue
+			_preload_queue.append(dir + f)
+
+
+## Вызывается каждый кадр: в фоне грузятся не больше двух моделей сразу (потоки нужны
+## и миру), готовая сразу разбирается в кэш. false — всё загружено.
+static func preload_step() -> bool:
+	for path: String in _preloading.duplicate():
+		var status := ResourceLoader.load_threaded_get_status(path)
+		if status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+			continue
+		_preloading.erase(path)
+		if status != ResourceLoader.THREAD_LOAD_LOADED:
+			continue
+		# Пока ссылка на сцену жива, load() внутри берёт её из кэша.
+		var _scene := ResourceLoader.load_threaded_get(path)
+		var file := path.get_file().get_basename()
+		if path.begins_with("res://models/buildings/"):
+			if GD.BUILDINGS.has(file):
+				building(file)
+		elif path.begins_with("res://models/fish/"):
+			fish_mesh(file)
+		else:
+			var cut := file.rfind("_")
+			if cut > 0 and file.substr(cut + 1).is_valid_int():
+				prop_mesh(file.left(cut), int(file.substr(cut + 1)))
+	while _preloading.size() < 2 and not _preload_queue.is_empty():
+		var next: String = _preload_queue.pop_back()
+		if ResourceLoader.load_threaded_request(next) == OK:
+			_preloading.append(next)
+	return not (_preload_queue.is_empty() and _preloading.is_empty())
 
 
 static func prop_mesh(id: String, variant: int) -> Mesh:

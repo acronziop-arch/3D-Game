@@ -14,6 +14,10 @@ static var _ghost_material: ShaderMaterial
 static var ground_height: Callable
 static var _ghost_opening_material: ShaderMaterial
 static var _highlight_material: StandardMaterial3D
+## Поверхности мешей, которые ложатся по земле: Mesh -> Array (см. _conform).
+static var _surface_cache := {}
+## Леса по видам зданий: id -> Mesh.
+static var _scaffold_meshes := {}
 
 var id := ""
 ## Поворот вокруг вертикали, радианы (любой угол).
@@ -158,8 +162,16 @@ static func highlight_material() -> StandardMaterial3D:
 func _conform(mesh: Mesh) -> ArrayMesh:
 	var out := ArrayMesh.new()
 	var xf := global_transform
+	# Исходные поверхности читаем один раз на вид постройки: при выравнивании земли
+	# здания укладываются заново много раз в секунду.
+	if not _surface_cache.has(mesh):
+		var surfaces := []
+		for i in mesh.get_surface_count():
+			surfaces.append(mesh.surface_get_arrays(i))
+		_surface_cache[mesh] = surfaces
+	var cached: Array = _surface_cache[mesh]
 	for i in mesh.get_surface_count():
-		var arrays := mesh.surface_get_arrays(i)
+		var arrays: Array = (cached[i] as Array).duplicate()
 		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 		for k in verts.size():
 			var v := verts[k]
@@ -314,7 +326,17 @@ func _use_progress_materials(mi: MeshInstance3D) -> void:
 
 
 ## Строительные леса: стойки по периметру, настилы и раскосы из жердей.
+## Меш свой у каждого вида здания — собирается один раз.
 func _make_scaffold(b: AABB) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	if not _scaffold_meshes.has(id):
+		_scaffold_meshes[id] = _scaffold_mesh(b)
+	mi.mesh = _scaffold_meshes[id]
+	mi.material_override = ModelLibrary.building_material("log")
+	return mi
+
+
+func _scaffold_mesh(b: AABB) -> Mesh:
 	var g := Geo.new()
 	g.with_uv2 = false
 	var rng := RandomNumberGenerator.new()
@@ -339,10 +361,7 @@ func _make_scaffold(b: AABB) -> MeshInstance3D:
 		g.rod("log", a + Vector3(0, 0.2, 0), c + Vector3(0, height * 0.9, 0), 0.03, 0.03, 4, wood.darkened(0.2), false)
 	for p in posts:
 		g.rod("log", p + Vector3(0, -0.2, 0), p + Vector3(0, height, 0), 0.05, 0.045, 5, wood.lightened(rng.randf_range(-0.05, 0.08)))
-	var mi := MeshInstance3D.new()
-	mi.mesh = g.build_mesh()
-	mi.material_override = ModelLibrary.building_material("log")
-	return mi
+	return g.build_mesh()
 
 
 func build_time() -> float:

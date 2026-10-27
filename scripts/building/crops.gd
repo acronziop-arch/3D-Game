@@ -58,7 +58,7 @@ func setup(crop_id: String, planted_time: float, rects: Array, top: float) -> vo
 			plane.size = r.size
 			water.mesh = plane
 			water.position = Vector3(r.get_center().x, top + 0.05, r.get_center().y)
-			water.material_override = _rice_water()
+			water.material_override = rice_water()
 			water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			add_child(water)
 	_mm = MultiMesh.new()
@@ -96,7 +96,7 @@ func _process(delta: float) -> void:
 	_apply_growth()
 
 
-static func _rice_water() -> StandardMaterial3D:
+static func rice_water() -> StandardMaterial3D:
 	if _water_mat == null:
 		_water_mat = StandardMaterial3D.new()
 		_water_mat.albedo_color = Color(0.36, 0.5, 0.52, 0.82)

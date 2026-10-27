@@ -114,6 +114,10 @@ func rotate_ghost_by(angle: float) -> void:
 	_yaw = wrapf(_yaw + angle, -PI, PI)
 
 
+## Группы, чьи постройки можно ставить вплотную и внахлёст друг к другу.
+const OVERLAP_GROUPS := ["fence", "path"]
+
+
 func place_mode(building_id: String) -> String:
 	return GameData.BUILDINGS[building_id].get("place", "land")
 
@@ -417,28 +421,16 @@ func _validate(target: Vector3, angle: float) -> Dictionary:
 			elif absf(ha - hb) > 1.4:
 				result["reason"] = "Берега на разной высоте"
 		_:
-			var lo := INF
-			var hi := -INF
-			var any_platform := false
-			# Свесы крыши могут нависать над водой — проверяем только «пятно» стен.
-			for sp in Building.obb_samples(Building.obb_for(selected_id, target, angle, -0.35), 4):
-				var h := chunk_manager.get_height(sp.x, sp.y)
-				var top := platform_top(sp.x, sp.y, moving)
-				if top > -INF:
-					any_platform = true
-					h = top
-				elif h < WorldGen.WATER_LEVEL + 0.2:
-					result["water"] = true
-				lo = minf(lo, h)
-				hi = maxf(hi, h)
-			if result.get("water", false):
+			var under := _ground_under(selected_id, target, angle, moving)
+			var lo: float = under["lo"]
+			var hi: float = under["hi"]
+			var any_platform: bool = under["platform"]
+			if under["water"]:
+				result["water"] = true
 				result["reason"] = "Настил должен быть под всем зданием — добавьте блоков" if any_platform \
 					else "Здесь вода — сначала постройте деревянный настил"
-			result["y"] = PLATFORM_TOP if any_platform and hi <= PLATFORM_TOP + 0.01 else hi - 0.1
+			result["y"] = _land_y(selected_id, target, under)
 			var def: Dictionary = GameData.BUILDINGS[selected_id]
-			if def.get("tilt", false) and not any_platform:
-				# Дорожка ложится по склону: высота — в середине плитки.
-				result["y"] = chunk_manager.get_height(target.x, target.z) - 0.02
 			if result["reason"] == "" and any_platform and def.get("ground_only", false):
 				result["reason"] = "Копать можно только землю — не на настиле"
 			elif result["reason"] == "" and hi - lo > MAX_UNEVENNESS:
@@ -455,6 +447,77 @@ func _validate(target: Vector3, angle: float) -> Dictionary:
 		elif moving == null and not Inventory.has_all(cost):
 			result["reason"] = "Не хватает: %s" % Rich.cost(Inventory.missing(cost), 16)
 	return result
+
+
+## Земля под «пятном» стен (свесы крыши могут нависать над водой — их не считаем):
+## {"lo", "hi" — нижняя и верхняя точки, "platform" — стоит на настиле, "water" — где-то вода}.
+func _ground_under(id: String, target: Vector3, angle: float, ignore: Building) -> Dictionary:
+	var out := {"lo": INF, "hi": -INF, "platform": false, "water": false}
+	for sp in Building.obb_samples(Building.obb_for(id, target, angle, -0.35), 4):
+		var h := chunk_manager.get_height(sp.x, sp.y)
+		var top := platform_top(sp.x, sp.y, ignore)
+		if top > -INF:
+			out["platform"] = true
+			h = top
+		elif h < WorldGen.WATER_LEVEL + 0.2:
+			out["water"] = true
+		out["lo"] = minf(out["lo"], h)
+		out["hi"] = maxf(out["hi"], h)
+	return out
+
+
+## Высота здания на суше: по самой высокой точке под стенами (цоколь уходит в землю),
+## на настиле — по настилу, плитка дорожки — по середине, вдоль склона.
+func _land_y(id: String, target: Vector3, under: Dictionary) -> float:
+	if under["platform"]:
+		return PLATFORM_TOP if under["hi"] <= PLATFORM_TOP + 0.01 else under["hi"] - 0.1
+	if GameData.BUILDINGS[id].get("tilt", false):
+		return chunk_manager.get_height(target.x, target.z) - 0.02
+	return under["hi"] - 0.1
+
+
+## Глубина цоколя: на сильно разрытой земле здание уходит в склон, а не висит над ямой.
+const SETTLE_DEPTH := 1.1
+
+
+## Землю под зданиями выровняли (вызывается во время мазка, несколько раз в секунду):
+## здания встают на новую поверхность сразу — не висят в воздухе и не тонут в насыпи.
+func reground_area(rect: Rect2) -> void:
+	for b in buildings:
+		if not is_instance_valid(b) or b == moving or not b.footprint.intersects(rect):
+			continue
+		var def: Dictionary = GameData.BUILDINGS[b.id]
+		var y := b.position.y
+		match place_mode(b.id):
+			"water":
+				continue
+			"bridge":
+				var basis := Basis(Vector3.UP, b.yaw)
+				var a := b.position + basis * Vector3(0, 0, 6.6)
+				var e := b.position + basis * Vector3(0, 0, -6.6)
+				y = maxf(maxf(chunk_manager.get_height(a.x, a.z), chunk_manager.get_height(e.x, e.z)) - 0.35,
+					WorldGen.WATER_LEVEL + 0.2)
+			_:
+				var under := _ground_under(b.id, b.position, b.yaw, b)
+				y = _land_y(b.id, b.position, under)
+				if not under["platform"] and not def.get("tilt", false):
+					y = minf(y, under["lo"] + SETTLE_DEPTH)
+		var tilt: bool = def.get("tilt", false) and place_mode(b.id) == "land"
+		var normal := ground_normal(b.position.x, b.position.z) if tilt else b.ground_normal
+		if normal.y < 0.5:
+			normal = b.ground_normal
+		if absf(y - b.position.y) < 0.004 and normal.is_equal_approx(b.ground_normal):
+			continue
+		var entry: Variant = _save_entry(b)
+		b.position.y = y
+		if tilt:
+			b.ground_normal = normal
+			b.basis = Basis(Quaternion(Vector3.UP, normal)) * Basis(Vector3.UP, b.yaw)
+		b.refit_ground()
+		if entry:
+			entry["pos"] = b.position
+			if tilt:
+				entry["normal"] = normal
 
 
 ## Подсказка клавиши — только на ПК.
@@ -481,8 +544,9 @@ func _overlaps(box: Dictionary, mode: String) -> bool:
 	for b in buildings:
 		if not is_instance_valid(b) or b == moving:
 			continue
-		# Секции оград могут касаться и пересекаться концами под любым углом.
-		if group != "" and GameData.BUILDINGS[b.id].get("group", "") == group:
+		# Секции оград (и плитки дорожек) могут касаться и пересекаться концами под любым
+		# углом. Декор — нет: бочки, лавки и стога не ставятся друг в друга.
+		if group in OVERLAP_GROUPS and GameData.BUILDINGS[b.id].get("group", "") == group:
 			continue
 		# Здания можно ставить на настил — он им не мешает (и настилы — друг другу, если не внахлёст).
 		if b.id == "platform" and mode == "land":

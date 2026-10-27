@@ -80,6 +80,8 @@ void fragment() {
 """
 
 var _material: ShaderMaterial
+## Подготовка графики: столько кадров рисуемся и без капель, чтобы шейдер собрался заранее.
+var _warm := 0
 
 
 func _ready() -> void:
@@ -94,10 +96,16 @@ func _ready() -> void:
 	visible = false
 
 
+## Шейдер капель собирается под экраном загрузки, а не при первом дожде.
+func warm() -> void:
+	_warm = 2
+
+
 func _process(_delta: float) -> void:
 	var rain := clampf(Weather.rain, 0.0, 1.0)
 	var snow := clampf(Weather.snow, 0.0, 1.0)
-	visible = rain > 0.05 or snow > 0.05
+	visible = rain > 0.05 or snow > 0.05 or _warm > 0
+	_warm = maxi(_warm - 1, 0)
 	if not visible:
 		return
 	var screen := get_viewport_rect().size

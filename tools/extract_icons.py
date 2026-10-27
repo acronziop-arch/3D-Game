@@ -8,7 +8,7 @@
   python3 -I tools/extract_icons.py tools/icon_sheets/sheet1.jpg tools/icon_sheets/sheet2.jpg assets/icons
 Нужны Python 3, numpy и Pillow.
 """
-import sys, os
+import sys, os, math
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
@@ -24,6 +24,8 @@ wax weather_blizzard weather_clear weather_cloudy weather_fog weather_overcast w
 ROWS = [r.split() for r in NAMES]
 # Со второго листа почти всё; с первого — то, что там нарисовано правильнее.
 FROM_SHEET1 = {"cat_decor", "cat_defense", "cat_production", "tool_demolish"}
+# Нарисованы здесь же, кодом (rotate_icon): с листа они вырезаются неровно.
+DRAWN = {"rotate"}
 EXTRA_SHEET1 = ["wool", "help", "scroll", "compass", "lantern", "potion", "flower_pot", "house_blue"]
 
 
@@ -260,6 +262,95 @@ def badge_icon(base_path, out_path, up, color, size=128):
     canvas.resize((size, size), Image.LANCZOS).save(out_path)
 
 
+def rotate_icon(out_path, size=128):
+    """Стрелка поворота: объёмная серая трубка по кругу с наконечником (по часовой)."""
+    s = 4
+    n = size * s
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float64) + 0.5
+    cx, cy = n * 0.53, n * 0.49
+    R = n * 0.305
+    t = n * 0.094          # полутолщина трубки
+    a_tail = math.radians(-58.0)
+    a_head = math.radians(219.0)
+    # --- Трубка: расстояние до средней линии дуги (с круглым концом у хвоста).
+    vx, vy = xx - cx, yy - cy
+    r = np.hypot(vx, vy)
+    ang = np.arctan2(vy, vx)
+    rel = np.mod(ang - a_tail, 2 * math.pi)
+    span = a_head - a_tail
+    on_arc = rel <= span
+    d_line = np.abs(r - R)
+    tail = np.array([cx + R * math.cos(a_tail), cy + R * math.sin(a_tail)])
+    headp = np.array([cx + R * math.cos(a_head), cy + R * math.sin(a_head)])
+    d_tail = np.hypot(xx - tail[0], yy - tail[1])
+    d_headc = np.hypot(xx - headp[0], yy - headp[1])
+    d_center = np.where(on_arc, d_line, np.minimum(d_tail, d_headc))
+    d_tube = d_center - t
+    h_tube = np.sqrt(np.clip(t * t - d_center ** 2, 0, None))
+    # --- Наконечник: скруглённый треугольник у конца дуги.
+    tang = np.array([-math.sin(a_head), math.cos(a_head)])
+    # Немного внутрь круга — наконечник продолжает изгиб.
+    tilt = math.radians(12.0)
+    ct, st = math.cos(tilt), math.sin(tilt)
+    tang = np.array([tang[0] * ct + tang[1] * st, -tang[0] * st + tang[1] * ct])
+    side = np.array([-tang[1], tang[0]])
+    hw, L, back = t * 2.35, t * 2.55, t * 0.5
+    base_c = headp - tang * back
+    pts = [base_c + side * hw, base_c - side * hw, base_c + tang * L]
+    rr = t * 0.32
+    # Скругление: треугольник сжимаем на rr и берём расстояние минус rr.
+    g = sum(pts) / 3.0
+    inset = []
+    for p in pts:
+        v = g - p
+        inset.append(p + v / np.linalg.norm(v) * rr * 2.0)
+    def seg_dist(ax, ay, bx, by):
+        px, py = xx - ax, yy - ay
+        ex, ey = bx - ax, by - ay
+        h = np.clip((px * ex + py * ey) / (ex * ex + ey * ey), 0, 1)
+        return np.hypot(px - ex * h, py - ey * h)
+    dist = np.minimum(np.minimum(seg_dist(*inset[0], *inset[1]), seg_dist(*inset[1], *inset[2])),
+                      seg_dist(*inset[2], *inset[0]))
+    def cross(a, b):
+        return (b[0] - a[0]) * (yy - a[1]) - (b[1] - a[1]) * (xx - a[0])
+    c0, c1, c2 = cross(inset[0], inset[1]), cross(inset[1], inset[2]), cross(inset[2], inset[0])
+    inside = ((c0 >= 0) & (c1 >= 0) & (c2 >= 0)) | ((c0 <= 0) & (c1 <= 0) & (c2 <= 0))
+    d_head = np.where(inside, -dist, dist) - rr
+    bevel = t * 1.35
+    k = np.clip(-d_head / bevel, 0, 1)
+    h_head = bevel * np.sqrt(1 - (1 - k) ** 2) * 1.02
+    # --- Объём: высота -> нормаль -> свет (сверху слева), как у остальных иконок.
+    h = np.maximum(h_tube, h_head)
+    d = np.minimum(d_tube, d_head)
+    gy, gx = np.gradient(h)
+    nx, ny, nz = -gx, -gy, np.ones_like(h)
+    ln = np.sqrt(nx * nx + ny * ny + nz * nz)
+    nx, ny, nz = nx / ln, ny / ln, nz / ln
+    lx, ly, lz = -0.45, -0.62, 0.65
+    l = math.sqrt(lx * lx + ly * ly + lz * lz)
+    lx, ly, lz = lx / l, ly / l, lz / l
+    diff = np.clip(nx * lx + ny * ly + nz * lz, 0, 1)
+    hx, hy, hz = lx, ly, lz + 1.0
+    hl = math.sqrt(hx * hx + hy * hy + hz * hz)
+    spec = np.clip((nx * hx + ny * hy + nz * hz) / hl, 0, 1) ** 40
+    base = np.array([118.0, 123.0, 140.0])
+    col = base[None, None, :] * (0.42 + 0.78 * diff[..., None]) + 255.0 * 0.55 * spec[..., None]
+    # Тёмная кромка по контуру, как у остальных иконок.
+    edge = np.clip(1.0 - (-d) / (s * 2.6), 0, 1)[..., None]
+    col = col * (1 - edge * 0.45) + np.array([52.0, 55.0, 68.0]) * edge * 0.45
+    alpha = np.clip(0.5 - d, 0, 1)
+    img = np.dstack([np.clip(col, 0, 255), alpha * 255.0]).astype(np.float32)
+    # Уменьшение с предумножением альфы — ровный край без каймы.
+    pre = img.copy()
+    pre[..., :3] *= pre[..., 3:4] / 255.0
+    small = Image.fromarray(pre.clip(0, 255).astype(np.uint8), "RGBA").resize((size, size), Image.BOX)
+    arr = np.asarray(small).astype(np.float32)
+    a = arr[..., 3:4] / 255.0
+    arr[..., :3] = np.where(a > 0.003, arr[..., :3] / np.maximum(a, 0.003), 0)
+    out = Image.fromarray(arr.clip(0, 255).astype(np.uint8), "RGBA")
+    finish(out).save(out_path)
+
+
 def icons_in_band(im, bg, y0, y1, expected):
     region = im[y0:y1]
     dist = np.abs(region - bg).max(axis=2)
@@ -299,10 +390,12 @@ if __name__ == "__main__":
     all_names = {n for row in ROWS for n in row}
     # Лист 2: строки иконок отделены от подписей.
     bands2 = [(14, 98), (144, 225), (269, 352), (392, 480), (518, 608), (653, 726), (761, 844), (889, 970), (1006, 1088), (1124, 1162)]
-    run(s2, ROWS + [["wool"]], (all_names - FROM_SHEET1) | {"wool"}, out, 0, bands2)
+    run(s2, ROWS + [["wool"]], (all_names - FROM_SHEET1 - DRAWN) | {"wool"}, out, 0, bands2)
     bands1 = [(4, 94), (99, 192), (197, 290), (293, 388), (392, 490), (498, 581), (585, 676), (683, 769), (773, 862), (865, 960)]
     run(s1, ROWS + [EXTRA_SHEET1], FROM_SHEET1 | set(EXTRA_SHEET1) - {"wool"}, out, 15, bands1)
     # «Поделиться миром» и «Мир от друга» — свиток со значком-стрелкой.
     badge_icon(os.path.join(out, "scroll.png"), os.path.join(out, "share.png"), True, (92, 172, 74))
     badge_icon(os.path.join(out, "scroll.png"), os.path.join(out, "import.png"), False, (70, 138, 214))
     print("   share, import")
+    rotate_icon(os.path.join(out, "rotate.png"))
+    print("   rotate")

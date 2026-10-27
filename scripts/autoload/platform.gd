@@ -211,7 +211,13 @@ func decor_distance() -> float:
 ## туман, а каждый лишний круг чанков — сотни объектов и вызовов отрисовки.
 func view_radius() -> int:
 	var r := int(Settings.get_value("view_distance"))
-	return mini(r, 7) if is_mobile() else r
+	return mini(r, 8 if threaded() else 7) if is_mobile() else r
+
+
+## Мир строится в фоновых потоках: на ПК всегда, в браузере — в многопоточной сборке
+## (её грузят только браузеры, где потоки есть). Тогда мира держим и грузим больше.
+func threaded() -> bool:
+	return OS.has_feature("threads") if is_web else OS.get_processor_count() >= 4
 
 
 ## Дальность кустов, мелких камней и руды, м: дальше они меньше пикселя-двух.

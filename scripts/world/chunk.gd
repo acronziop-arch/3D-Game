@@ -38,6 +38,8 @@ var _cover := {}
 ## область FarForest (один объект на вид на 4×4 чанка), мелочи нет совсем.
 var props_far := false
 var _terrain_in_region := false
+## Массивы меша земли (копия в памяти): из них FarForest собирает землю области.
+var terrain_arrays: Array = []
 ## Есть ли у чанка трава: далёкие чанки грузятся без неё (см. ChunkManager._update_cover).
 var cover_ready := true
 ## Полные пучки травы (близко) или упрощённые (далеко).
@@ -85,6 +87,7 @@ func setup(chunk_coord: Vector2i, data: Dictionary) -> void:
 
 
 func _apply_terrain(arrays: Array) -> void:
+	terrain_arrays = arrays
 	var mesh := ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	mesh.surface_set_material(0, ModelLibrary.terrain_material())
@@ -97,10 +100,6 @@ func _apply_terrain(arrays: Array) -> void:
 func set_terrain_in_region(on: bool) -> void:
 	_terrain_in_region = on
 	_terrain_mesh.visible = not on
-
-
-func terrain_mesh() -> Mesh:
-	return _terrain_mesh.mesh
 
 
 func _build_props() -> void:

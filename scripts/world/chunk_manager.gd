@@ -7,12 +7,18 @@ extends Node3D
 signal initial_area_ready
 ## Новый чанк добавлен в сцену (здания убирают под собой траву).
 signal chunk_loaded(chunk: Chunk)
+## Рельеф в прямоугольнике (мировые x, z) только что перестроен — во время мазка
+## выравнивания, несколько раз в секунду: здания и дорожки встают на новую землю.
+signal terrain_changed(rect: Rect2)
 
 @export var view_radius := 7
 @export var max_tasks_in_flight := 4
 ## Сколько готовых чанков добавлять в сцену за кадр — чтобы не было рывков.
 @export var finalize_per_frame := 2
 @export var initial_radius := 3
+## Сколько чанков сверх радиуса прорисовки держать загруженными: вернулись назад —
+## мир уже на месте, его не нужно строить заново.
+@export var keep_margin := 2
 ## false — чанки генерируются прямо в главном потоке (браузер без потоков).
 var use_threads := true
 ## false — мир пока не строится (идёт подготовка графики при запуске).
@@ -38,10 +44,14 @@ var _pending := {}
 var _wanted: Array[Vector2i] = []
 var _center := Vector2i(1 << 30, 1 << 30)
 var _dirty := {}
+## Где менялись вершины с прошлой перестройки рельефа (пустой — нигде).
+var _edit_rect := Rect2()
 var _rebuild_timer := 0.0
 var _initial_done := false
 ## Трава, которая досоздаётся для подошедших ближе чанков: Vector2i -> {"task", "out"}.
 var _cover_jobs := {}
+## Объекты и трава чанков после правки рельефа, считаются в фоне: Vector2i -> {"task", "out"}.
+var _content_jobs := {}
 var _cover_timer := 0.0
 ## Ближе этого расстояния (м от точки взгляда до середины чанка) трава — полными пучками.
 const COVER_LOD_NEAR := 52.0
@@ -56,6 +66,7 @@ func start(world_seed: int) -> void:
 	gen = WorldGen.new(world_seed)
 	far_forest = FarForest.new()
 	far_forest.name = "FarForest"
+	far_forest.use_threads = use_threads
 	add_child(far_forest)
 
 
@@ -82,7 +93,13 @@ func _process(delta: float) -> void:
 	if not _cover_queue.is_empty():
 		_refresh_cover(_cover_queue.pop_front())
 	elif not _content_queue.is_empty() and _dirty.is_empty():
-		_refresh_content(_content_queue.pop_front())
+		var next: Vector2i = _content_queue.pop_front()
+		if _content_jobs.has(next):
+			# Прошлый пересчёт этого чанка ещё идёт — этот подождёт его.
+			_content_queue.append(next)
+		else:
+			_refresh_content(next)
+	_poll_content_jobs()
 	_rebuild_timer -= delta
 	if _rebuild_timer <= 0.0 and not _dirty.is_empty():
 		_rebuild_timer = 0.06
@@ -90,6 +107,10 @@ func _process(delta: float) -> void:
 			if chunks.has(c):
 				chunks[c].rebuild_terrain()
 		_dirty.clear()
+		if _edit_rect.has_area():
+			var rect := _edit_rect.grow(WorldGen.CELL)
+			_edit_rect = Rect2()
+			terrain_changed.emit(rect)
 
 
 func _update_wanted() -> void:
@@ -102,7 +123,7 @@ func _update_wanted() -> void:
 	_wanted.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
 		return (a - _center).length_squared() < (b - _center).length_squared())
 	# Выгружаем то, что далеко ушло за радиус (с запасом, чтобы не мигало на границе).
-	var keep2 := (view_radius + 2) * (view_radius + 2)
+	var keep2 := (view_radius + keep_margin) * (view_radius + keep_margin)
 	for c: Vector2i in chunks.keys():
 		if (c - _center).length_squared() > keep2:
 			chunks[c].queue_free()
@@ -143,7 +164,7 @@ func _finalize() -> void:
 				continue
 			WorkerThreadPool.wait_for_task_completion(job["task"])
 		_pending.erase(c)
-		if (c - _center).length_squared() > (view_radius + 2) * (view_radius + 2):
+		if (c - _center).length_squared() > (view_radius + keep_margin) * (view_radius + keep_margin):
 			continue
 		var chunk := Chunk.new()
 		chunk.props_far = _chunk_distance(c) > Platform.prop_lod_distance()
@@ -187,7 +208,7 @@ func _initial_area_loaded() -> bool:
 
 
 func _exit_tree() -> void:
-	for jobs: Dictionary in [_pending, _cover_jobs]:
+	for jobs: Dictionary in [_pending, _cover_jobs, _content_jobs]:
 		for c: Vector2i in jobs:
 			if jobs[c]["task"] >= 0:
 				WorkerThreadPool.wait_for_task_completion(jobs[c]["task"])
@@ -481,12 +502,35 @@ func commit_terrain_edits() -> void:
 
 
 func _refresh_content(c: Vector2i) -> void:
+	if not chunks.has(c):
+		return
+	var out := {}
+	var args := [c, _edits_for_chunk(c), WorldState.removed_in_chunk(c), WorldState.opened_chests.has(c), out,
+		cover_density(), _extra_for_chunk(c)]
+	if use_threads:
+		# Чанк считается в фоновом потоке — пока ровняют землю, кадры не проседают.
+		_content_jobs[c] = {"task": WorkerThreadPool.add_task(gen.generate_chunk.bindv(args)), "out": out}
+		return
+	gen.generate_chunk.callv(args)
+	_apply_content(c, out)
+
+
+## Готовые пересчёты из фона: не больше одного чанка за кадр.
+func _poll_content_jobs() -> void:
+	for c: Vector2i in _content_jobs.keys():
+		var job: Dictionary = _content_jobs[c]
+		if not WorkerThreadPool.is_task_completed(job["task"]):
+			continue
+		WorkerThreadPool.wait_for_task_completion(job["task"])
+		_content_jobs.erase(c)
+		_apply_content(c, job["out"])
+		return
+
+
+func _apply_content(c: Vector2i, out: Dictionary) -> void:
 	var chunk: Chunk = chunks.get(c)
 	if chunk == null:
 		return
-	var out := {}
-	gen.generate_chunk(c, _edits_for_chunk(c), WorldState.removed_in_chunk(c), WorldState.opened_chests.has(c), out,
-		cover_density(), _extra_for_chunk(c))
 	chunk.replace_content(out)
 	if chunk.props_far:
 		far_forest.mark_dirty(c)
@@ -543,6 +587,8 @@ func vertex_height(vx: int, vz: int) -> float:
 
 func set_vertex_height(vx: int, vz: int, h: float) -> void:
 	WorldState.terrain_edits[Vector2i(vx, vz)] = h
+	var p := Vector2(vx, vz) * WorldGen.CELL
+	_edit_rect = _edit_rect.expand(p) if _edit_rect.has_area() else Rect2(p, Vector2.ZERO).grow(0.01)
 	# Вершина хранится и в соседних чанках (в их запасе по краю).
 	var cx := floori(float(vx) / WorldGen.RES)
 	var cz := floori(float(vz) / WorldGen.RES)
@@ -570,5 +616,9 @@ func flatten(center: Vector3, radius: float, target: float, step: float) -> void
 			var weight := 1.0 - smoothstep(radius * 0.55, radius, d)
 			var current := vertex_height(vx, vz)
 			var next := move_toward(current, target, step * weight)
+			if next < current and next < WorldGen.WATER_LEVEL + 0.2 \
+					and blocked_by_building.call(Vector2(vx * c, vz * c)):
+				# Под зданием земля в воду не уходит — здание не тонет.
+				next = minf(current, WorldGen.WATER_LEVEL + 0.2)
 			if absf(next - current) > 0.001:
 				set_vertex_height(vx, vz, next)

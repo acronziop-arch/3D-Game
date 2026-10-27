@@ -81,10 +81,7 @@ func setup(chest_rarity: String, chunk_coord: Vector2i) -> void:
 	dot.height = 0.07
 	dot.radial_segments = 4
 	dot.rings = 2
-	var glow := StandardMaterial3D.new()
-	glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	glow.albedo_color = trim.lightened(0.3)
-	dot.material = glow
+	dot.material = sparkle_material(trim.lightened(0.3))
 	sparkles.mesh = dot
 	add_child(sparkles)
 
@@ -125,3 +122,11 @@ func open() -> Dictionary:
 	tw.parallel().tween_property(_light, "light_energy", 0.0, 0.45)
 	tw.tween_callback(queue_free)
 	return loot
+
+
+## Искорки над сундуком (материал общий с подготовкой графики при запуске).
+static func sparkle_material(color: Color) -> StandardMaterial3D:
+	var glow := StandardMaterial3D.new()
+	glow.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	glow.albedo_color = color
+	return glow

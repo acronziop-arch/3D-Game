@@ -17,6 +17,15 @@ static func show_loot(_parent: Node, world_pos: Vector3, loot: Dictionary) -> vo
 
 
 static func burst(parent: Node, world_pos: Vector3, color: Color, amount := 16, size := 0.18) -> void:
+	var p := burst_node(color, amount, size)
+	parent.add_child(p)
+	p.global_position = world_pos
+	p.emitting = true
+	p.finished.connect(p.queue_free)
+
+
+## Облачко кубиков (ещё не запущенное) — его же показывает подготовка графики при запуске.
+static func burst_node(color: Color, amount := 16, size := 0.18) -> CPUParticles3D:
 	var p := CPUParticles3D.new()
 	p.one_shot = true
 	p.explosiveness = 0.9
@@ -42,7 +51,4 @@ static func burst(parent: Node, world_pos: Vector3, color: Color, amount := 16, 
 	mat.roughness = 1.0
 	cube.material = mat
 	p.mesh = cube
-	parent.add_child(p)
-	p.global_position = world_pos
-	p.emitting = true
-	p.finished.connect(p.queue_free)
+	return p

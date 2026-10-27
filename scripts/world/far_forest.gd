@@ -11,8 +11,13 @@ const REGION := 4
 ## Чисел на экземпляр в буфере MultiMesh: 12 — трансформация, 4 — цвет.
 const STRIDE := 16
 
-## Vector2i(область) -> {"chunks": {Vector2i: Chunk}, "nodes": Array[MultiMeshInstance3D], "dirty": bool}
+## Vector2i(область) -> {"chunks": {Vector2i: Chunk}, "nodes": Array[MultiMeshInstance3D], "dirty": bool,
+##   "ground": MeshInstance3D или null, "ground_dirty": bool — землю пересобрать после текущей сборки}
 var _regions := {}
+## false — землю областей собираем прямо в главном потоке (браузер без потоков).
+var use_threads := true
+## Земля областей, которая собирается в фоне: {"region", "r", "task", "out", "chunks"}.
+var _ground_jobs: Array[Dictionary] = []
 
 
 ## Дописывает экземпляр в буфер {"buf", "n"} (без временных массивов — так быстрее).
@@ -49,7 +54,7 @@ static func region_of(c: Vector2i) -> Vector2i:
 func add_chunk(chunk: Chunk) -> void:
 	var r := region_of(chunk.coord)
 	if not _regions.has(r):
-		_regions[r] = {"chunks": {}, "nodes": [], "dirty": false}
+		_regions[r] = {"chunks": {}, "nodes": [], "dirty": false, "ground": null, "ground_dirty": false}
 	_regions[r]["chunks"][chunk.coord] = chunk
 	_regions[r]["dirty"] = true
 
@@ -80,11 +85,13 @@ func rebuild_now(coord: Vector2i) -> void:
 	if _regions.has(r) and _regions[r]["dirty"]:
 		_rebuild(r, _regions[r])
 		if _regions[r]["chunks"].is_empty():
-			_regions.erase(r)
+			_drop_region(r)
 
 
-## Перестраивает до limit изменившихся областей. Возвращает, сколько перестроено.
+## Перестраивает до limit изменившихся областей и ставит готовую землю из фона.
+## Возвращает, сколько областей перестроено.
 func rebuild_dirty(limit: int) -> int:
+	_poll_ground()
 	var done := 0
 	for r: Vector2i in _regions.keys():
 		if done >= limit:
@@ -95,8 +102,21 @@ func rebuild_dirty(limit: int) -> int:
 		_rebuild(r, region)
 		done += 1
 		if region["chunks"].is_empty():
-			_regions.erase(r)
+			_drop_region(r)
 	return done
+
+
+func _drop_region(r: Vector2i) -> void:
+	var region: Dictionary = _regions[r]
+	if is_instance_valid(region["ground"]):
+		region["ground"].queue_free()
+	_regions.erase(r)
+
+
+func _exit_tree() -> void:
+	for job in _ground_jobs:
+		WorkerThreadPool.wait_for_task_completion(job["task"])
+	_ground_jobs.clear()
 
 
 func _rebuild(r: Vector2i, region: Dictionary) -> void:
@@ -112,28 +132,7 @@ func _rebuild(r: Vector2i, region: Dictionary) -> void:
 			region["chunks"].erase(c)
 			continue
 		chunk.collect_far_props(by_id, origin)
-	# Земля области — одним мешем вместо шестнадцати.
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var has_ground := false
-	for c: Vector2i in region["chunks"]:
-		var chunk: Chunk = region["chunks"][c]
-		var mesh := chunk.terrain_mesh()
-		if mesh:
-			st.append_from(mesh, 0, Transform3D(Basis.IDENTITY, chunk.position - origin))
-			has_ground = true
-	if has_ground:
-		var ground := MeshInstance3D.new()
-		ground.mesh = st.commit()
-		ground.mesh.surface_set_material(0, ModelLibrary.terrain_material())
-		# Так далеко тени уже не рисуются.
-		ground.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		ground.position = origin
-		add_child(ground)
-		region["nodes"].append(ground)
-		# Теперь землю рисует область — свою чанки прячут (не раньше: иначе мелькнёт дыра).
-		for c: Vector2i in region["chunks"]:
-			(region["chunks"][c] as Chunk).set_terrain_in_region(true)
+	_start_ground(r, region)
 	for key: String in by_id:
 		var entry: Dictionary = by_id[key]
 		var parts := key.split(":")
@@ -153,3 +152,101 @@ func _rebuild(r: Vector2i, region: Dictionary) -> void:
 		mmi.position = origin
 		add_child(mmi)
 		region["nodes"].append(mmi)
+
+
+# --- Земля области ---------------------------------------------------------------------------
+
+## Земля области — одним мешем вместо шестнадцати. Собирается в фоновом потоке из копий
+## вершин, которые чанки держат в памяти (читать их обратно из видеопамяти в браузере —
+## долгая пауза). Пока новая земля не готова, видна прежняя или земля самих чанков:
+## у них одинаковые вершины, так что подмена незаметна.
+func _start_ground(r: Vector2i, region: Dictionary) -> void:
+	for job in _ground_jobs:
+		if is_same(job["region"], region):
+			region["ground_dirty"] = true
+			return
+	var origin := Vector3(r.x, 0, r.y) * (REGION * WorldGen.CHUNK_SIZE)
+	var parts := []
+	var included: Array[Chunk] = []
+	for c: Vector2i in region["chunks"]:
+		var chunk: Chunk = region["chunks"][c]
+		if is_instance_valid(chunk) and not chunk.terrain_arrays.is_empty():
+			parts.append([chunk.terrain_arrays, chunk.position - origin])
+			included.append(chunk)
+	var out := {}
+	if not use_threads or parts.is_empty():
+		_merge_ground(parts, out)
+		_finish_ground(r, region, out, included)
+		return
+	_ground_jobs.append({"region": region, "r": r, "out": out, "chunks": included,
+		"task": WorkerThreadPool.add_task(_merge_ground.bind(parts, out))})
+
+
+func _poll_ground() -> void:
+	for i in range(_ground_jobs.size() - 1, -1, -1):
+		var job: Dictionary = _ground_jobs[i]
+		if not WorkerThreadPool.is_task_completed(job["task"]):
+			continue
+		WorkerThreadPool.wait_for_task_completion(job["task"])
+		_ground_jobs.remove_at(i)
+		var region: Dictionary = job["region"]
+		var r: Vector2i = job["r"]
+		# Область за это время могла опустеть и пропасть.
+		if not is_same(_regions.get(r), region):
+			continue
+		_finish_ground(r, region, job["out"], job["chunks"])
+		if region["ground_dirty"]:
+			region["ground_dirty"] = false
+			_start_ground(r, region)
+
+
+func _finish_ground(r: Vector2i, region: Dictionary, out: Dictionary, included: Array[Chunk]) -> void:
+	if is_instance_valid(region["ground"]):
+		region["ground"].queue_free()
+	region["ground"] = null
+	if not out.has("arrays"):
+		return
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, out["arrays"])
+	mesh.surface_set_material(0, ModelLibrary.terrain_material())
+	var ground := MeshInstance3D.new()
+	ground.mesh = mesh
+	# Так далеко тени уже не рисуются.
+	ground.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	ground.position = Vector3(r.x, 0, r.y) * (REGION * WorldGen.CHUNK_SIZE)
+	add_child(ground)
+	region["ground"] = ground
+	# Теперь землю рисует область — свою чанки прячут (не раньше: иначе мелькнёт дыра).
+	for chunk in included:
+		if is_instance_valid(chunk) and region["chunks"].get(chunk.coord) == chunk:
+			chunk.set_terrain_in_region(true)
+
+
+## Сшивает землю чанков в один набор массивов (работает в фоновом потоке).
+static func _merge_ground(parts: Array, out: Dictionary) -> void:
+	if parts.is_empty():
+		return
+	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
+	var colors := PackedColorArray()
+	var indices := PackedInt32Array()
+	for part: Array in parts:
+		var arrays: Array = part[0]
+		var offset: Vector3 = part[1]
+		var base := verts.size()
+		verts.append_array(arrays[Mesh.ARRAY_VERTEX])
+		for k in range(base, verts.size()):
+			verts[k] = verts[k] + offset
+		normals.append_array(arrays[Mesh.ARRAY_NORMAL])
+		colors.append_array(arrays[Mesh.ARRAY_COLOR])
+		var first := indices.size()
+		indices.append_array(arrays[Mesh.ARRAY_INDEX])
+		for k in range(first, indices.size()):
+			indices[k] += base
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_INDEX] = indices
+	out["arrays"] = arrays

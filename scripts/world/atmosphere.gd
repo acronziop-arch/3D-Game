@@ -170,6 +170,20 @@ func _make_leaves() -> GPUParticles3D:
 	return p
 
 
+## Для подготовки графики при запуске: горстка дождя, снега и листьев с теми же
+## материалами — чтобы первый дождь или листопад в игре не ждал сборки шейдеров.
+func warmup_node() -> Node3D:
+	var holder := Node3D.new()
+	for src: GPUParticles3D in [_rain, _snow, _leaves]:
+		var p := src.duplicate() as GPUParticles3D
+		p.amount = 4
+		p.preprocess = 0.0
+		p.position = Vector3.ZERO
+		p.emitting = true
+		holder.add_child(p)
+	return holder
+
+
 static func _leaf_mesh() -> ArrayMesh:
 	var verts := PackedVector3Array([Vector3(0, -0.11, 0), Vector3(0.06, 0, 0.01), Vector3(0, 0.11, 0),
 		Vector3(0, -0.11, 0), Vector3(0, 0.11, 0), Vector3(-0.06, 0, 0.01)])

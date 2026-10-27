@@ -144,6 +144,17 @@ static func close_button(side := 44.0) -> Button:
 
 
 ## Плавное появление/исчезновение (с лёгким масштабом).
+## Как fade, но сразу, без анимации.
+static func fade_now(c: Control, shown: bool) -> void:
+	if c.has_meta("fade_tween"):
+		(c.get_meta("fade_tween") as Tween).kill()
+		c.remove_meta("fade_tween")
+	c.set_meta("fade_target", shown)
+	c.visible = shown
+	c.modulate.a = 1.0 if shown else 0.0
+	c.scale = Vector2.ONE
+
+
 static func fade(c: Control, shown: bool, duration := 0.18) -> void:
 	if c.get_meta("fade_target", c.visible) == shown:
 		return

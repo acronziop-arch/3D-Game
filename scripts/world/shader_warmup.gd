@@ -10,17 +10,21 @@ signal finished
 
 ## Шаги: Callable, возвращающий узел для показа (или null — шаг без узла).
 var steps: Array[Callable] = []
-## Сколько кадров держать каждый шаг (в первом он рисуется и компилируется).
-var frames_per_step := 1
+## Освещение мира в разное время суток (день, сумерки, ночь): днём светит солнце с тенями,
+## в сумерках — ещё и луна, ночью — только луна. Для каждого такого сочетания у материала
+## свой вариант шейдера, поэтому узел шага показывается по кадру при каждом освещении.
+var light_setups: Array[Callable] = []
 
 var _index := -1
 var _shown: Node3D
-var _wait := 0
+## Сколько вариантов освещения текущий узел уже показал.
+var _lit := 0
 
 
 func _process(_delta: float) -> void:
-	if _wait > 0:
-		_wait -= 1
+	if is_instance_valid(_shown) and _lit < light_setups.size():
+		light_setups[_lit].call()
+		_lit += 1
 		return
 	if is_instance_valid(_shown):
 		_shown.queue_free()
@@ -38,8 +42,17 @@ func _process(_delta: float) -> void:
 		if cam:
 			# Чуть впереди камеры, лицом к ней: попадает и в кадр, и в карту теней.
 			_shown.global_transform = cam.global_transform.translated_local(Vector3(0, 0, -6.0))
+		# Рядом — огонёк, как от факела или костра ночью: освещённый им материал рисуется
+		# другим вариантом шейдера, и этот вариант тоже должен собраться заранее.
+		var light := OmniLight3D.new()
+		light.omni_range = 4.0
+		light.position = Vector3(0.5, 0.4, 1.2)
+		_shown.add_child(light)
+		_lit = 0
+		if not light_setups.is_empty():
+			light_setups[0].call()
+			_lit = 1
 	progress.emit(float(_index + 1) / steps.size())
-	_wait = frames_per_step - 1
 
 
 # --- Готовые заготовки шагов ------------------------------------------------------------------
@@ -54,6 +67,18 @@ static func quad(material: Material, shadows := true) -> MeshInstance3D:
 	if not shadows:
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	return mi
+
+
+## Частицы CPUParticles3D с материалом (как искры над сундуком).
+static func cpu_particles(material: Material) -> CPUParticles3D:
+	var p := CPUParticles3D.new()
+	p.amount = 2
+	var q := QuadMesh.new()
+	q.size = Vector2(0.5, 0.5)
+	q.material = material
+	p.mesh = q
+	p.emitting = true
+	return p
 
 
 ## Один экземпляр MultiMesh в том же формате, что и у трав и деревьев.

@@ -115,6 +115,8 @@ func _process(delta: float) -> void:
 		var target := 1.0 if alive and shown else 0.0
 		e["alpha"] = move_toward(e["alpha"], target, delta * 5.0)
 		panel.modulate.a = e["alpha"]
+		# Совсем прозрачные плашки не рисуем вовсе (далёкие здания).
+		panel.visible = e["alpha"] > 0.0
 		if not alive and e["alpha"] <= 0.0:
 			panel.queue_free()
 			_tracked.remove_at(i)
