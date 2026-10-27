@@ -1697,11 +1697,12 @@ static func _hanging_sign(g: Geo, rng: RandomNumberGenerator, at: Vector3, out: 
 	g.box(mat, at + Vector3(0, -0.5, out * 0.5), Vector3(0.06, 0.55, out * 0.72), col(mat, rng), 0.02)
 
 
-## Бочка: выпуклое тело из клёпок и два обруча.
+## Бочка: выпуклое тело из клёпок, два обруча и днища с обеих сторон
+## (у лежащей бочки нижний торец тоже на виду).
 static func _barrel(g: Geo, rng: RandomNumberGenerator, base: Vector3, h := 0.8, r := 0.3, basis := Basis.IDENTITY) -> void:
 	g.push(Transform3D(basis, base))
-	lathe(g, "plank_dark", Vector3.ZERO, [Vector2(r * 0.86, 0.0), Vector2(r, h * 0.3), Vector2(r * 1.04, h * 0.5), Vector2(r, h * 0.7),
-		Vector2(r * 0.86, h), Vector2(0.0, h)], 10, rng, 0.08)
+	lathe(g, "plank_dark", Vector3.ZERO, [Vector2(0.0, 0.0), Vector2(r * 0.86, 0.0), Vector2(r, h * 0.3), Vector2(r * 1.04, h * 0.5),
+		Vector2(r, h * 0.7), Vector2(r * 0.86, h), Vector2(0.0, h)], 10, rng, 0.08)
 	for y: float in [0.16, 0.84]:
 		g.cylinder("plank_dark", Vector3(0, h * y - 0.03, 0), r * 0.97, r * 0.97, 0.06, 10, col("plank_dark", rng).darkened(0.35), false)
 	g.pop()

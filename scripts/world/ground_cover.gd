@@ -17,6 +17,8 @@ const FLOWER_COLORS := [Color(0.96, 0.33, 0.36), Color(0.99, 0.85, 0.3), Color(0
 
 static var _grass_mesh: ArrayMesh
 static var _tall_mesh: ArrayMesh
+static var _grass_far_mesh: ArrayMesh
+static var _tall_far_mesh: ArrayMesh
 static var _flower_mesh: ArrayMesh
 static var _litter_mesh: ArrayMesh
 static var _grass_material: ShaderMaterial
@@ -76,6 +78,22 @@ static func tall_grass_mesh() -> ArrayMesh:
 		return _tall_mesh
 	_tall_mesh = _blades(10, 0.42, Vector2(0.75, 1.3), 0.05, 13)
 	return _tall_mesh
+
+
+## Дальняя трава: тот же пучок из 5 травинок пошире — издалека не отличить,
+## а треугольников втрое меньше (трава — большая часть всей картинки).
+static func grass_far_mesh() -> ArrayMesh:
+	if _grass_far_mesh:
+		return _grass_far_mesh
+	_grass_far_mesh = _blades(5, 0.42, Vector2(0.3, 0.64), 0.075, 7)
+	return _grass_far_mesh
+
+
+static func tall_grass_far_mesh() -> ArrayMesh:
+	if _tall_far_mesh:
+		return _tall_far_mesh
+	_tall_far_mesh = _blades(4, 0.38, Vector2(0.8, 1.25), 0.1, 13)
+	return _tall_far_mesh
 
 
 ## Пучок цветов: стебли (UV.x = 0) и головки-«звёздочки» (UV.x = 1, цвет от экземпляра).
@@ -183,6 +201,40 @@ static func litter_material(fade_end: float) -> ShaderMaterial:
 		_litter_material.shader = load("res://shaders/litter.gdshader")
 	_litter_material.set_shader_parameter("fade_end", fade_end)
 	return _litter_material
+
+
+## Записывает экземпляр n (поворот вокруг Y + масштаб) в заранее выделенный буфер
+## MultiMesh — без временных массивов, это заметно быстрее при тысячах пучков.
+## Возвращает номер следующего экземпляра.
+static func put_instance(buffer: PackedFloat32Array, n: int, stride: int, pos: Vector3, angle: float, scale: float,
+		color: Color, custom := 0.0) -> int:
+	var o := n * stride
+	if o + stride > buffer.size():
+		buffer.resize(maxi(buffer.size() * 2, o + stride * 64))
+	var c := cos(angle) * scale
+	var s := sin(angle) * scale
+	buffer[o] = c
+	buffer[o + 1] = 0.0
+	buffer[o + 2] = s
+	buffer[o + 3] = pos.x
+	buffer[o + 4] = 0.0
+	buffer[o + 5] = scale
+	buffer[o + 6] = 0.0
+	buffer[o + 7] = pos.y
+	buffer[o + 8] = -s
+	buffer[o + 9] = 0.0
+	buffer[o + 10] = c
+	buffer[o + 11] = pos.z
+	buffer[o + 12] = color.r
+	buffer[o + 13] = color.g
+	buffer[o + 14] = color.b
+	buffer[o + 15] = 1.0
+	if stride > 16:
+		buffer[o + 16] = custom
+		buffer[o + 17] = 0.0
+		buffer[o + 18] = 0.0
+		buffer[o + 19] = 0.0
+	return n + 1
 
 
 ## Записывает экземпляр (поворот вокруг Y + масштаб) в буфер MultiMesh.

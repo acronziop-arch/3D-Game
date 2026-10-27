@@ -7,7 +7,16 @@ extends Node3D
 ## За сколько секунд саженец вырастает во взрослое дерево.
 const GROW_TIME := 150.0
 ## Слои покрова: буфер из генератора, меш, шаг буфера, есть ли свои данные.
+## Объекты далёкого чанка изменились — область FarForest перестроит их.
+signal far_props_changed(coord: Vector2i)
+
 const COVER_LAYERS := ["grass", "tall", "flowers", "litter"]
+## Слой мелочи (трава, цветы, кустики, рыбы): её не рисует камера отражений —
+## в воде она не видна, а рисовать её второй раз дорого.
+const DETAIL_LAYER := 8
+## Мелкие объекты, которые издалека не разглядеть: дальше detail_distance чанк их не рисует.
+const SMALL_KINDS := ["bush", "mound"]
+const SMALL_IDS := ["rubble", "ore_coal", "ore_copper", "ore_iron"]
 
 var coord := Vector2i.ZERO
 var heights := PackedFloat32Array()
@@ -25,6 +34,16 @@ var _multimeshes := {}
 var _prop_nodes: Array[Node] = []
 ## слой -> {"mm": MultiMesh, "buffer": PackedFloat32Array, "stride": int, "node": MultiMeshInstance3D}
 var _cover := {}
+## Далёкий чанк: своих объектов не строит — деревья, камни и руины рисует общая
+## область FarForest (один объект на вид на 4×4 чанка), мелочи нет совсем.
+var props_far := false
+## Есть ли у чанка трава: далёкие чанки грузятся без неё (см. ChunkManager._update_cover).
+var cover_ready := true
+## Полные пучки травы (близко) или упрощённые (далеко).
+var _cover_near := true
+## Трава, которая сейчас плавно уходит под дорожку (см. fade_cover_cells).
+var _fading: Array = []
+const COVER_FADE_TIME := 0.4
 ## Растущие деревья (посаженные игроком).
 var _growing: Array[Dictionary] = []
 var _grow_timer := 0.0
@@ -81,7 +100,13 @@ func _build_props() -> void:
 	for p in props:
 		if p.get("removed", false):
 			continue
-		var key := "%s_%d" % [p["id"], p.get("variant", 0)]
+		var id: String = p["id"]
+		if props_far:
+			# Далёкий чанк: объекты рисует FarForest (см. collect_far_props).
+			p["mm"] = ""
+			p["hidden"] = p.get("hidden", false)
+			continue
+		var key := "%s_%d" % [id, p.get("variant", 0)]
 		if not by_type.has(key):
 			by_type[key] = []
 		by_type[key].append(p)
@@ -105,11 +130,18 @@ func _build_props() -> void:
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		mmi.material_override = ModelLibrary.foliage_material()
-		if GameData.PROPS[id]["kind"] == "decor":
+		var kind: String = GameData.PROPS[id]["kind"]
+		if kind == "decor":
 			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			mmi.visibility_range_end = Platform.decor_distance()
 			mmi.visibility_range_end_margin = 20.0
 			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			mmi.layers = DETAIL_LAYER
+		elif kind in SMALL_KINDS or id in SMALL_IDS:
+			mmi.visibility_range_end = Platform.detail_distance()
+			mmi.visibility_range_end_margin = 20.0
+			mmi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
+			mmi.layers = DETAIL_LAYER
 		add_child(mmi)
 		_prop_nodes.append(mmi)
 		_multimeshes[key] = mm
@@ -130,6 +162,8 @@ static func growth(p: Dictionary) -> float:
 
 
 func _process(delta: float) -> void:
+	if not _fading.is_empty():
+		_step_cover_fade(delta)
 	if _growing.is_empty():
 		return
 	_grow_timer -= delta
@@ -141,13 +175,16 @@ func _process(delta: float) -> void:
 		if p.get("removed", false) or p["hidden"]:
 			_growing.remove_at(i)
 			continue
-		_multimeshes[p["mm"]].set_instance_transform(p["mm_i"], prop_transform(p))
+		if _multimeshes.has(p["mm"]):
+			_multimeshes[p["mm"]].set_instance_transform(p["mm_i"], prop_transform(p))
 		if growth(p) >= 1.0:
 			_growing.remove_at(i)
 
 
 ## Трава, высокая трава, цветы и опавшие листья: по MultiMesh на слой.
 func _build_cover(data: Dictionary) -> void:
+	cover_ready = not data.get("cover_skipped", false)
+	_fading.clear()
 	for layer: String in COVER_LAYERS:
 		if _cover.has(layer):
 			(_cover[layer]["node"] as Node).queue_free()
@@ -161,10 +198,10 @@ func _build_cover(data: Dictionary) -> void:
 		var far := float(Settings.get_value("grass_distance"))
 		match layer:
 			"grass":
-				mesh = GroundCover.grass_mesh()
+				mesh = GroundCover.grass_mesh() if _cover_near else GroundCover.grass_far_mesh()
 				material = GroundCover.grass_material(far)
 			"tall":
-				mesh = GroundCover.tall_grass_mesh()
+				mesh = GroundCover.tall_grass_mesh() if _cover_near else GroundCover.tall_grass_far_mesh()
 				material = GroundCover.grass_material(far)
 			"flowers":
 				mesh = GroundCover.flower_mesh()
@@ -201,6 +238,58 @@ func rebuild_cover(data: Dictionary) -> void:
 	_build_cover(data)
 
 
+## Объекты этого (далёкого) чанка для области FarForest: "id:вариант" -> {"buf", "n"} —
+## сразу буфер MultiMesh (трансформация и цвет), координаты относительно origin.
+## Мелочь не нужна — её так далеко не видно.
+func collect_far_props(by_id: Dictionary, origin: Vector3) -> void:
+	var offset := position - origin
+	for p in props:
+		if p.get("removed", false) or p.get("hidden", false):
+			continue
+		var id: String = p["id"]
+		var kind: String = GameData.PROPS[id]["kind"]
+		if kind == "decor" or kind in SMALL_KINDS or id in SMALL_IDS:
+			continue
+		# Деревья издалека одинаковы — один вариант; руины и камни разной формы — свои.
+		var key := "%s:%d" % [id, p.get("variant", 0) if kind in ["ruin", "rock"] else 0]
+		if not by_id.has(key):
+			by_id[key] = {"buf": PackedFloat32Array(), "n": 0}
+		var entry: Dictionary = by_id[key]
+		var xf := prop_transform(p)
+		xf.origin += offset
+		FarForest.put(entry, xf, _instance_tint(id, p["index"]))
+
+
+## Близко — все варианты деревьев и вся мелочь, далеко — упрощённо (см. props_far).
+## true — объекты чанка перестроены.
+func set_prop_lod(far: bool) -> bool:
+	if far == props_far:
+		return false
+	props_far = far
+	_build_props()
+	return true
+
+
+## Чанк далеко — трава не нужна, освобождаем память.
+func drop_cover() -> void:
+	for layer: String in _cover:
+		(_cover[layer]["node"] as Node).queue_free()
+	_cover.clear()
+	_fading.clear()
+	cover_ready = false
+
+
+## Близко — полные пучки травы, далеко — упрощённые (втрое меньше треугольников).
+func set_cover_lod(near: bool) -> void:
+	if near == _cover_near:
+		return
+	_cover_near = near
+	if _cover.has("grass"):
+		(_cover["grass"]["mm"] as MultiMesh).mesh = GroundCover.grass_mesh() if near else GroundCover.grass_far_mesh()
+	if _cover.has("tall"):
+		(_cover["tall"]["mm"] as MultiMesh).mesh = GroundCover.tall_grass_mesh() if near else GroundCover.tall_grass_far_mesh()
+
+
 static func _cover_multimesh(mesh: Mesh, buffer: PackedFloat32Array, stride: int, custom: bool) -> MultiMesh:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -217,6 +306,7 @@ func _add_cover(mm: MultiMesh, material: Material, distance: float) -> MultiMesh
 	mmi.multimesh = mm
 	mmi.material_override = material
 	mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	mmi.layers = DETAIL_LAYER
 	# Пучки сами уходят в землю к distance (шейдер); чанк целиком прячется чуть дальше,
 	# когда в нём точно ничего не видно (полдиагонали чанка — 23 м).
 	mmi.visibility_range_end = distance + WorldGen.CHUNK_SIZE * 0.75
@@ -234,6 +324,79 @@ func clear_cover_cells(cells: Dictionary) -> void:
 		if GroundCover.hide_in_cells(buffer, c["stride"], cells, origin):
 			c["buffer"] = buffer
 			(c["mm"] as MultiMesh).buffer = buffer
+
+
+## Как clear_cover_cells, но трава не пропадает рывком, а за COVER_FADE_TIME
+## плавно приседает до земли (под дорожкой, пока её ведут пальцем).
+func fade_cover_cells(cells: Dictionary) -> void:
+	for layer: String in _cover:
+		var c: Dictionary = _cover[layer]
+		var buffer: PackedFloat32Array = c["buffer"]
+		var index := _cover_index(c)
+		var fading: Dictionary = c.get("fading", {})
+		var items := {}
+		for cell: Vector2i in cells:
+			for i: int in index.get(cell, []):
+				if fading.has(i) or (buffer[i] == 0.0 and buffer[i + 5] == 0.0):
+					continue
+				fading[i] = true
+				items[i] = PackedFloat32Array([buffer[i], buffer[i + 1], buffer[i + 2], buffer[i + 4], buffer[i + 5],
+					buffer[i + 6], buffer[i + 8], buffer[i + 9], buffer[i + 10]])
+		c["fading"] = fading
+		if not items.is_empty():
+			_fading.append({"layer": c, "items": items, "t": 0.0})
+
+
+## Экземпляры покрова по клеткам 1 м (строится один раз на слой).
+func _cover_index(c: Dictionary) -> Dictionary:
+	if c.has("index"):
+		return c["index"]
+	var index := {}
+	var buffer: PackedFloat32Array = c["buffer"]
+	var stride: int = c["stride"]
+	var ox := position.x
+	var oz := position.z
+	for i in range(0, buffer.size(), stride):
+		var cell := Vector2i(floori(buffer[i + 3] + ox), floori(buffer[i + 11] + oz))
+		if index.has(cell):
+			index[cell].append(i)
+		else:
+			index[cell] = [i]
+	c["index"] = index
+	return index
+
+
+func _step_cover_fade(delta: float) -> void:
+	for f_i in range(_fading.size() - 1, -1, -1):
+		var f: Dictionary = _fading[f_i]
+		var c: Dictionary = f["layer"]
+		# Покров пересчитали (новый слой) — старое затухание больше не нужно.
+		var alive := false
+		for layer: Dictionary in _cover.values():
+			alive = alive or is_same(layer, c)
+		if not alive:
+			_fading.remove_at(f_i)
+			continue
+		f["t"] += delta / COVER_FADE_TIME
+		var k := clampf(1.0 - f["t"], 0.0, 1.0)
+		k = k * k * (3.0 - 2.0 * k)
+		var buffer: PackedFloat32Array = c["buffer"]
+		var items: Dictionary = f["items"]
+		for i: int in items:
+			var b: PackedFloat32Array = items[i]
+			buffer[i] = b[0] * k
+			buffer[i + 1] = b[1] * k
+			buffer[i + 2] = b[2] * k
+			buffer[i + 4] = b[3] * k
+			buffer[i + 5] = b[4] * k
+			buffer[i + 6] = b[5] * k
+			buffer[i + 8] = b[6] * k
+			buffer[i + 9] = b[7] * k
+			buffer[i + 10] = b[8] * k
+		c["buffer"] = buffer
+		(c["mm"] as MultiMesh).buffer = buffer
+		if f["t"] >= 1.0:
+			_fading.remove_at(f_i)
 
 
 func clear_cover(rect: Rect2) -> void:
@@ -265,6 +428,11 @@ func world_prop_transform(p: Dictionary) -> Transform3D:
 
 func set_prop_hidden(p: Dictionary, hidden: bool) -> void:
 	p["hidden"] = hidden
+	# Далёкий чанк своих объектов не строит (см. props_far) — пусть область перестроится.
+	if not _multimeshes.has(p.get("mm", "")):
+		if props_far:
+			far_props_changed.emit(coord)
+		return
 	var mm: MultiMesh = _multimeshes[p["mm"]]
 	if hidden:
 		mm.set_instance_transform(p["mm_i"], Transform3D(Basis.from_scale(Vector3.ZERO), p["pos"]))
@@ -362,7 +530,7 @@ func rebuild_terrain() -> void:
 		var pos: Vector3 = p["pos"]
 		pos.y = height_local(pos.x, pos.z)
 		p["pos"] = pos
-		if not p["hidden"]:
+		if not p["hidden"] and _multimeshes.has(p["mm"]):
 			_multimeshes[p["mm"]].set_instance_transform(p["mm_i"], prop_transform(p))
 	if is_instance_valid(chest):
 		chest.position.y = height_local(chest.position.x, chest.position.z)

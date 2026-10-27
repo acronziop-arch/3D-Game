@@ -26,6 +26,8 @@ var _points := PackedVector2Array()
 var _preview: MeshInstance3D
 var _paid_meters := 0.0
 var _length := 0.0
+## До какой точки рисуемой дорожки трава уже убрана.
+var _faded_upto := 0
 var _selected := -1
 
 
@@ -63,7 +65,9 @@ func begin(path_type: String, at: Vector3) -> String:
 	_preview = MeshInstance3D.new()
 	_preview.material_override = material_for(_type)
 	_preview.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_preview.layers = Chunk.DETAIL_LAYER
 	add_child(_preview)
+	_faded_upto = 0
 	return ""
 
 
@@ -92,7 +96,40 @@ func extend(at: Vector3) -> String:
 		_points.append(q)
 		_length += step_len
 	_rebuild_preview()
+	# Трава под только что проложенным куском уходит сразу, плавно, за пальцем
+	# (но не от случайного касания: только когда дорожка уже точно начата).
+	if _length >= 0.3:
+		_fade_ground(_points.slice(maxi(_faded_upto - 1, 0)), WIDTH)
+		_faded_upto = _points.size()
 	return ""
+
+
+## Трава под точками дорожки плавно уходит (без рывка после того, как палец отпустили).
+func _fade_ground(pts: PackedVector2Array, w: float) -> void:
+	var cells := _cells_under(pts, w)
+	if cells.is_empty():
+		return
+	var rect := Rect2(pts[0], Vector2.ZERO)
+	for p in pts:
+		rect = rect.expand(p)
+	rect = rect.grow(w)
+	for c: Vector2i in chunk_manager.chunks:
+		var chunk: Chunk = chunk_manager.chunks[c]
+		if Rect2(chunk.position.x, chunk.position.z, WorldGen.CHUNK_SIZE, WorldGen.CHUNK_SIZE).intersects(rect):
+			chunk.fade_cover_cells(cells)
+
+
+## Клетки 1 м под лентой шириной w вдоль точек.
+static func _cells_under(pts: PackedVector2Array, w: float) -> Dictionary:
+	var cells := {}
+	var r := ceili(w * 0.5)
+	for p in pts:
+		for dz in range(-r, r + 1):
+			for dx in range(-r, r + 1):
+				var q := p + Vector2(dx, dz)
+				if q.distance_to(p) <= w * 0.5 + 0.5:
+					cells[Vector2i(floori(q.x), floori(q.y))] = true
+	return cells
 
 
 ## Списывает стоимость за каждые METERS_PER_COST метров.
@@ -122,7 +159,7 @@ func finish() -> void:
 	var i := WorldState.paths.size() - 1
 	_meshes.append(null)
 	_build(i)
-	_clear_ground(WorldState.paths[i])
+	_clear_ground(WorldState.paths[i], null, true)
 	_points = PackedVector2Array()
 
 
@@ -150,6 +187,7 @@ func _build(i: int) -> void:
 	if not is_instance_valid(mi):
 		mi = MeshInstance3D.new()
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.layers = Chunk.DETAIL_LAYER
 		add_child(mi)
 		_meshes[i] = mi
 	mi.mesh = build_mesh(entry["points"], entry.get("width", WIDTH))
@@ -181,19 +219,11 @@ static func _bounds(entry: Dictionary) -> Rect2:
 	return r.grow(float(entry.get("width", WIDTH)))
 
 
-## Трава и мелочь под дорожкой убираются (only — в указанном чанке).
-func _clear_ground(entry: Dictionary, only: Chunk = null) -> void:
-	var cells := {}
+## Трава и мелочь под дорожкой убираются (only — в указанном чанке, сразу;
+## smooth — трава уходит плавно: так заканчивается только что нарисованная дорожка).
+func _clear_ground(entry: Dictionary, only: Chunk = null, smooth := false) -> void:
 	var w: float = entry.get("width", WIDTH)
-	var pts := _smooth(entry["points"])
-	for i in pts.size():
-		var p := pts[i]
-		var r := ceili(w * 0.5)
-		for dz in range(-r, r + 1):
-			for dx in range(-r, r + 1):
-				var q := p + Vector2(dx, dz)
-				if q.distance_to(p) <= w * 0.5 + 0.5:
-					cells[Vector2i(floori(q.x), floori(q.y))] = true
+	var cells := _cells_under(_smooth(entry["points"]), w)
 	var rect := _bounds(entry)
 	if only:
 		only.clear_cover_cells(cells)
@@ -206,7 +236,10 @@ func _clear_ground(entry: Dictionary, only: Chunk = null) -> void:
 	for c: Vector2i in chunk_manager.chunks:
 		var chunk: Chunk = chunk_manager.chunks[c]
 		if Rect2(chunk.position.x, chunk.position.z, WorldGen.CHUNK_SIZE, WorldGen.CHUNK_SIZE).intersects(rect):
-			chunk.clear_cover_cells(cells)
+			if smooth:
+				chunk.fade_cover_cells(cells)
+			else:
+				chunk.clear_cover_cells(cells)
 
 
 # --- Правка: выбрать и убрать ----------------------------------------------------------------

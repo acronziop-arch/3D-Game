@@ -25,6 +25,8 @@ var _content_queue: Array = []
 
 var gen: WorldGen
 var chunks := {}
+## Деревья и камни далёких чанков, собранные по областям (см. FarForest).
+var far_forest: FarForest
 ## Проверки зданий (их задаёт main.gd): убрать траву под зданиями чанка
 ## и узнать, стоит ли здание в точке.
 var building_hook: Callable = func(_chunk: Chunk) -> void: pass
@@ -38,6 +40,13 @@ var _center := Vector2i(1 << 30, 1 << 30)
 var _dirty := {}
 var _rebuild_timer := 0.0
 var _initial_done := false
+## Трава, которая досоздаётся для подошедших ближе чанков: Vector2i -> {"task", "out"}.
+var _cover_jobs := {}
+var _cover_timer := 0.0
+## Ближе этого расстояния (м от точки взгляда до середины чанка) трава — полными пучками.
+const COVER_LOD_NEAR := 52.0
+## Дальше этого чанк рисует деревья и камни упрощённо, без мелочи (см. Chunk.props_far).
+const PROP_LOD_FAR := 120.0
 
 
 ## Стартовая область мира загружена.
@@ -47,6 +56,9 @@ func is_ready() -> bool:
 
 func start(world_seed: int) -> void:
 	gen = WorldGen.new(world_seed)
+	far_forest = FarForest.new()
+	far_forest.name = "FarForest"
+	add_child(far_forest)
 
 
 func set_view_radius(radius: int) -> void:
@@ -65,8 +77,9 @@ func _process(delta: float) -> void:
 	if center != _center:
 		_center = center
 		_update_wanted()
-	_dispatch()
+	var generated := _dispatch()
 	_finalize()
+	_update_cover(delta, generated)
 	# Новая густота травы: перестраиваем покров по чанку за кадр, ближние — первыми.
 	if not _cover_queue.is_empty():
 		_refresh_cover(_cover_queue.pop_front())
@@ -96,22 +109,29 @@ func _update_wanted() -> void:
 		if (c - _center).length_squared() > keep2:
 			chunks[c].queue_free()
 			chunks.erase(c)
+			far_forest.remove_chunk(c)
 
 
-func _dispatch() -> void:
+## Отправляет на генерацию нужные чанки. true — чанк сгенерирован прямо в этом
+## кадре (без потоков): тогда тяжёлую работу с травой в этом кадре не делаем.
+func _dispatch() -> bool:
+	var generated := false
 	for c in _wanted:
 		if _pending.size() >= max_tasks_in_flight:
-			return
+			return generated
 		if chunks.has(c) or _pending.has(c):
 			continue
 		var out := {}
+		var density := cover_density() if wants_cover(c) else 0.0
 		var args := [c, _edits_for_chunk(c), WorldState.removed_in_chunk(c), WorldState.opened_chests.has(c), out,
-			cover_density(), _extra_for_chunk(c)]
+			density, _extra_for_chunk(c)]
 		if use_threads:
 			_pending[c] = {"task": WorkerThreadPool.add_task(gen.generate_chunk.bindv(args)), "out": out}
 		else:
 			gen.generate_chunk.callv(args)
 			_pending[c] = {"task": -1, "out": out}
+			generated = true
+	return generated
 
 
 func _finalize() -> void:
@@ -128,8 +148,12 @@ func _finalize() -> void:
 		if (c - _center).length_squared() > (view_radius + 2) * (view_radius + 2):
 			continue
 		var chunk := Chunk.new()
+		chunk.props_far = _chunk_distance(c) > PROP_LOD_FAR
 		chunk.setup(c, job["out"])
 		add_child(chunk)
+		chunk.far_props_changed.connect(far_forest.mark_dirty)
+		if chunk.props_far:
+			far_forest.add_chunk(chunk)
 		chunks[c] = chunk
 		chunk_loaded.emit(chunk)
 		done += 1
@@ -165,10 +189,101 @@ func _initial_area_loaded() -> bool:
 
 
 func _exit_tree() -> void:
-	for c: Vector2i in _pending:
-		if _pending[c]["task"] >= 0:
-			WorkerThreadPool.wait_for_task_completion(_pending[c]["task"])
-	_pending.clear()
+	for jobs: Dictionary in [_pending, _cover_jobs]:
+		for c: Vector2i in jobs:
+			if jobs[c]["task"] >= 0:
+				WorkerThreadPool.wait_for_task_completion(jobs[c]["task"])
+		jobs.clear()
+
+
+# --- Трава рядом с камерой ---------------------------------------------------------
+
+## Дальше этого трава не видна (с запасом на размер чанка), м.
+func cover_radius() -> float:
+	return float(Settings.get_value("grass_distance")) * 1.15 + WorldGen.CHUNK_SIZE * 0.75
+
+
+## Нужна ли чанку трава: он достаточно близко к точке взгляда.
+func wants_cover(c: Vector2i) -> bool:
+	return _chunk_distance(c) < cover_radius()
+
+
+func _chunk_distance(c: Vector2i) -> float:
+	var mid := (Vector2(c) + Vector2(0.5, 0.5)) * WorldGen.CHUNK_SIZE
+	return mid.distance_to(Vector2(focus.x, focus.z))
+
+
+## Раз в четверть секунды: чанкам, к которым подошли, — траву (в фоне, если есть
+## потоки); далёким — убираем её (меньше памяти); ближним — полные пучки, дальним — упрощённые.
+func _update_cover(delta: float, generated_this_frame: bool) -> void:
+	# Готовая трава — в сцену, по одному чанку за кадр.
+	for c: Vector2i in _cover_jobs.keys():
+		var job: Dictionary = _cover_jobs[c]
+		if job["task"] >= 0:
+			if not WorkerThreadPool.is_task_completed(job["task"]):
+				continue
+			WorkerThreadPool.wait_for_task_completion(job["task"])
+		_cover_jobs.erase(c)
+		var chunk: Chunk = chunks.get(c)
+		if chunk and not chunk.cover_ready:
+			chunk.set_cover_lod(_chunk_distance(c) < COVER_LOD_NEAR)
+			chunk.rebuild_cover(job["out"])
+			chunk.cover_ready = true
+			building_hook.call(chunk)
+		break
+	_cover_timer -= delta
+	if _cover_timer > 0.0:
+		return
+	_cover_timer = 0.25
+	var radius := cover_radius()
+	var best := Vector2i.ZERO
+	var best_d := INF
+	var rebuilt := 0
+	for c: Vector2i in chunks:
+		var chunk: Chunk = chunks[c]
+		var d := _chunk_distance(c)
+		# Объекты перестраиваются не больше двух чанков за раз — без рывков.
+		# Запас ±8 м: чанк на границе не переключается туда-сюда.
+		var far := chunk.props_far
+		if d > PROP_LOD_FAR + 8.0:
+			far = true
+		elif d < PROP_LOD_FAR - 8.0:
+			far = false
+		if rebuilt < 2 and chunk.set_prop_lod(far):
+			rebuilt += 1
+			# Объекты переходят между чанком и областью FarForest в одном кадре.
+			if far:
+				far_forest.add_chunk(chunk)
+			else:
+				far_forest.remove_chunk(c)
+			far_forest.rebuild_now(c)
+		if chunk.cover_ready:
+			if d < COVER_LOD_NEAR - 4.0:
+				chunk.set_cover_lod(true)
+			elif d > COVER_LOD_NEAR + 4.0:
+				chunk.set_cover_lod(false)
+			if d > radius + WorldGen.CHUNK_SIZE * 2.0:
+				chunk.drop_cover()
+		elif d < radius and not _cover_jobs.has(c) and d < best_d:
+			best = c
+			best_d = d
+	far_forest.rebuild_dirty(2)
+	if best_d == INF or _cover_jobs.size() >= 2:
+		return
+	# Без потоков трава считается прямо здесь — но не в кадре, где уже строился чанк.
+	if not use_threads and generated_this_frame:
+		_cover_timer = 0.0
+		return
+	var chunk: Chunk = chunks[best]
+	var out := {}
+	# Копии сетки: в фоне её не должно менять выравнивание земли.
+	var args := [best, chunk.heights.duplicate(), chunk.colors.duplicate(), cover_density(), out, WorldState.cover_edits_for_chunk(best),
+		_edits_for_chunk(best) if Settings.get_value("keep_cleared") else {}]
+	if use_threads:
+		_cover_jobs[best] = {"task": WorkerThreadPool.add_task(gen._scatter_cover.bindv(args)), "out": out}
+	else:
+		gen._scatter_cover.callv(args)
+		_cover_jobs[best] = {"task": -1, "out": out}
 
 
 ## Густота травы 0..1: настройка игрока с поправкой качества графики.
@@ -370,6 +485,8 @@ func _refresh_content(c: Vector2i) -> void:
 	gen.generate_chunk(c, _edits_for_chunk(c), WorldState.removed_in_chunk(c), WorldState.opened_chests.has(c), out,
 		cover_density(), _extra_for_chunk(c))
 	chunk.replace_content(out)
+	if chunk.props_far:
+		far_forest.mark_dirty(c)
 	# Карта и всё, что лежит на земле (здания, дорожки), узнают о новом рельефе.
 	WorldState.explored.erase(c)
 	chunk_loaded.emit(chunk)
@@ -377,7 +494,7 @@ func _refresh_content(c: Vector2i) -> void:
 
 ## Пересеять траву во всех чанках (сменилась густота). Мир при этом не пропадает.
 func refresh_all_cover() -> void:
-	_cover_queue = chunks.keys()
+	_cover_queue = chunks.keys().filter(func(c: Vector2i) -> bool: return chunks[c].cover_ready)
 	_cover_queue.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
 		return (a - _center).length_squared() < (b - _center).length_squared())
 
@@ -395,6 +512,7 @@ func apply_cover_distance() -> void:
 func reload_all() -> void:
 	for c: Vector2i in chunks:
 		chunks[c].queue_free()
+		far_forest.remove_chunk(c)
 	chunks.clear()
 	_center = Vector2i(1 << 30, 1 << 30)
 

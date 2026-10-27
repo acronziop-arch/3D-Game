@@ -39,6 +39,7 @@ func setup(spots: Array, chunk_coord: Vector2i) -> void:
 			list[i]["mm_i"] = i
 			mm.set_instance_custom_data(i, Color(_rng.randf(), list[i]["speed"], 0, 0))
 		var mmi := MultiMeshInstance3D.new()
+		mmi.layers = Chunk.DETAIL_LAYER
 		mmi.multimesh = mm
 		mmi.material_override = ModelLibrary.fish_material()
 		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF

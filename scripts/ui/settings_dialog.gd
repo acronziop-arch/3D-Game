@@ -393,6 +393,34 @@ func _build_graphics(page: VBoxContainer) -> void:
 	_slider(nature, "grass", "Густота травы", "", 0.0, 1.0, 0.05, func(v: float) -> String: return "%d%%" % roundi(v * 100.0), true)
 	_slider(nature, "grass_distance", "Дальность травы", "Дальше этого трава плавно уходит в землю.", 25.0, 140.0, 5.0,
 		func(v: float) -> String: return "%d м" % v, true)
+	if Platform.is_web:
+		_build_threads(page)
+
+
+## Браузер: многопоточная сборка (мир строится в фоновых потоках).
+func _build_threads(page: VBoxContainer) -> void:
+	var card := _card(page, "compass", "Многопоточность",
+		"Мир строится в фоновых потоках процессора — меньше рывков, когда вы ведёте камеру. "
+		+ "Если игра в браузере вылетает — выключите. Меняется после перезапуска игры.")
+	_chips(card, "web_threads", [["auto", "Авто", "auto"], ["off", "Выключена", ""]], 2)
+	var status := _desc("")
+	if OS.has_feature("threads"):
+		status.text = "Сейчас: включена — мир строится в фоне."
+	elif Settings.get_value("web_threads") == "off":
+		status.text = "Сейчас: выключена."
+	else:
+		status.text = "Сейчас: выключена — браузер пока не разрешил потоки. Обычно они включаются со второго запуска."
+	card.add_child(status)
+	var restart := Button.new()
+	restart.text = "Перезапустить игру"
+	restart.icon = UiStyle.icon("rotate")
+	restart.add_theme_constant_override("icon_max_width", 24)
+	restart.custom_minimum_size = Vector2(0, 46 if _touch else 44)
+	restart.mouse_filter = Control.MOUSE_FILTER_PASS
+	restart.pressed.connect(func() -> void:
+		WorldState.save_game()
+		JavaScriptBridge.eval("window.everstead && setTimeout(window.everstead.reload, 300)"))
+	card.add_child(restart)
 
 
 # --- Управление ------------------------------------------------------------------------------------

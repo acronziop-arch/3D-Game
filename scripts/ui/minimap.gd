@@ -19,6 +19,7 @@ static var _img: Image
 static var _tex: ImageTexture
 static var _origin := Vector2i(-CANVAS / 2, -CANVAS / 2)
 static var _dirty := false
+static var _upload_cooldown := 0.0
 static var _shader: Shader
 
 var chunk_manager: ChunkManager
@@ -181,9 +182,13 @@ func _process(delta: float) -> void:
 	recenter_if_needed(cam)
 	if follow_camera:
 		center = cam
-	if _dirty:
+	# Полотно 512×512 отправляется видеокарте не чаще 4 раз в секунду: новые чанки
+	# при полёте появляются почти каждый кадр, а мегабайт на кадр — заметная нагрузка.
+	_upload_cooldown -= delta
+	if _dirty and _upload_cooldown <= 0.0:
 		_tex.update(_img)
 		_dirty = false
+		_upload_cooldown = 0.25
 	var atlas := _view.texture as AtlasTexture
 	var px := (center / CELL) - Vector2(_origin)
 	var span := view_meters / CELL
@@ -193,7 +198,7 @@ func _process(delta: float) -> void:
 	(_view.material as ShaderMaterial).set_shader_parameter("radius", corner_radius)
 	_redraw_timer -= delta
 	if _redraw_timer <= 0.0:
-		_redraw_timer = 0.05
+		_redraw_timer = 0.1 if Platform.is_mobile() else 0.05
 		_overlay.queue_redraw()
 
 

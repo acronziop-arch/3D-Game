@@ -39,6 +39,9 @@ const DEFAULTS := {
 	"haptics": true,
 	## Не выращивать заново деревья и траву там, где игрок выровнял землю.
 	"keep_cleared": true,
+	## Браузер: auto — многопоточная сборка, если браузер её позволяет; off — обычная.
+	## Само значение хранит страница (localStorage) — оно нужно ещё до запуска движка.
+	"web_threads": "auto",
 }
 
 const QUALITY_LEVELS := ["low", "medium", "high", "ultra"]

@@ -220,7 +220,7 @@ func _process(delta: float) -> void:
 	env.ambient_light_energy = lerpf(0.55, 0.95, daylight) + _flash * 2.0
 	env.fog_light_color = horizon
 	# Туман густеет к краю загруженного мира — чанки появляются незаметно.
-	var view_far := float(Settings.get_value("view_distance")) * WorldGen.CHUNK_SIZE - 12.0
+	var view_far := float(Platform.view_radius()) * WorldGen.CHUNK_SIZE - 12.0
 	var far := lerpf(view_far, 80.0, Weather.fog) * (1.0 - Weather.rain * 0.25)
 	env.fog_depth_end = far
 	env.fog_depth_begin = lerpf(far * 0.5, 8.0, Weather.fog)

@@ -425,7 +425,12 @@ func generate_chunk(coord: Vector2i, edits: Dictionary, removed: Dictionary, che
 	out["fish_spots"] = fish_spots
 	out["has_water"] = not fish_spots.is_empty()
 	var cleared_edits: Dictionary = edits if keep_cleared else {}
-	_scatter_cover(coord, heights, out["colors"], cover_density, out, extra.get("cover", {}), cleared_edits)
+	# Дальним чанкам трава не нужна (её там не видно): ChunkManager досоздаст её,
+	# когда камера подойдёт ближе.
+	if cover_density > 0.0:
+		_scatter_cover(coord, heights, out["colors"], cover_density, out, extra.get("cover", {}), cleared_edits)
+	else:
+		out["cover_skipped"] = true
 
 
 ## Попадает ли точка (локально в чанке) на выровненную игроком землю.
@@ -496,10 +501,15 @@ const DEFAULT_GREEN := Color(0.45, 0.66, 0.28)
 ## важнее природы: скошенное пусто, посеянное растёт даже в пустыне.
 func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: PackedColorArray, density: float, out: Dictionary,
 		cover_edits := {}, cleared := {}) -> void:
+	var stride := GroundCover.GRASS_STRIDE
 	var grass := PackedFloat32Array()
 	var tall := PackedFloat32Array()
 	var flowers := PackedFloat32Array()
 	var litter := PackedFloat32Array()
+	var n_grass := 0
+	var n_tall := 0
+	var n_flowers := 0
+	var n_litter := 0
 	var origin := Vector2(coord.x, coord.y) * CHUNK_SIZE
 	# Биом на грубой сетке 8 м — дёшево и достаточно точно для травы.
 	var biomes := PackedByteArray()
@@ -507,12 +517,26 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 	for gz in 5:
 		for gx in 5:
 			biomes[gz * 5 + gx] = climate_biome(origin.x + gx * 8.0, origin.y + gz * 8.0)
+	# По вершинам сетки — один раз на чанк: крутизна склона и цвет земли
+	# (раньше это считалось для каждого пучка — тысячи раз).
+	var vn := RES + 1
+	var vslope := PackedFloat32Array()
+	vslope.resize(vn * vn)
+	var vground := PackedColorArray()
+	vground.resize(vn * vn)
+	for j in vn:
+		for i in vn:
+			var dx := heights[hidx(i + 1, j)] - heights[hidx(i - 1, j)]
+			var dz := heights[hidx(i, j + 1)] - heights[hidx(i, j - 1)]
+			vslope[j * vn + i] = Vector2(dx, dz).length() / (2.0 * CELL)
+			vground[j * vn + i] = ground_color(colors[j * vn + i], heights[hidx(i, j)], 1.0)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash([world_seed, coord.x, coord.y, "cover"])
 	density = clampf(density, 0.05, 1.0)
 	# Шаг сетки сильно зависит от густоты: 100% — пучок на каждые ~0.6 м.
 	var cells := int(CHUNK_SIZE / lerpf(2.2, 0.62, density))
 	var step := CHUNK_SIZE / cells
+	grass.resize(cells * cells * stride)
 	for gj in cells:
 		for gi in cells:
 			# Все случайные числа клетки берём сразу: если клетку скосили или
@@ -534,11 +558,13 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 			var info: Array = COVER.get(biomes[roundi(lz / 8.0) * 5 + roundi(lx / 8.0)], [0.0, false, false, false])
 			if edit == "" and roll > float(info[0]):
 				continue
-			var h := sample_height(heights, coord, lx, lz)
-			if h < WATER_LEVEL + (0.3 if edit != "" else 0.6) or _slope(heights, coord, lx, lz) > (0.7 if edit != "" else 0.55):
+			var k := clampi(roundi(lz / CELL), 0, RES) * vn + clampi(roundi(lx / CELL), 0, RES)
+			if vslope[k] > (0.7 if edit != "" else 0.55):
 				continue
-			var k := clampi(roundi(lz / CELL), 0, RES) * (RES + 1) + clampi(roundi(lx / CELL), 0, RES)
-			var ground := ground_color(colors[k], h, 1.0)
+			var h := sample_height(heights, coord, lx, lz)
+			if h < WATER_LEVEL + (0.3 if edit != "" else 0.6):
+				continue
+			var ground := vground[k]
 			if ground.g - maxf(ground.r, ground.b) < 0.06:
 				if edit == "":
 					continue
@@ -554,19 +580,20 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 					kind = "flowers"
 			match kind:
 				"tall":
-					GroundCover.write_instance(tall, Vector3(lx, h, lz), angle, scale, col)
+					n_tall = GroundCover.put_instance(tall, n_tall, stride, Vector3(lx, h, lz), angle, scale, col)
 				"flowers":
 					# Поляна одного цвета: цвет зависит от клетки 10 м.
 					var patch := hash(Vector2i(floori(world.x / 10.0), floori(world.y / 10.0)) + Vector2i(world_seed, 7))
 					var petal: Color = GroundCover.FLOWER_COLORS[absi(patch) % GroundCover.FLOWER_COLORS.size()]
 					if odd_petal < 0.2:
 						petal = GroundCover.FLOWER_COLORS[odd_pick % GroundCover.FLOWER_COLORS.size()]
-					GroundCover.write_instance(flowers, Vector3(lx, h, lz), angle, scale * 0.9, petal)
+					n_flowers = GroundCover.put_instance(flowers, n_flowers, stride, Vector3(lx, h, lz), angle, scale * 0.9, petal)
 					# Под цветами — немного обычной травы.
-					GroundCover.write_instance(grass, Vector3(lx + 0.3, h, lz - 0.2), angle + 1.0, scale * 0.8, col)
+					n_grass = GroundCover.put_instance(grass, n_grass, stride, Vector3(lx + 0.3, h, lz - 0.2), angle + 1.0, scale * 0.8, col)
 				_:
-					GroundCover.write_instance(grass, Vector3(lx, h, lz), angle, scale, col)
+					n_grass = GroundCover.put_instance(grass, n_grass, stride, Vector3(lx, h, lz), angle, scale, col)
 	# Опавшие листья — в лиственных лесах.
+	var lstride := GroundCover.LITTER_STRIDE
 	var lcells := 10
 	var lstep := CHUNK_SIZE / lcells
 	for gj in lcells:
@@ -579,12 +606,19 @@ func _scatter_cover(coord: Vector2i, heights: PackedFloat32Array, colors: Packed
 			var info: Array = COVER.get(biomes[roundi(lz / 8.0) * 5 + roundi(lx / 8.0)], [0.0, false, false, false])
 			if not info[1]:
 				continue
+			var k := clampi(roundi(lz / CELL), 0, RES) * vn + clampi(roundi(lx / CELL), 0, RES)
+			if vslope[k] > 0.5:
+				continue
 			var h := sample_height(heights, coord, lx, lz)
-			if h < WATER_LEVEL + 0.5 or _slope(heights, coord, lx, lz) > 0.5:
+			if h < WATER_LEVEL + 0.5:
 				continue
 			if not cleared.is_empty() and _is_edited(cleared, coord, lx, lz):
 				continue
-			GroundCover.write_instance(litter, Vector3(lx, h, lz), angle, litter_scale, Color.WHITE, litter_seed)
+			n_litter = GroundCover.put_instance(litter, n_litter, lstride, Vector3(lx, h, lz), angle, litter_scale, Color.WHITE, litter_seed)
+	grass.resize(n_grass * stride)
+	tall.resize(n_tall * stride)
+	flowers.resize(n_flowers * stride)
+	litter.resize(n_litter * lstride)
 	out["grass"] = grass
 	out["tall"] = tall
 	out["flowers"] = flowers

@@ -203,3 +203,15 @@ func reflection_scale() -> float:
 ## Дальность мелочи (камешки, кустики), м.
 func decor_distance() -> float:
 	return maxf(70.0, float(Settings.get_value("grass_distance")) * 1.4)
+
+
+## Дальность прорисовки в чанках. На телефоне — не больше 7 (224 м): дальше
+## туман, а каждый лишний круг чанков — сотни объектов и вызовов отрисовки.
+func view_radius() -> int:
+	var r := int(Settings.get_value("view_distance"))
+	return mini(r, 7) if is_mobile() else r
+
+
+## Дальность кустов, мелких камней и руды, м: дальше они меньше пикселя-двух.
+func detail_distance() -> float:
+	return maxf(110.0, float(Settings.get_value("grass_distance")) * 1.6)

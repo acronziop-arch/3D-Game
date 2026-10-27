@@ -35,13 +35,14 @@ var _on_page_hide: JavaScriptObject
 
 
 func _ready() -> void:
-	chunk_manager.view_radius = Settings.get_value("view_distance")
+	chunk_manager.view_radius = Platform.view_radius()
 	if Platform.is_mobile() or Platform.is_web:
 		# Новые чанки — по одному за кадр, чтобы на телефоне и в браузере не было рывков.
 		chunk_manager.finalize_per_frame = 1
 		chunk_manager.max_tasks_in_flight = 3
-	if Platform.is_web:
-		# В браузере потоков нет: мир строится в главном потоке, по чанку за кадр.
+	if Platform.is_web and not OS.has_feature("threads"):
+		# Браузер без потоков (сборка без многопоточности или страница не изолирована):
+		# мир строится в главном потоке, по чанку за кадр.
 		chunk_manager.use_threads = false
 		chunk_manager.max_tasks_in_flight = 1
 	chunk_manager.chunk_loaded.connect(building_system.on_chunk_loaded)
@@ -79,6 +80,12 @@ func _ready() -> void:
 	add_child(_markers)
 	hud.markers_changed.connect(_markers.refresh)
 	Settings.changed.connect(_on_setting_changed)
+	Platform.layout_changed.connect(_apply_graphics)
+	if OS.has_feature("web"):
+		# Выбор многопоточности хранит страница — берём его оттуда.
+		var mode: Variant = JavaScriptBridge.eval("window.everstead && window.everstead.threadsMode ? window.everstead.threadsMode() : 'auto'")
+		if mode is String and mode != Settings.get_value("web_threads"):
+			Settings.set_value("web_threads", mode)
 	if Platform.is_touch:
 		var touch := TouchInput.new()
 		touch.name = "TouchInput"
@@ -209,8 +216,12 @@ func _on_world_ready() -> void:
 
 func _on_setting_changed(key: String) -> void:
 	match key:
+		"web_threads":
+			if OS.has_feature("web"):
+				JavaScriptBridge.eval("window.everstead && window.everstead.setThreads && window.everstead.setThreads(%s)"
+					% JSON.stringify(Settings.get_value("web_threads")))
 		"view_distance":
-			chunk_manager.set_view_radius(Settings.get_value("view_distance"))
+			chunk_manager.set_view_radius(Platform.view_radius())
 		"grass":
 			chunk_manager.refresh_all_cover()
 		"grass_distance":
@@ -223,16 +234,39 @@ func _on_setting_changed(key: String) -> void:
 
 
 ## Разрешение 3D-картинки и качество теней.
+## Пикселей 3D-картинки (млн) на каждом уровне качества — для телефона и браузера.
+## У iPhone экран втрое плотнее точек интерфейса (2556×1179 — 3 млн пикселей):
+## считать 3D во всех них — втрое больше работы, а на глаз разница почти не видна.
+## Интерфейс при этом остаётся в полном разрешении.
+const PIXEL_BUDGET_MOBILE := [0.6, 0.85, 1.2, 1.6]
+const PIXEL_BUDGET_WEB := [0.9, 1.4, 2.1, 3.0]
+
+
+## Разрешение 3D-картинки, сглаживание, свечение и качество теней.
 func _apply_graphics() -> void:
 	var vp := get_viewport()
+	var level := Settings.quality_level()
+	var light := Platform.is_mobile() or Platform.is_web
 	var render_scale: float = clampf(float(Settings.get_value("render_scale")), 0.5, 1.0)
+	if light:
+		var px := Vector2(get_window().size)
+		var budget: float = (PIXEL_BUDGET_MOBILE if Platform.is_mobile() else PIXEL_BUDGET_WEB)[level] * 1000000.0
+		render_scale = clampf(minf(render_scale, sqrt(budget / maxf(px.x * px.y, 1.0))), 0.4, 1.0)
 	vp.scaling_3d_scale = render_scale
 	# На ПК при уменьшенном разрешении — FSR (чётче), на телефоне и в браузере — простое.
 	var forward_plus := RenderingServer.get_current_rendering_method() == "forward_plus"
 	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_FSR if render_scale < 0.99 and forward_plus and not Platform.is_mobile() \
 		else Viewport.SCALING_3D_MODE_BILINEAR
+	if light:
+		# Сглаживание MSAA — только на максимуме: на плотном экране телефона «лесенки» почти не видно.
+		vp.msaa_3d = Viewport.MSAA_2X if level >= 3 else Viewport.MSAA_DISABLED
+		var env := get_world_3d().environment
+		if env == null and has_node("WorldEnvironment"):
+			env = ($WorldEnvironment as WorldEnvironment).environment
+		if env:
+			env.glow_enabled = level >= 2
 	# Комнаты за окнами — только на высоком и наивысшем качестве.
-	RenderingServer.global_shader_parameter_set("interiors", 1.0 if Settings.quality_level() >= 2 else 0.0)
+	RenderingServer.global_shader_parameter_set("interiors", 1.0 if level >= 2 else 0.0)
 	# Тени: размер карты теней, мягкость краёв и дальность.
 	var q: String = Settings.get_value("shadow_quality")
 	sun.shadow_enabled = q != "off"
@@ -259,6 +293,13 @@ func _apply_graphics() -> void:
 			sun.directional_shadow_max_distance = 160.0
 			# Солнце — не точка: тень у основания резкая, а дальше расплывается.
 			sun.light_angular_distance = 0.0 if Platform.is_web else 1.0
+	if light and q == "high":
+		# На телефоне и в браузере каждое деление теней — ещё одна перерисовка мира:
+		# два деления вместо четырёх и карта поменьше, дальность почти та же.
+		atlas = 2048
+		filter = RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM
+		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+		sun.directional_shadow_max_distance = 130.0
 	RenderingServer.directional_shadow_atlas_set_size(atlas, true)
 	RenderingServer.directional_soft_shadow_filter_set_quality(filter)
 

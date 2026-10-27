@@ -298,7 +298,7 @@ func _apply_layout() -> void:
 	_pin(_craft_panel, -m["right"], craft_top, -m["right"], craft_top)
 	_craft_panel.custom_minimum_size.x = minf(_px(480, 440), vp.x - m["left"] - m["right"] - _minimap.custom_minimum_size.x - 40.0)
 	# Снизу оставляем место панели инструментов и строке подсказки.
-	var craft_room: float = vp.y - craft_top - m["bottom"] - _px(92, 80) - _px(48, 44) - _px(120, 104)
+	var craft_room: float = vp.y - craft_top - m["bottom"] - _px(92, 80) - _px(48, 44) - _px(120, 76)
 	_craft_scroll.custom_minimum_size.y = clampf(_craft_scroll.content().get_combined_minimum_size().y, 80.0, maxf(craft_room, 80.0))
 	if _portrait_hint:
 		# Браузер на телефоне не умеет закрепить альбомную ориентацию — просим повернуть.
@@ -765,14 +765,10 @@ func _build_craft_panel() -> void:
 	_craft_panel.add_child(box)
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 8)
-	header.add_child(UiStyle.icon_rect("tool_craft", _px(28, 24)))
-	var title := UiStyle.label("Ремесло", _px(22, 18), UiStyle.TEXT, 800)
+	header.add_child(UiStyle.icon_rect("tool_craft", _px(28, 22)))
+	var title := UiStyle.label("Ремесло", _px(22, 17), UiStyle.TEXT, 800)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
-	var close := UiStyle.close_button(_px(38, 40))
-	close.pressed.connect(toggle_crafting)
-	header.add_child(close)
-	box.add_child(header)
 	# Очередь: одинаковые рецепты складываются в «×N», длинная очередь листается вбок,
 	# а ширина окна от неё не меняется.
 	var queue_row := HBoxContainer.new()
@@ -787,12 +783,25 @@ func _build_craft_panel() -> void:
 	_craft_queue = HBoxContainer.new()
 	_craft_queue.add_theme_constant_override("separation", 5)
 	_craft_queue_scroll.add_child(_craft_queue)
-	box.add_child(queue_row)
+	var close := UiStyle.close_button(_px(38, 36))
+	close.pressed.connect(toggle_crafting)
+	if _touch:
+		# На телефоне высоты мало: очередь — в одной строке с заголовком, чтобы
+		# под ней поместилось больше рецептов.
+		title.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+		queue_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		header.add_child(queue_row)
+		header.add_child(close)
+		box.add_child(header)
+	else:
+		header.add_child(close)
+		box.add_child(header)
+		box.add_child(queue_row)
 	_craft_progress = ProgressBar.new()
 	_craft_progress.max_value = 1.0
 	_craft_progress.step = 0.0
 	_craft_progress.show_percentage = false
-	_craft_progress.custom_minimum_size = Vector2(0, 8)
+	_craft_progress.custom_minimum_size = Vector2(0, _px(8, 5))
 	box.add_child(_craft_progress)
 	_craft_scroll = SmoothScroll.new()
 	box.add_child(_craft_scroll)
@@ -803,7 +812,7 @@ func _build_craft_panel() -> void:
 	for id: String in GameData.RECIPES:
 		var r: Dictionary = GameData.RECIPES[id]
 		var row := PanelContainer.new()
-		row.add_theme_stylebox_override("panel", UiStyle.box(UiStyle.SURFACE, 12, int(_px(8, 6))))
+		row.add_theme_stylebox_override("panel", UiStyle.box(UiStyle.SURFACE, 12, int(_px(8, 5))))
 		row.mouse_filter = Control.MOUSE_FILTER_PASS
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", 8)
@@ -824,7 +833,7 @@ func _build_craft_panel() -> void:
 		line.add_child(info)
 		var b := Button.new()
 		b.text = "Сделать"
-		b.custom_minimum_size = Vector2(_px(96, 92), _px(36, 40))
+		b.custom_minimum_size = Vector2(_px(96, 88), _px(36, 36))
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		b.mouse_filter = Control.MOUSE_FILTER_PASS
 		b.pressed.connect(func() -> void:

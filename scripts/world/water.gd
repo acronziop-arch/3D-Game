@@ -11,6 +11,10 @@ extends MeshInstance3D
 
 const WATER_LAYER := 2
 const FLOW_SIZE := 256
+## Отражение рисуется, если вода ближе этого к точке взгляда, м.
+const REFLECT_DISTANCE := 190.0
+## Дальше этого в воде ничего не отражается (дальше и рябь всё смазывает), м.
+const REFLECT_FAR := 220.0
 
 var camera_rig: CameraRig
 var chunk_manager: ChunkManager
@@ -21,6 +25,8 @@ var _material: ShaderMaterial
 var _flow_img: Image
 var _flow_tex: ImageTexture
 var _flow_dirty := false
+var _water_near := true
+var _near_timer := 0.0
 
 
 func _ready() -> void:
@@ -62,7 +68,7 @@ func _ready() -> void:
 	_viewport.mesh_lod_threshold = 4.0
 	add_child(_viewport)
 	_camera = Camera3D.new()
-	_camera.cull_mask = 0xFFFFF & ~WATER_LAYER & ~Atmosphere.RAIN_LAYER
+	_camera.cull_mask = 0xFFFFF & ~WATER_LAYER & ~Atmosphere.RAIN_LAYER & ~Chunk.DETAIL_LAYER
 	_viewport.add_child(_camera)
 	_material.set_shader_parameter("reflection_tex", _viewport.get_texture())
 	Settings.changed.connect(func(_key: String) -> void: _apply_settings())
@@ -86,9 +92,31 @@ static func _noise_texture(frequency: float, octaves: int, bump: float, seed_val
 
 
 func _apply_settings() -> void:
-	var on: bool = Settings.get_value("reflections")
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
-	_material.set_shader_parameter("reflection_enabled", 1.0 if on else 0.0)
+	_set_reflection(Settings.get_value("reflections") and _water_near)
+
+
+## Отражение рисуется, только если включено и вода рядом (иначе это лишняя
+## перерисовка всего мира каждый кадр).
+func _set_reflection(on: bool) -> void:
+	var mode := SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
+	if _viewport.render_target_update_mode != mode:
+		_viewport.render_target_update_mode = mode
+		_material.set_shader_parameter("reflection_enabled", 1.0 if on else 0.0)
+
+
+## Есть ли вода в загруженных чанках недалеко от камеры (раз в полсекунды).
+func _check_water_near() -> void:
+	var near := false
+	if chunk_manager:
+		var focus := Vector2(camera_rig.position.x, camera_rig.position.z)
+		for chunk: Chunk in chunk_manager.chunks.values():
+			if chunk.has_water and Vector2(chunk.position.x + WorldGen.CHUNK_SIZE * 0.5,
+					chunk.position.z + WorldGen.CHUNK_SIZE * 0.5).distance_to(focus) < REFLECT_DISTANCE:
+				near = true
+				break
+	if near != _water_near:
+		_water_near = near
+		_apply_settings()
 
 
 ## Чанк загрузился: его кусочек карты течения — в общую текстуру.
@@ -101,25 +129,34 @@ func write_flow(chunk: Chunk) -> void:
 	_flow_dirty = true
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _flow_dirty:
 		_flow_dirty = false
 		_flow_tex.update(_flow_img)
 	if camera_rig == null:
 		return
+	_near_timer -= delta
+	if _near_timer <= 0.0:
+		_near_timer = 0.5
+		_check_water_near()
 	var main_cam := camera_rig.camera
 	# Вершины плоскости лежат на сетке 6 м — двигаем её с тем же шагом, чтобы волны не «плыли».
 	global_position = Vector3(snappedf(main_cam.global_position.x, 6.0), WorldGen.WATER_LEVEL, snappedf(main_cam.global_position.z, 6.0))
 	if _viewport.render_target_update_mode == SubViewport.UPDATE_DISABLED:
 		return
 	# Размер окна в пикселях (интерфейс может быть растянут, а отражению важны пиксели).
+	# На телефоне с плотным экраном пикселей втрое больше, чем точек, — для ряби на
+	# воде столько не нужно: ширина отражения ограничена.
 	var size := Vector2(get_tree().root.size) * Platform.reflection_scale()
+	var cap := 640.0 if Platform.is_mobile() else 1280.0
+	if size.x > cap:
+		size *= cap / size.x
 	var target := Vector2i(maxi(64, int(size.x)), maxi(64, int(size.y)))
 	if _viewport.size != target:
 		_viewport.size = target
 	_camera.fov = main_cam.fov
 	_camera.near = main_cam.near
-	_camera.far = 260.0
+	_camera.far = REFLECT_FAR
 	# Зеркалим камеру относительно плоскости воды; ось Y камеры переворачиваем,
 	# чтобы базис остался правым — поэтому шейдер читает снимок с перевёрнутой V.
 	var t := main_cam.global_transform
