@@ -53,6 +53,7 @@ var _paint_last: Building
 
 
 func _ready() -> void:
+	Building.ground_height = func(x: float, z: float) -> float: return chunk_manager.get_height(x, z)
 	_cross = Sprite3D.new()
 	_cross.texture = load("res://assets/icons/cross.png")
 	_cross.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -544,6 +545,7 @@ func _finish_move() -> void:
 			entry["normal"] = b.ground_normal
 	b.footprint = Building.footprint_for(b.id, b.position, b.yaw)
 	b.visible = true
+	b.refit_ground()
 	if entry:
 		entry["pos"] = b.position
 		entry["yaw"] = b.yaw
@@ -576,8 +578,10 @@ func rotate_building(b: Building, direction := 1.0) -> String:
 	var entry: Variant = _save_entry(b)
 	b.yaw = angle
 	b.footprint = Building.footprint_for(b.id, b.position, angle)
-	b.create_tween().tween_property(b, "rotation:y", b.rotation.y + angle_difference(b.rotation.y, angle), 0.25) \
+	var tw := b.create_tween()
+	tw.tween_property(b, "rotation:y", b.rotation.y + angle_difference(b.rotation.y, angle), 0.25) \
 		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_callback(b.refit_ground)
 	if entry:
 		entry["yaw"] = angle
 	chunk_manager.clear_decor(b.footprint)
@@ -604,6 +608,8 @@ func on_chunk_loaded(chunk: Chunk) -> void:
 	for b in buildings:
 		if is_instance_valid(b) and b.footprint.intersects(area):
 			chunk.clear_cover(b.footprint)
+			# Земля под костром или скамьёй могла быть ещё не загружена — укладываем заново.
+			b.refit_ground()
 
 
 func restore_from_save() -> void:

@@ -1,6 +1,6 @@
 extends Node3D
-## Точка входа: связывает системы между собой, загружает или создаёт мир.
-## Новый мир — кнопка в настройках или запуск с аргументом `-- --new-world`.
+## Точка входа: связывает системы между собой, показывает стартовый экран со
+## списком миров и строит выбранный мир. `-- --new-world` — сразу новый мир.
 
 ## Автосохранение раз в 5 минут (и сразу, когда игру сворачивают).
 const AUTOSAVE_INTERVAL := 300.0
@@ -31,18 +31,6 @@ var _normal_chunk_pace := []
 
 
 func _ready() -> void:
-	var loaded := false
-	if not "--new-world" in OS.get_cmdline_user_args():
-		loaded = WorldState.load_game()
-	if not loaded:
-		# `-- --seed=N` — мир с заданным зерном (для проверки одного и того же места).
-		var seed_value := -1
-		for arg in OS.get_cmdline_user_args():
-			if arg.begins_with("--seed="):
-				seed_value = int(arg.substr(7))
-		WorldState.new_world(seed_value)
-	Minimap.reset_canvas()
-
 	chunk_manager.view_radius = Settings.get_value("view_distance")
 	if Platform.is_mobile() or Platform.is_web:
 		# Новые чанки — по одному за кадр, чтобы на телефоне и в браузере не было рывков.
@@ -52,7 +40,6 @@ func _ready() -> void:
 		# В браузере потоков нет: мир строится в главном потоке, по чанку за кадр.
 		chunk_manager.use_threads = false
 		chunk_manager.max_tasks_in_flight = 1
-	chunk_manager.start(WorldState.world_seed)
 	chunk_manager.chunk_loaded.connect(building_system.on_chunk_loaded)
 	chunk_manager.chunk_loaded.connect(Minimap.explore)
 	chunk_manager.chunk_loaded.connect(water.write_flow)
@@ -81,7 +68,7 @@ func _ready() -> void:
 	water.chunk_manager = chunk_manager
 	atmosphere.camera_rig = camera_rig
 	hud.bind(interaction)
-	hud.new_world_requested.connect(_new_world)
+	hud.menu_requested.connect(_to_menu)
 	_markers = Markers.new()
 	_markers.name = "Markers"
 	_markers.chunk_manager = chunk_manager
@@ -97,16 +84,9 @@ func _ready() -> void:
 		add_child(touch)
 	_apply_graphics()
 
-	if loaded and not WorldState.camera_state.is_empty():
-		camera_rig.set_state(WorldState.camera_state)
-	else:
-		camera_rig.teleport(chunk_manager.gen.find_spawn())
-	chunk_manager.focus = camera_rig.position
-	chunk_manager.initial_area_ready.connect(_on_world_ready, CONNECT_ONE_SHOT)
-
 	# Запуск по шагам, чтобы браузер не «зависал»: первый кадр — только экран
-	# загрузки, затем шейдеры компилируются по одному за кадр, и только потом
-	# строится мир. Экран загрузки всё это время показывает ход.
+	# загрузки, затем шейдеры компилируются по одному за кадр. Потом — стартовый
+	# экран со списком миров, и только когда мир выбран, он строится.
 	chunk_manager.running = false
 	water.visible = false
 	get_viewport().disable_3d = true
@@ -114,15 +94,51 @@ func _ready() -> void:
 	_warmup.name = "ShaderWarmup"
 	_warmup.steps = _warmup_steps()
 	_warmup.progress.connect(func(f: float) -> void: _report_loading(f * WARMUP_SHARE, "Готовим графику…"))
-	_warmup.finished.connect(func() -> void:
-		_warmup.queue_free()
-		# Под экраном загрузки рывки не видны — стартовый кусок мира строим быстрее.
-		_normal_chunk_pace = [chunk_manager.finalize_per_frame, chunk_manager.max_tasks_in_flight]
-		chunk_manager.finalize_per_frame = 4
-		chunk_manager.max_tasks_in_flight = maxi(chunk_manager.max_tasks_in_flight, 4)
-		chunk_manager.running = true)
+	_warmup.finished.connect(_on_warmup_done)
 	add_child(_warmup)
 	_report_loading(0.0, "Готовим графику…")
+
+
+func _on_warmup_done() -> void:
+	_warmup.queue_free()
+	# `-- --new-world [--seed=N]` — сразу новый мир, без стартового экрана (для проверок).
+	if "--new-world" in OS.get_cmdline_user_args():
+		var seed_value := -1
+		for arg in OS.get_cmdline_user_args():
+			if arg.begins_with("--seed="):
+				seed_value = int(arg.substr(7))
+		WorldState.create_world("Новый мир", seed_value)
+	if WorldState.world_id != "":
+		_start_world()
+		return
+	# Пока открыт стартовый экран, 3D не рисуется — телефон не греется зря.
+	get_viewport().disable_3d = true
+	var start := StartScreen.new()
+	start.name = "StartScreen"
+	start.chosen.connect(func() -> void:
+		get_viewport().disable_3d = false
+		_start_world())
+	add_child(start)
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.everstead && window.everstead.ready()")
+
+
+## Мир выбран (WorldState уже открыл или создал его) — строим его под экраном загрузки.
+func _start_world() -> void:
+	Minimap.reset_canvas()
+	chunk_manager.start(WorldState.world_seed)
+	if not WorldState.camera_state.is_empty():
+		camera_rig.set_state(WorldState.camera_state)
+	else:
+		camera_rig.teleport(chunk_manager.gen.find_spawn())
+	chunk_manager.focus = camera_rig.position
+	chunk_manager.initial_area_ready.connect(_on_world_ready, CONNECT_ONE_SHOT)
+	# Под экраном загрузки рывки не видны — стартовый кусок мира строим быстрее.
+	_normal_chunk_pace = [chunk_manager.finalize_per_frame, chunk_manager.max_tasks_in_flight]
+	chunk_manager.finalize_per_frame = 4
+	chunk_manager.max_tasks_in_flight = maxi(chunk_manager.max_tasks_in_flight, 4)
+	chunk_manager.running = true
+	_report_loading(WARMUP_SHARE, "Строим мир…")
 
 
 ## По виду материала на шаг — в том же формате, в каком их рисует мир.
@@ -173,7 +189,10 @@ func _on_world_ready() -> void:
 	hud.hide_loading()
 	if OS.has_feature("web"):
 		JavaScriptBridge.eval("window.everstead && window.everstead.ready()")
-	hud.show_message("Добро пожаловать! Срубите пару деревьев и постройте лесопилку.")
+	if WorldState.buildings.is_empty():
+		hud.show_message("Добро пожаловать в «%s»! Срубите пару деревьев и постройте лесопилку." % WorldState.world_name)
+	else:
+		hud.show_message("С возвращением в «%s»!" % WorldState.world_name)
 
 
 func _on_setting_changed(key: String) -> void:
@@ -269,9 +288,11 @@ func _station_distance(station: String) -> float:
 	return best
 
 
-func _new_world() -> void:
-	WorldState.new_world()
+## «В главное меню»: сохраняем мир и показываем стартовый экран заново.
+func _to_menu() -> void:
+	WorldState.camera_state = camera_rig.get_state()
 	WorldState.save_game()
+	WorldState.close_world()
 	get_tree().reload_current_scene()
 
 

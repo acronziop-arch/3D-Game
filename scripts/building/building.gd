@@ -10,6 +10,8 @@ extends Node3D
 signal completed(building: Building)
 
 static var _ghost_material: ShaderMaterial
+## Высота земли в точке (x, z) — её задаёт BuildingSystem.
+static var ground_height: Callable
 static var _ghost_opening_material: ShaderMaterial
 static var _highlight_material: StandardMaterial3D
 
@@ -27,6 +29,8 @@ var planted := 0.0
 var ground_normal := Vector3.UP
 
 var _mesh: MeshInstance3D
+## Исходный меш у построек, которые ложатся по земле (см. _conform), — для пересчёта.
+var _ground_mesh: Mesh
 var _ghost: MeshInstance3D
 var _rotor: Node3D
 var _rotor_mesh: MeshInstance3D
@@ -149,6 +153,33 @@ static func highlight_material() -> StandardMaterial3D:
 	return _highlight_material
 
 
+## Копия меша, у которой низ «лёг» на землю: каждая вершина сдвинута на разницу
+## высоты земли под ней и под центром. Высокие части (верх факела) не сдвигаются.
+func _conform(mesh: Mesh) -> ArrayMesh:
+	var out := ArrayMesh.new()
+	var xf := global_transform
+	for i in mesh.get_surface_count():
+		var arrays := mesh.surface_get_arrays(i)
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		for k in verts.size():
+			var v := verts[k]
+			var w := xf * v
+			var dh: float = ground_height.call(w.x, w.z) - global_position.y
+			verts[k] = v + Vector3(0, dh * (1.0 - smoothstep(1.0, 1.8, v.y)), 0)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		out.surface_set_material(i, mesh.surface_get_material(i))
+	return out
+
+
+## Снова уложить по земле — после переноса или поворота.
+func refit_ground() -> void:
+	if _ground_mesh and is_inside_tree():
+		_mesh.mesh = _conform(_ground_mesh)
+		if _ghost:
+			_ghost.mesh = _mesh.mesh
+
+
 func setup(building_id: String, angle: float, instant: bool) -> void:
 	id = building_id
 	yaw = angle
@@ -160,7 +191,13 @@ func setup(building_id: String, angle: float, instant: bool) -> void:
 	name = "%s_%d" % [id, get_instance_id()]
 
 	_mesh = MeshInstance3D.new()
-	_mesh.mesh = data["mesh"]
+	var def: Dictionary = GameData.BUILDINGS[id]
+	# Мелочь на земле (костёр, ограда, скамья) ложится по неровностям: брёвна и камни не висят в воздухе.
+	var mesh: Mesh = data["mesh"]
+	if def.get("conform", false) and ground_height.is_valid():
+		_ground_mesh = mesh
+		mesh = _conform(mesh)
+	_mesh.mesh = mesh
 	add_child(_mesh)
 	if data["rotor_mesh"]:
 		_rotor = Node3D.new()
@@ -170,7 +207,6 @@ func setup(building_id: String, angle: float, instant: bool) -> void:
 		_rotor_mesh.mesh = data["rotor_mesh"]
 		_rotor.add_child(_rotor_mesh)
 
-	var def: Dictionary = GameData.BUILDINGS[id]
 	if instant or GameMode.is_creative() or def.get("light", false) and def["time"] <= 0.6:
 		ModelLibrary.apply_building_materials(_mesh)
 		if _rotor_mesh:
@@ -183,7 +219,7 @@ func setup(building_id: String, angle: float, instant: bool) -> void:
 	if _rotor_mesh:
 		_use_progress_materials(_rotor_mesh)
 	_ghost = MeshInstance3D.new()
-	_ghost.mesh = data["mesh"]
+	_ghost.mesh = mesh
 	add_child(_ghost)
 	_progress_materials.append_array(apply_ghost_materials(_ghost, true))
 	_set_progress(0.0)

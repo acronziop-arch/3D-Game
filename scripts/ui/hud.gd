@@ -9,7 +9,8 @@ extends CanvasLayer
 ## На телефоне (Platform.is_touch) всё компактнее и не заходит под вырез экрана.
 ## Тройное касание двумя пальцами (на ПК — H) прячет весь интерфейс.
 
-signal new_world_requested
+## Выход на стартовый экран (кнопка «В главное меню» в настройках).
+signal menu_requested
 signal markers_changed
 
 const LOADING_TIPS := [
@@ -136,7 +137,7 @@ func _ready() -> void:
 	_root.add_child(_settings)
 	_settings.save_requested.connect(func() -> void:
 		show_message("Мир сохранён" if WorldState.save_game() else "Не удалось сохранить"))
-	_settings.new_world_requested.connect(func() -> void: new_world_requested.emit())
+	_settings.menu_requested.connect(func() -> void: menu_requested.emit())
 	# Время, сезон и погода из настроек меняются сразу — за косой чёрной полосой.
 	var wipe := WorldWipe.new()
 	add_child(wipe)

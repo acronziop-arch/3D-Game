@@ -697,7 +697,7 @@ func _process(delta: float) -> void:
 						_paint_timer = 0.12
 						chunk_manager.paint_cover(_ground, brush_radius * 0.5, nature_mode)
 			text = Rich.title(NATURE_MODES[nature_mode]) + "\n" + Rich.muted("Проведите пальцем по земле" if touch
-				else "Зажмите %s и ведите" % Rich.key("ЛКМ")) + Rich.muted("   деревья — в «Стройка» → «Сад»")
+				else "Зажмите %s и ведите" % Rich.key("ЛКМ")) + Rich.muted("   деревья — в «Стройка» %s «Сад»" % Rich.icon("arrow", 14))
 		Tool.EDIT:
 			if not touch:
 				var b: Building = null if over_ui else building_system.pick(from, dir)

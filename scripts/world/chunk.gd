@@ -57,7 +57,8 @@ func setup(chunk_coord: Vector2i, data: Dictionary) -> void:
 
 	has_water = data.get("has_water", false)
 	flow = data.get("flow", PackedByteArray())
-	if has_water and Settings.get_value("fish"):
+	# Рыбы есть всегда, а настройка «Рыбы» их только прячет (см. FishSchool).
+	if has_water:
 		fish = FishSchool.new()
 		add_child(fish)
 		fish.setup(data["fish_spots"], coord)

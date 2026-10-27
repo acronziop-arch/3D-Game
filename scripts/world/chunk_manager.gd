@@ -207,6 +207,8 @@ func get_height(x: float, z: float) -> float:
 
 
 func get_biome_name(x: float, z: float) -> String:
+	if gen == null:
+		return ""
 	if gen.ruin_near(x, z):
 		return "Руины"
 	return gen.biome_name(gen.biome_at(x, z, get_height(x, z)))

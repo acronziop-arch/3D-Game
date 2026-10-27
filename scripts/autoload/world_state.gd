@@ -2,10 +2,27 @@ extends Node
 ## Всё, чем текущий мир отличается от «чистой» генерации по сиду:
 ## правки рельефа, срубленные деревья, открытые сундуки, здания.
 ## Мир бесконечный, поэтому храним только изменения, а не сам мир.
+##
+## Миров может быть несколько: у каждого своё имя и свой файл в user://worlds/,
+## список с именами и датами — в user://worlds/index.dat. Мир можно передать
+## другу: export_code() упаковывает файл мира в текстовый код, import_code()
+## добавляет такой код как новый мир.
 
-const SAVE_PATH := "user://world.save"
+const WORLDS_DIR := "user://worlds/"
+const INDEX_PATH := "user://worlds/index.dat"
+## Старое единственное сохранение — переносится в список миров при первом запуске.
+const LEGACY_PATH := "user://world.save"
 const SAVE_VERSION := 4
+const CODE_PREFIX := "EVERSTEAD1:"
+## Превью — PREVIEW_CELLS клеток карты (по 4 м) вокруг камеры.
+const PREVIEW_CELLS := 48
+const BUILDING_DOT := Color("#5A4636")
+const NAME_IDEAS := ["Тихая долина", "Солнечный холм", "Речная гавань", "Сосновый край", "Ясная поляна",
+	"Медовый луг", "Каменный брод", "Северная застава", "Ольховка", "Зелёный дол", "Лисья опушка", "Ветряная гряда"]
 
+## Открытый мир: id и имя (пусто — мир ещё не выбран, показывается стартовый экран).
+var world_id := ""
+var world_name := ""
 var world_seed: int = 0
 ## Vector2i(вершина сетки) -> высота.
 var terrain_edits: Dictionary = {}
@@ -88,10 +105,16 @@ func unregister_completed(building_id: String) -> void:
 
 
 func save_game() -> bool:
-	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if world_id == "":
+		return false
+	DirAccess.make_dir_recursive_absolute(WORLDS_DIR)
+	var file := FileAccess.open(_path(world_id), FileAccess.WRITE)
 	if file == null:
 		push_warning("Не удалось сохранить: %s" % error_string(FileAccess.get_open_error()))
 		return false
+	_touch_index(world_id, {"name": world_name, "seed": world_seed, "played": Time.get_unix_time_from_system(),
+		"buildings": buildings.size()})
+	_save_preview(world_id, explored, camera_state.get("pos", Vector3.ZERO), buildings)
 	file.store_var({
 		"version": SAVE_VERSION,
 		"seed": world_seed,
@@ -113,9 +136,9 @@ func save_game() -> bool:
 
 
 func load_game() -> bool:
-	if not FileAccess.file_exists(SAVE_PATH):
+	if world_id == "" or not FileAccess.file_exists(_path(world_id)):
 		return false
-	var file := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	var file := FileAccess.open(_path(world_id), FileAccess.READ)
 	if file == null:
 		return false
 	var data: Variant = file.get_var()
@@ -140,3 +163,248 @@ func load_game() -> bool:
 	Inventory.items = data["inventory"]
 	Inventory.changed.emit("")
 	return true
+
+
+# --- Список миров ----------------------------------------------------------------------------------
+
+func _path(id: String) -> String:
+	return WORLDS_DIR + id + ".save"
+
+
+## Картинка-превью мира для стартового экрана (кусок карты вокруг камеры).
+func preview_path(id: String) -> String:
+	return WORLDS_DIR + id + ".png"
+
+
+## Разведанная карта вокруг точки и здания тёмными точками — как на мини-карте.
+func _save_preview(id: String, explored_cells: Dictionary, center: Vector3, building_list: Array) -> void:
+	var n := PREVIEW_CELLS
+	var per := Minimap.PER_CHUNK
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	img.fill(Minimap.PAPER)
+	var c0 := Vector2i(floori(center.x / Minimap.CELL) - n / 2, floori(center.z / Minimap.CELL) - n / 2)
+	for cz in range(floori(float(c0.y) / per), floori(float(c0.y + n - 1) / per) + 1):
+		for cx in range(floori(float(c0.x) / per), floori(float(c0.x + n - 1) / per) + 1):
+			var bytes: PackedByteArray = explored_cells.get(Vector2i(cx, cz), PackedByteArray())
+			if bytes.size() != per * per * 3:
+				continue
+			for j in per:
+				for i in per:
+					var px := cx * per + i - c0.x
+					var py := cz * per + j - c0.y
+					if px >= 0 and py >= 0 and px < n and py < n:
+						var o := (j * per + i) * 3
+						img.set_pixel(px, py, Color8(bytes[o], bytes[o + 1], bytes[o + 2]))
+	img.resize(n * 2, n * 2, Image.INTERPOLATE_NEAREST)
+	for b: Dictionary in building_list:
+		var p: Vector3 = b.get("pos", Vector3.ZERO)
+		var px := int((p.x / Minimap.CELL - c0.x) * 2.0)
+		var py := int((p.z / Minimap.CELL - c0.y) * 2.0)
+		if px >= 1 and py >= 1 and px < n * 2 - 2 and py < n * 2 - 2:
+			img.fill_rect(Rect2i(px - 1, py - 1, 3, 3), BUILDING_DOT)
+	img.save_png(preview_path(id))
+
+
+## Миры, последние сыгранные — первыми: [{"id", "name", "seed", "created", "played", "buildings"}].
+func list_worlds() -> Array:
+	_migrate_legacy()
+	var index := _read_index()
+	var out: Array = []
+	for id: String in index:
+		if FileAccess.file_exists(_path(id)):
+			var entry: Dictionary = index[id].duplicate()
+			entry["id"] = id
+			out.append(entry)
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.get("played", 0.0) > b.get("played", 0.0))
+	return out
+
+
+## Новый мир с именем; сразу сохраняется и становится открытым.
+func create_world(title: String, seed_value := -1) -> void:
+	new_world(seed_value)
+	world_id = _new_id()
+	world_name = _unique_name(_clean_name(title))
+	_touch_index(world_id, {"name": world_name, "seed": world_seed, "created": Time.get_unix_time_from_system()})
+	save_game()
+
+
+## Открывает сохранённый мир. false — файл повреждён или не найден.
+func open_world(id: String) -> bool:
+	var index := _read_index()
+	if not index.has(id):
+		return false
+	world_id = id
+	world_name = index[id].get("name", "Мир")
+	if not load_game():
+		world_id = ""
+		return false
+	return true
+
+
+## Закрывает мир (после этого показывается стартовый экран).
+func close_world() -> void:
+	world_id = ""
+	world_name = ""
+
+
+func delete_world(id: String) -> void:
+	var index := _read_index()
+	index.erase(id)
+	_write_index(index)
+	for path in [_path(id), preview_path(id)]:
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(path)
+	if id == world_id:
+		close_world()
+
+
+func rename_world(id: String, title: String) -> void:
+	_touch_index(id, {"name": _clean_name(title)})
+	if id == world_id:
+		world_name = _clean_name(title)
+
+
+## Мир целиком (постройки, ресурсы, рельеф, метки) в виде текстового кода — его
+## можно отправить другу файлом или сообщением. Онлайн для этого не нужен.
+func export_code(id: String) -> String:
+	if id == world_id:
+		save_game()
+	var bytes := FileAccess.get_file_as_bytes(_path(id))
+	if bytes.is_empty():
+		return ""
+	var entry: Dictionary = _read_index().get(id, {})
+	var packed := var_to_bytes({"name": entry.get("name", "Мир"), "save": bytes})
+	var size := packed.size()
+	var compressed := packed.compress(FileAccess.COMPRESSION_GZIP)
+	return CODE_PREFIX + str(size) + ":" + Marshalls.raw_to_base64(compressed)
+
+
+## Добавляет мир из кода друга. Возвращает пустую строку или причину ошибки.
+func import_code(code: String) -> String:
+	code = code.strip_edges()
+	var start := code.find(CODE_PREFIX)
+	if start < 0:
+		return "Это не код мира Everstead"
+	code = code.substr(start + CODE_PREFIX.length())
+	var sep := code.find(":")
+	if sep < 0:
+		return "Код мира повреждён"
+	var size := code.substr(0, sep).to_int()
+	# Мессенджеры могут разбить длинный код на строки — пробелы и переносы убираем.
+	var body := code.substr(sep + 1)
+	for ch in [" ", "\n", "\r", "\t"]:
+		body = body.replace(ch, "")
+	var compressed := Marshalls.base64_to_raw(body)
+	if size <= 0 or size > 64 * 1024 * 1024 or compressed.is_empty():
+		return "Код мира повреждён"
+	var packed := compressed.decompress(size, FileAccess.COMPRESSION_GZIP)
+	var data: Variant = bytes_to_var(packed)
+	if not (data is Dictionary) or not (data.get("save") is PackedByteArray):
+		return "Код мира повреждён"
+	var id := _new_id()
+	DirAccess.make_dir_recursive_absolute(WORLDS_DIR)
+	var file := FileAccess.open(_path(id), FileAccess.WRITE)
+	if file == null:
+		return "Не удалось сохранить мир"
+	file.store_buffer(data["save"])
+	file.close()
+	# Проверяем, что внутри настоящее сохранение, и берём из него данные для списка.
+	file = FileAccess.open(_path(id), FileAccess.READ)
+	var save: Variant = file.get_var() if file else null
+	file = null
+	if not (save is Dictionary) or not int(save.get("version", 0)) in [3, SAVE_VERSION]:
+		DirAccess.remove_absolute(_path(id))
+		return "Мир из другой версии игры — обновите страницу и попробуйте снова"
+	var now := Time.get_unix_time_from_system()
+	var building_list: Array = save.get("buildings", [])
+	_touch_index(id, {"name": _unique_name(_clean_name(str(data.get("name", "Мир друга")))), "seed": save.get("seed", 0),
+		"created": now, "played": now, "buildings": building_list.size()})
+	_save_preview(id, save.get("explored", {}), save.get("camera", {}).get("pos", Vector3.ZERO), building_list)
+	return ""
+
+
+## Имя для нового мира, которого ещё нет в списке.
+func suggest_name() -> String:
+	var taken := _taken_names()
+	var ideas: Array = NAME_IDEAS.duplicate()
+	ideas.shuffle()
+	for title: String in ideas:
+		if not taken.has(title):
+			return title
+	return _unique_name("Новый мир")
+
+
+## Имя файла, которым мир отправляется другу.
+func share_file_name(id: String) -> String:
+	var title: String = _read_index().get(id, {}).get("name", "Мир")
+	for ch in ["/", "\\", ":", "*", "?", "\"", "<", ">", "|"]:
+		title = title.replace(ch, " ")
+	return "Everstead — %s.txt" % title.strip_edges()
+
+
+func _taken_names() -> Dictionary:
+	var taken := {}
+	for entry: Dictionary in _read_index().values():
+		taken[entry.get("name", "")] = true
+	return taken
+
+
+## Имя, которого ещё нет в списке: «Деревня», «Деревня 2», «Деревня 3»…
+func _unique_name(title: String) -> String:
+	var taken := _taken_names()
+	if not taken.has(title):
+		return title
+	# «Деревня 2» занята — следующая «Деревня 3», а не «Деревня 2 2».
+	var m := RegEx.create_from_string("^(.*\\S) (\\d+)$").search(title)
+	var base := m.get_string(1) if m else title
+	var n := 2
+	while taken.has("%s %d" % [base, n]):
+		n += 1
+	return "%s %d" % [base, n]
+
+
+static func _clean_name(title: String) -> String:
+	var t := title.strip_edges().replace("\n", " ")
+	if t == "":
+		t = "Мой мир"
+	return t.left(40)
+
+
+func _new_id() -> String:
+	return "w%d_%d" % [int(Time.get_unix_time_from_system()), randi() % 100000]
+
+
+func _read_index() -> Dictionary:
+	if not FileAccess.file_exists(INDEX_PATH):
+		return {}
+	var file := FileAccess.open(INDEX_PATH, FileAccess.READ)
+	if file == null:
+		return {}
+	var data: Variant = file.get_var()
+	return data if data is Dictionary else {}
+
+
+func _write_index(index: Dictionary) -> void:
+	DirAccess.make_dir_recursive_absolute(WORLDS_DIR)
+	var file := FileAccess.open(INDEX_PATH, FileAccess.WRITE)
+	if file:
+		file.store_var(index)
+
+
+func _touch_index(id: String, fields: Dictionary) -> void:
+	var index := _read_index()
+	var entry: Dictionary = index.get(id, {})
+	entry.merge(fields, true)
+	index[id] = entry
+	_write_index(index)
+
+
+## Сохранение из прошлых версий (один мир) становится «Моим миром» в списке.
+func _migrate_legacy() -> void:
+	if not FileAccess.file_exists(LEGACY_PATH):
+		return
+	DirAccess.make_dir_recursive_absolute(WORLDS_DIR)
+	var id := _new_id()
+	if DirAccess.rename_absolute(LEGACY_PATH, _path(id)) == OK:
+		var now := Time.get_unix_time_from_system()
+		_touch_index(id, {"name": "Мой мир", "created": now, "played": now})

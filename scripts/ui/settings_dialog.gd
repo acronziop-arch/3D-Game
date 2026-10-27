@@ -6,8 +6,9 @@ extends Control
 ## где номерами и стрелками показано, куда нажимать.
 ## Открывается шестерёнкой справа сверху, закрывается крестиком, Esc или кликом мимо.
 
-signal new_world_requested
 signal save_requested
+## Сохранить мир и выйти на стартовый экран со списком миров.
+signal menu_requested
 
 const WIDTH := 940.0
 ## Оттенки фирменных цветов для подложек и акцентов.
@@ -30,9 +31,8 @@ var _panel: PanelContainer
 var _chips_by_key := {}
 var _sliders := []
 var _toggles := {}
-var _confirm_new := false
-var _new_button: Button
 var _touch := false
+var _world_title: Label
 var _scroll: SmoothScroll
 var _pages := {}
 var _nav_buttons := {}
@@ -324,7 +324,10 @@ func _build_game(page: VBoxContainer) -> void:
 		"Трава и деревья не вырастают снова там, где вы выровняли землю.")
 	if Platform.is_mobile():
 		_toggle_row(land, "haptics", "Вибрация", "Лёгкий отклик при нажатиях и стройке.")
-	var save_card := _card(page, "map", "Мир", "Игра сохраняется сама каждые 5 минут и при сворачивании.")
+	var save_card := _card(page, "map", "Мир",
+		"Игра сохраняется сама каждые 5 минут и при сворачивании. В главном меню — все ваши миры, новый мир и «Поделиться».")
+	# Заголовок карточки — имя открытого мира (обновляется при каждом открытии окна).
+	_world_title = save_card.get_child(0).get_child(1).get_child(0)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	row.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -337,17 +340,15 @@ func _build_game(page: VBoxContainer) -> void:
 	save.mouse_filter = Control.MOUSE_FILTER_PASS
 	save.pressed.connect(func() -> void: save_requested.emit())
 	row.add_child(save)
-	_new_button = Button.new()
-	_new_button.text = "Новый мир"
-	_new_button.icon = UiStyle.icon("warning")
-	_new_button.add_theme_constant_override("icon_max_width", 24)
-	_new_button.custom_minimum_size = Vector2(0, 46 if _touch else 44)
-	_new_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_new_button.mouse_filter = Control.MOUSE_FILTER_PASS
-	_new_button.add_theme_color_override("font_color", UiStyle.BAD)
-	_new_button.add_theme_color_override("font_hover_color", UiStyle.BAD)
-	_new_button.pressed.connect(_on_new_world)
-	row.add_child(_new_button)
+	var menu := Button.new()
+	menu.text = "В главное меню"
+	menu.icon = UiStyle.icon("house_blue")
+	menu.add_theme_constant_override("icon_max_width", 24)
+	menu.custom_minimum_size = Vector2(0, 46 if _touch else 44)
+	menu.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	menu.mouse_filter = Control.MOUSE_FILTER_PASS
+	menu.pressed.connect(func() -> void: menu_requested.emit())
+	row.add_child(menu)
 	save_card.add_child(row)
 
 
@@ -594,17 +595,8 @@ static func _keys(text: String) -> String:
 	return out
 
 
-func _on_new_world() -> void:
-	if not _confirm_new:
-		_confirm_new = true
-		_new_button.text = "Точно? Ещё раз"
-		return
-	new_world_requested.emit()
-
-
 func open() -> void:
-	_confirm_new = false
-	_new_button.text = "Новый мир"
+	_world_title.text = "Мир «%s»" % WorldState.world_name if WorldState.world_name != "" else "Мир"
 	_sync()
 	_fit()
 	_scroll.reset()

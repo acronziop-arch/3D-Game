@@ -71,6 +71,10 @@ func _new_target() -> Vector3:
 
 
 func _process(delta: float) -> void:
+	# Настройка «Рыбы» действует сразу, без перезапуска.
+	visible = Settings.get_value("fish")
+	if not visible:
+		return
 	var cam := get_viewport().get_camera_3d()
 	if cam == null or cam.global_position.distance_to(global_position + Vector3(16, 0, 16)) > UPDATE_DISTANCE:
 		return
