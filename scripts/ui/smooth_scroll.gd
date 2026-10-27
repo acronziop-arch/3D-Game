@@ -7,6 +7,9 @@ extends Container
 
 ## true — листается по горизонтали, иначе по вертикали.
 @export var horizontal := false
+## Полоса под содержимым (или справа от него), где идёт полоска прокрутки, —
+## чтобы она не ложилась на кнопки. 0 — полоска прямо поверх содержимого.
+@export var bar_room := 0.0
 
 ## Сколько прокручено, пикселей.
 var scroll := 0.0
@@ -60,7 +63,7 @@ func _get_minimum_size() -> Vector2:
 	if c == null:
 		return Vector2.ZERO
 	var m := c.get_combined_minimum_size()
-	return Vector2(0.0, m.y) if horizontal else Vector2(m.x, 0.0)
+	return Vector2(0.0, m.y + bar_room) if horizontal else Vector2(m.x + bar_room, 0.0)
 
 
 func _notification(what: int) -> void:
@@ -70,9 +73,9 @@ func _notification(what: int) -> void:
 			return
 		var m := c.get_combined_minimum_size()
 		if horizontal:
-			fit_child_in_rect(c, Rect2(Vector2(-scroll, 0.0), Vector2(maxf(m.x, size.x), size.y)))
+			fit_child_in_rect(c, Rect2(Vector2(-scroll, 0.0), Vector2(maxf(m.x, size.x), size.y - bar_room)))
 		else:
-			fit_child_in_rect(c, Rect2(Vector2(0.0, -scroll), Vector2(size.x, maxf(m.y, size.y))))
+			fit_child_in_rect(c, Rect2(Vector2(0.0, -scroll), Vector2(size.x - bar_room, maxf(m.y, size.y))))
 
 
 func _axis(p: Vector2) -> float:
@@ -101,11 +104,13 @@ func _place_bar() -> void:
 		thumb = maxf(14.0, thumb - over)
 	var t := clampf(scroll / limit, 0.0, 1.0)
 	var at := (length - thumb) * t
+	# Полоска — посередине своей полосы, если она есть, иначе у самого края.
+	var edge := (bar_room + 3.0) * 0.5 if bar_room > 0.0 else 5.0
 	if horizontal:
-		_bar.position = Vector2(at, size.y - 5.0)
+		_bar.position = Vector2(at, size.y - edge)
 		_bar.size = Vector2(thumb, 3.0)
 	else:
-		_bar.position = Vector2(size.x - 5.0, at)
+		_bar.position = Vector2(size.x - edge, at)
 		_bar.size = Vector2(3.0, thumb)
 
 

@@ -33,9 +33,15 @@ var follow_camera := true
 var corner_radius := 14.0
 
 var _view: TextureRect
-## Поверх полотна: руины, здания, метки, стрелка камеры и рамка.
+## Руины и здания: слой перерисовывается несколько раз в секунду, а между перерисовками
+## просто едет вместе с картой — значки не отстают и не прыгают.
+var _world_layer: Control
+## С каким центром слой нарисован в последний раз.
+var _layer_center := Vector2.ZERO
+## Поверх: метки, стрелка камеры и рамка — каждый кадр (это быстро).
 var _overlay: Control
 var _redraw_timer := 0.0
+var _frame: StyleBoxFlat
 
 
 static func ensure_canvas() -> void:
@@ -167,7 +173,11 @@ void fragment() {
 	_view.material = mat
 	add_child(_view)
 	move_child(_view, 0)
-	# Значки рисуются отдельным слоем поверх полотна (иначе полотно их закрывает).
+	# Значки рисуются отдельными слоями поверх полотна (иначе полотно их закрывает).
+	_world_layer = Control.new()
+	_world_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_world_layer.draw.connect(_draw_world)
+	add_child(_world_layer)
 	_overlay = Control.new()
 	_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -199,7 +209,11 @@ func _process(delta: float) -> void:
 	_redraw_timer -= delta
 	if _redraw_timer <= 0.0:
 		_redraw_timer = 0.1 if Platform.is_mobile() else 0.05
-		_overlay.queue_redraw()
+		_layer_center = center
+		_world_layer.size = size
+		_world_layer.queue_redraw()
+	_world_layer.position = (_layer_center - center) * (size.y / view_meters)
+	_overlay.queue_redraw()
 
 
 ## Мировые XZ → точка на карте.
@@ -213,17 +227,18 @@ func map_to_world(p: Vector2) -> Vector2:
 	return center + (p - size * 0.5) / k
 
 
-func _draw_overlay() -> void:
-	if camera_rig == null:
-		return
-	var ci := _overlay
+## Руины и здания — относительно _layer_center (слой потом сдвигается вслед за картой).
+func _draw_world() -> void:
+	var ci := _world_layer
 	var k := size.y / view_meters
-	var rect := Rect2(Vector2.ZERO, size).grow(-2.0)
+	# С запасом по краям: до следующей перерисовки слой успевает сдвинуться.
+	var rect := Rect2(Vector2.ZERO, size).grow(48.0)
+	var at := func(p: Vector2) -> Vector2: return size * 0.5 + (p - _layer_center) * k
 	# Руины в разведанной части — коричневые «развалины».
 	if chunk_manager and chunk_manager.gen:
-		var half := Vector2(size.x, size.y) * 0.5 / k
-		var c0 := Vector2i(floori((center.x - half.x) / WorldGen.RUIN_CELL), floori((center.y - half.y) / WorldGen.RUIN_CELL))
-		var c1 := Vector2i(floori((center.x + half.x) / WorldGen.RUIN_CELL), floori((center.y + half.y) / WorldGen.RUIN_CELL))
+		var half := (Vector2(size.x, size.y) * 0.5 + Vector2(48, 48)) / k
+		var c0 := Vector2i(floori((_layer_center.x - half.x) / WorldGen.RUIN_CELL), floori((_layer_center.y - half.y) / WorldGen.RUIN_CELL))
+		var c1 := Vector2i(floori((_layer_center.x + half.x) / WorldGen.RUIN_CELL), floori((_layer_center.y + half.y) / WorldGen.RUIN_CELL))
 		for cz in range(c0.y, c1.y + 1):
 			for cx in range(c0.x, c1.x + 1):
 				var site := chunk_manager.gen.ruin_site(Vector2i(cx, cz))
@@ -232,7 +247,7 @@ func _draw_overlay() -> void:
 				var sc: Vector2 = site["center"]
 				if not WorldState.explored.has(ChunkManager.chunk_of(sc.x, sc.y)):
 					continue
-				var mp := world_to_map(sc)
+				var mp: Vector2 = at.call(sc)
 				if rect.has_point(mp):
 					_draw_ruin(ci, mp, maxf(4.0, WorldGen.RUIN_RADIUS * k * 0.35))
 	# Здания.
@@ -240,12 +255,18 @@ func _draw_overlay() -> void:
 		for b in building_system.buildings:
 			if not is_instance_valid(b):
 				continue
-			var mp := world_to_map(Vector2(b.position.x, b.position.z))
+			var mp: Vector2 = at.call(Vector2(b.position.x, b.position.z))
 			if not rect.has_point(mp):
 				continue
 			var s := clampf(maxf(b.footprint.size.x, b.footprint.size.y) * k, 3.0, 14.0)
 			ci.draw_rect(Rect2(mp - Vector2(s, s) * 0.5, Vector2(s, s)), Color("#8C5A3C"))
 			ci.draw_rect(Rect2(mp - Vector2(s, s) * 0.5, Vector2(s, s)), Color("#3E342B"), false, 1.0)
+
+
+func _draw_overlay() -> void:
+	if camera_rig == null:
+		return
+	var ci := _overlay
 	# Метки игрока: дальние прижимаются к краю карты, чтобы было видно, где они.
 	var small := size.y < 200.0
 	var pad := corner_radius * 0.6 + (9.0 if small else 13.0)
@@ -264,13 +285,14 @@ func _draw_overlay() -> void:
 	ci.draw_colored_polygon(pts, Color("#3E342B"))
 	ci.draw_polyline(pts + PackedVector2Array([tip]), Color.WHITE, 1.5, true)
 	# Рамка по тому же скруглению, что и маска карты.
-	var frame := StyleBoxFlat.new()
-	frame.draw_center = false
-	frame.set_corner_radius_all(roundi(corner_radius))
-	frame.set_border_width_all(2)
-	frame.border_color = UiStyle.BRAND
-	frame.anti_aliasing = true
-	ci.draw_style_box(frame, Rect2(Vector2.ZERO, size))
+	if _frame == null:
+		_frame = StyleBoxFlat.new()
+		_frame.draw_center = false
+		_frame.set_border_width_all(2)
+		_frame.border_color = UiStyle.BRAND
+		_frame.anti_aliasing = true
+	_frame.set_corner_radius_all(roundi(corner_radius))
+	ci.draw_style_box(_frame, Rect2(Vector2.ZERO, size))
 
 
 static func _marker_color(m: Dictionary) -> Color:

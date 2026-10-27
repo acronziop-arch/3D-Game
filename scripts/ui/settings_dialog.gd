@@ -531,7 +531,9 @@ func _build_help() -> void:
 		if ResourceLoader.exists(path):
 			var pic := TextureRect.new()
 			pic.texture = load(path)
-			pic.expand_mode = TextureRect.EXPAND_FIT_WIDTH_PROPORTIONAL
+			# Ширину картинке задаёт окно, высота — по пропорциям. Своей ширины у неё нет:
+			# иначе она «распирала» бы окно на весь экран.
+			pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
 			pic.mouse_filter = Control.MOUSE_FILTER_PASS
 			var holder := PanelContainer.new()

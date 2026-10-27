@@ -146,6 +146,7 @@ static func close_button(side := 44.0) -> Button:
 ## Плавное появление/исчезновение (с лёгким масштабом).
 ## Как fade, но сразу, без анимации.
 static func fade_now(c: Control, shown: bool) -> void:
+	c.set_meta("fade_seq", int(c.get_meta("fade_seq", 0)) + 1)
 	if c.has_meta("fade_tween"):
 		(c.get_meta("fade_tween") as Tween).kill()
 		c.remove_meta("fade_tween")
@@ -155,21 +156,36 @@ static func fade_now(c: Control, shown: bool) -> void:
 	c.scale = Vector2.ONE
 
 
+## Плавно показывает или прячет окно. Без масштабирования: при нём буквы на каждом кадре
+## по-разному ложатся на пиксели и текст «дрожит». Сначала окно пару кадров почти
+## прозрачное — в них раскладывается и впервые рисуется содержимое (самые тяжёлые кадры),
+## и только потом начинается проявление: иначе анимация перескакивала бы через начало.
 static func fade(c: Control, shown: bool, duration := 0.18) -> void:
 	if c.get_meta("fade_target", c.visible) == shown:
 		return
 	c.set_meta("fade_target", shown)
+	var seq: int = c.get_meta("fade_seq", 0) + 1
+	c.set_meta("fade_seq", seq)
 	if c.has_meta("fade_tween"):
 		(c.get_meta("fade_tween") as Tween).kill()
-	c.pivot_offset = c.size * 0.5
-	var tw := c.create_tween().set_parallel(true)
-	c.set_meta("fade_tween", tw)
-	if shown:
+		c.remove_meta("fade_tween")
+	c.scale = Vector2.ONE
+	if not shown:
+		var out := c.create_tween()
+		c.set_meta("fade_tween", out)
+		out.tween_property(c, "modulate:a", 0.0, duration * 0.75).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+		out.tween_callback(c.hide)
+		return
+	if not c.visible and c.is_inside_tree():
+		c.modulate.a = 0.01
 		c.visible = true
-		c.scale = Vector2.ONE * 0.96
-		tw.tween_property(c, "modulate:a", 1.0, duration)
-		tw.tween_property(c, "scale", Vector2.ONE, duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	else:
-		tw.tween_property(c, "modulate:a", 0.0, duration * 0.8)
-		tw.tween_property(c, "scale", Vector2.ONE * 0.97, duration * 0.8)
-		tw.chain().tween_callback(c.hide)
+		var tree := c.get_tree()
+		await tree.process_frame
+		await tree.process_frame
+		# Пока ждали, окно могли закрыть (или открыть заново).
+		if not is_instance_valid(c) or c.get_meta("fade_seq", 0) != seq:
+			return
+	c.visible = true
+	var tw := c.create_tween()
+	c.set_meta("fade_tween", tw)
+	tw.tween_property(c, "modulate:a", 1.0, duration * 1.2).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)

@@ -89,6 +89,10 @@ var _hint_panel: PanelContainer
 var _hint_label: RichTextLabel
 var _actions: GridContainer
 var _actions_key := ""
+## Состояние кнопок, которое меняется без пересборки (режим природы, высота, культура).
+var _actions_state := ""
+var _action_refreshers: Array[Callable] = []
+var _action_styles := {}
 var _rotate_hold: Button
 var _hint_max_width := 600.0
 var _notices: Notices
@@ -209,7 +213,8 @@ func bind(target: Interaction) -> void:
 	interaction.tool_changed.connect(_on_tool_changed)
 	interaction.message.connect(show_message)
 	interaction.hover_changed.connect(_on_hover_changed)
-	interaction.options_changed.connect(func() -> void: _actions_key = "")
+	# Режим, высота, культура: кнопки обновляются на месте (набор сверяет _update_actions).
+	interaction.options_changed.connect(func() -> void: _actions_state = "")
 	interaction.building_system.placed.connect(func(_b: Building) -> void: _refresh_build_cards())
 	_minimap.chunk_manager = interaction.chunk_manager
 	_minimap.camera_rig = interaction.camera_rig
@@ -677,6 +682,7 @@ func _build_build_panel() -> void:
 	if _touch:
 		var tab_scroll := SmoothScroll.new()
 		tab_scroll.horizontal = true
+		tab_scroll.bar_room = 8.0
 		tab_scroll.add_child(tabs)
 		box.add_child(tab_scroll)
 	else:
@@ -684,7 +690,8 @@ func _build_build_panel() -> void:
 	# Лента карточек листается пальцем или колесом вбок.
 	_build_scroll = SmoothScroll.new()
 	_build_scroll.horizontal = true
-	_build_scroll.custom_minimum_size = Vector2(0, _px(176, 140))
+	_build_scroll.bar_room = 8.0
+	_build_scroll.custom_minimum_size = Vector2(0, _px(176, 140) + 8.0)
 	_build_grid = HBoxContainer.new()
 	_build_grid.add_theme_constant_override("separation", _px(8, 6))
 	box.add_child(_build_scroll)
@@ -1074,11 +1081,15 @@ func _build_actions() -> void:
 func _action_button(icon_name: String, text: String, toggled := false) -> Button:
 	var b := Button.new()
 	b.custom_minimum_size = Vector2(ACTIONS_WIDTH - 8.0, 58)
-	var bg := UiStyle.BRAND.lightened(0.35) if toggled else Color(UiStyle.BASE, 0.97)
-	# Обычный светлый цвет, как у всех кнопок: тёмная заливка выглядела «недоступной».
-	b.add_theme_stylebox_override("normal", UiStyle.box(bg, 18, 6, 2, UiStyle.BRAND_DARK if toggled else UiStyle.BRAND, true))
-	b.add_theme_stylebox_override("hover", UiStyle.box(UiStyle.SURFACE_HOVER, 18, 6, 2, UiStyle.BRAND_DARK, true))
-	b.add_theme_stylebox_override("pressed", UiStyle.box(UiStyle.SURFACE_HOVER, 18, 6, 2, UiStyle.BRAND_DARK, true))
+	if _action_styles.is_empty():
+		# Обычный светлый цвет, как у всех кнопок: тёмная заливка выглядела «недоступной».
+		_action_styles = {
+			"normal": UiStyle.box(Color(UiStyle.BASE, 0.97), 18, 6, 2, UiStyle.BRAND, true),
+			"toggled": UiStyle.box(UiStyle.BRAND.lightened(0.35), 18, 6, 2, UiStyle.BRAND_DARK, true),
+			"hover": UiStyle.box(UiStyle.SURFACE_HOVER, 18, 6, 2, UiStyle.BRAND_DARK, true),
+		}
+	b.add_theme_stylebox_override("hover", _action_styles["hover"])
+	b.add_theme_stylebox_override("pressed", _action_styles["hover"])
 	var box := VBoxContainer.new()
 	box.set_anchors_preset(Control.PRESET_FULL_RECT)
 	box.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1091,7 +1102,28 @@ func _action_button(icon_name: String, text: String, toggled := false) -> Button
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(l)
 	b.add_child(box)
+	b.set_meta("icon", ic)
+	b.set_meta("label", l)
+	_set_action_state(b, icon_name, text, toggled)
 	_actions.add_child(b)
+	return b
+
+
+## Кнопка остаётся на месте, меняются только иконка, подпись и подсветка.
+func _set_action_state(b: Button, icon_name: String, text: String, toggled: bool) -> void:
+	(b.get_meta("icon") as TextureRect).texture = UiStyle.icon(icon_name)
+	(b.get_meta("label") as Label).text = text
+	b.add_theme_stylebox_override("normal", _action_styles["toggled" if toggled else "normal"])
+
+
+## Кнопка, у которой подпись или подсветка зависят от состояния (режим природы,
+## высота выравнивания, культура): state() -> [иконка, подпись, подсвечена ли].
+func _state_button(state: Callable) -> Button:
+	var st: Array = state.call()
+	var b := _action_button(st[0], st[1], st[2])
+	_action_refreshers.append(func() -> void:
+		var now: Array = state.call()
+		_set_action_state(b, now[0], now[1], now[2]))
 	return b
 
 
@@ -1110,17 +1142,24 @@ func _rotate_button() -> Button:
 
 
 ## Набор кнопок зависит от инструмента и выбора; пересобираем, только когда он меняется.
+## Смена режима природы, высоты или культуры кнопки не пересоздаёт — они обновляются на месте.
 func _update_actions() -> void:
 	var bs := interaction.building_system
 	var selected_crop: String = interaction.selected_building.crop if is_instance_valid(interaction.selected_building) else ""
-	var key := "%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s" % [interaction.tool, bs.selected_id, bs.moving != null,
+	var key := "%d|%s|%s|%s|%s|%s|%s|%d" % [interaction.tool, bs.selected_id, bs.moving != null,
 		is_instance_valid(interaction.selected_building), not interaction.jobs.is_empty(), _drawer_open,
-		interaction.nature_mode, interaction.flatten_offset_text(), bs.crop_choice, selected_crop,
-		interaction.selected_building.get_instance_id() if is_instance_valid(interaction.selected_building) else 0]
-	key += "|%d" % interaction.selected_path
+		interaction.selected_building.get_instance_id() if is_instance_valid(interaction.selected_building) else 0,
+		interaction.selected_path]
+	var state := "%s|%s|%s|%s" % [interaction.nature_mode, interaction.flatten_offset_text(), bs.crop_choice, selected_crop]
 	if key == _actions_key:
+		if state != _actions_state:
+			_actions_state = state
+			for refresh: Callable in _action_refreshers:
+				refresh.call()
 		return
 	_actions_key = key
+	_actions_state = state
+	_action_refreshers.clear()
 	for c in _actions.get_children():
 		_actions.remove_child(c)
 		c.queue_free()
@@ -1135,8 +1174,9 @@ func _update_actions() -> void:
 				if _touch:
 					_action_button("cat_housing", "Здания").pressed.connect(func() -> void: _set_drawer(not _drawer_open))
 				if GameData.BUILDINGS[bs.selected_id].has("crops"):
-					var c: Dictionary = CropPatch.CROPS[bs.crop_choice]
-					_action_button(c["icon"], c["name"], true).pressed.connect(interaction.next_crop)
+					_state_button(func() -> Array:
+						var c: Dictionary = CropPatch.CROPS[bs.crop_choice]
+						return [c["icon"], c["name"], true]).pressed.connect(interaction.next_crop)
 				if bs.is_path():
 					# Дорожка ложится плавной лентой следом за пальцем.
 					_action_button("close", "Отмена").pressed.connect(to_harvest)
@@ -1148,15 +1188,16 @@ func _update_actions() -> void:
 				_action_button("close", "Отмена").pressed.connect(to_harvest)
 		Interaction.Tool.FLATTEN:
 			_action_button("arrow_up", "Выше").pressed.connect(func() -> void: interaction.adjust_flatten_offset(0.5))
-			_action_button("auto", interaction.flatten_offset_text().capitalize(), is_zero_approx(interaction.flatten_offset)) \
+			_state_button(func() -> Array:
+				return ["auto", interaction.flatten_offset_text().capitalize(), is_zero_approx(interaction.flatten_offset)]) \
 				.pressed.connect(interaction.reset_flatten_offset)
 			_action_button("arrow_down", "Ниже").pressed.connect(func() -> void: interaction.adjust_flatten_offset(-0.5))
 			_action_button("plus", "Шире").pressed.connect(func() -> void: interaction.resize_brush(1.0))
 			_action_button("minus", "Уже").pressed.connect(func() -> void: interaction.resize_brush(-1.0))
 		Interaction.Tool.NATURE:
 			for mode: String in NATURE_ICONS:
-				_action_button(NATURE_ICONS[mode], NATURE_SHORT[mode], interaction.nature_mode == mode).pressed.connect(
-					func() -> void: interaction.set_nature_mode(mode))
+				_state_button(func() -> Array: return [NATURE_ICONS[mode], NATURE_SHORT[mode], interaction.nature_mode == mode]) \
+					.pressed.connect(func() -> void: interaction.set_nature_mode(mode))
 			_action_button("plus", "Шире").pressed.connect(func() -> void: interaction.resize_brush(1.0))
 			_action_button("minus", "Уже").pressed.connect(func() -> void: interaction.resize_brush(-1.0))
 		Interaction.Tool.EDIT:
@@ -1165,8 +1206,10 @@ func _update_actions() -> void:
 				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction._edit_pick(null, null))
 			elif is_instance_valid(interaction.selected_building):
 				if interaction.selected_building.has_crops():
-					var c: Dictionary = CropPatch.CROPS[selected_crop if selected_crop != "" else "wheat"]
-					_action_button(c["icon"], c["name"], true).pressed.connect(interaction.next_crop)
+					var target: Building = interaction.selected_building
+					_state_button(func() -> Array:
+						var c: Dictionary = CropPatch.CROPS[target.crop if is_instance_valid(target) and target.crop != "" else "wheat"]
+						return [c["icon"], c["name"], true]).pressed.connect(interaction.next_crop)
 				_action_button("move", "Перенести").pressed.connect(interaction.edit_move)
 				_action_button("rotate", "Повернуть").pressed.connect(func() -> void: interaction.edit_rotate(1.0))
 				_action_button("trash", "Снести").pressed.connect(interaction.demolish_selected)
