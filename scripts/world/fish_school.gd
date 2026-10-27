@@ -14,6 +14,7 @@ var _rng := RandomNumberGenerator.new()
 
 
 func setup(spots: Array, chunk_coord: Vector2i) -> void:
+	visible = Settings.get_value("fish")
 	_spots.assign(spots)
 	_rng.seed = hash([WorldState.world_seed, chunk_coord.x, chunk_coord.y, "fish"])
 	var count := mini(2 + _spots.size() / 10, 9)

@@ -546,7 +546,7 @@ textarea.dlg-field {
 
 		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":20457288,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":18305032,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -790,6 +790,19 @@ const engine = new Engine(GODOT_CONFIG);
 			});
 		});
 	}
+
+	// Страницу прячут или закрывают (свернули Safari, перезагрузили) — игра сохраняет мир.
+	const saveNow = () => {
+		if (window.everstead && window.everstead.onHide) {
+			window.everstead.onHide();
+		}
+	};
+	document.addEventListener('visibilitychange', () => {
+		if (document.visibilityState === 'hidden') {
+			saveNow();
+		}
+	});
+	window.addEventListener('pagehide', saveNow);
 
 	// Игра сама сообщает, как идёт подготовка, и когда мир готов.
 	window.everstead = {
