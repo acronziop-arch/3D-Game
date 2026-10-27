@@ -224,6 +224,8 @@ func toggle_crafting() -> void:
 		_close_panels("craft")
 	UiStyle.fade(_craft_panel, show)
 	_refresh_crafting()
+	if _touch and not _hint_panel.has_meta("flash"):
+		_on_hover_changed(str(_hint_panel.get_meta("current", "")))
 
 
 ## Закрывает верхнее открытое окно (кнопка «Назад» на Android). false — закрывать нечего.
@@ -298,7 +300,8 @@ func _apply_layout() -> void:
 	_pin(_craft_panel, -m["right"], craft_top, -m["right"], craft_top)
 	_craft_panel.custom_minimum_size.x = minf(_px(480, 440), vp.x - m["left"] - m["right"] - _minimap.custom_minimum_size.x - 40.0)
 	# Снизу оставляем место панели инструментов и строке подсказки.
-	var craft_room: float = vp.y - craft_top - m["bottom"] - _px(92, 80) - _px(48, 44) - _px(120, 76)
+	# На телефоне строка подсказки на это время прячется (см. _on_hover_changed).
+	var craft_room: float = vp.y - craft_top - m["bottom"] - _px(92, 80) - _px(48, 0) - _px(120, 76)
 	_craft_scroll.custom_minimum_size.y = clampf(_craft_scroll.content().get_combined_minimum_size().y, 80.0, maxf(craft_room, 80.0))
 	if _portrait_hint:
 		# Браузер на телефоне не умеет закрепить альбомную ориентацию — просим повернуть.
@@ -807,19 +810,19 @@ func _build_craft_panel() -> void:
 	box.add_child(_craft_scroll)
 	var rows := VBoxContainer.new()
 	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	rows.add_theme_constant_override("separation", 6)
+	rows.add_theme_constant_override("separation", _px(6, 5))
 	_craft_scroll.add_child(rows)
 	for id: String in GameData.RECIPES:
 		var r: Dictionary = GameData.RECIPES[id]
 		var row := PanelContainer.new()
-		row.add_theme_stylebox_override("panel", UiStyle.box(UiStyle.SURFACE, 12, int(_px(8, 5))))
+		row.add_theme_stylebox_override("panel", UiStyle.box(UiStyle.SURFACE, 12, int(_px(8, 4))))
 		row.mouse_filter = Control.MOUSE_FILTER_PASS
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", 8)
 		row.add_child(line)
 		var info := VBoxContainer.new()
 		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		info.add_theme_constant_override("separation", 2)
+		info.add_theme_constant_override("separation", 2 if not _touch else 0)
 		var formula := HBoxContainer.new()
 		formula.add_theme_constant_override("separation", 6)
 		var ins := HBoxContainer.new()
@@ -827,13 +830,13 @@ func _build_craft_panel() -> void:
 		formula.add_child(UiStyle.icon_rect("arrow", 18))
 		formula.add_child(UiStyle.cost_row(r["out"], int(_px(20, 18)), false))
 		info.add_child(formula)
-		var sub := UiStyle.label("", 12, UiStyle.MUTED, 700)
+		var sub := UiStyle.label("", 12 if not _touch else 11, UiStyle.MUTED, 700)
 		sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		info.add_child(sub)
 		line.add_child(info)
 		var b := Button.new()
 		b.text = "Сделать"
-		b.custom_minimum_size = Vector2(_px(96, 88), _px(36, 36))
+		b.custom_minimum_size = Vector2(_px(96, 88), _px(36, 34))
 		b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		b.mouse_filter = Control.MOUSE_FILTER_PASS
 		b.pressed.connect(func() -> void:
@@ -967,7 +970,8 @@ func _on_hover_changed(text: String) -> void:
 			# Длинная подсказка переносится и не выходит за края экрана.
 			Rich.fit(_hint_label, text, _hint_max_width)
 			_hint_panel.reset_size()
-		UiStyle.fade(_hint_panel, text != "", 0.2)
+		# Пока открыто ремесло, подсказка не нужна — место отдаём рецептам.
+		UiStyle.fade(_hint_panel, text != "" and not _craft_panel.get_meta("fade_target", false), 0.2)
 		return
 	Rich.fit(_hover_label, text, 460.0, false)
 	_hover_panel.reset_size()

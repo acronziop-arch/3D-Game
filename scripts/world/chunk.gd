@@ -37,6 +37,7 @@ var _cover := {}
 ## Далёкий чанк: своих объектов не строит — деревья, камни и руины рисует общая
 ## область FarForest (один объект на вид на 4×4 чанка), мелочи нет совсем.
 var props_far := false
+var _terrain_in_region := false
 ## Есть ли у чанка трава: далёкие чанки грузятся без неё (см. ChunkManager._update_cover).
 var cover_ready := true
 ## Полные пучки травы (близко) или упрощённые (далеко).
@@ -88,6 +89,18 @@ func _apply_terrain(arrays: Array) -> void:
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	mesh.surface_set_material(0, ModelLibrary.terrain_material())
 	_terrain_mesh.mesh = mesh
+	# Землю далёкого чанка рисует общая область FarForest — когда она её уже включила.
+	_terrain_mesh.visible = not _terrain_in_region
+
+
+## Область FarForest включила (или отпустила) землю этого чанка.
+func set_terrain_in_region(on: bool) -> void:
+	_terrain_in_region = on
+	_terrain_mesh.visible = not on
+
+
+func terrain_mesh() -> Mesh:
+	return _terrain_mesh.mesh
 
 
 func _build_props() -> void:
@@ -524,6 +537,8 @@ func set_vertex_height(i: int, j: int, h: float) -> void:
 ## Перестраивает рельеф после выравнивания и ставит объекты на новую высоту.
 func rebuild_terrain() -> void:
 	_apply_terrain(WorldGen.build_terrain(heights, colors, coord))
+	if props_far:
+		far_props_changed.emit(coord)
 	for p in props:
 		if p.get("float", false):
 			continue

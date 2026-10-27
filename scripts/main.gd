@@ -299,7 +299,7 @@ func _apply_graphics() -> void:
 		atlas = 2048
 		filter = RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-		sun.directional_shadow_max_distance = 130.0
+		sun.directional_shadow_max_distance = 100.0 if Platform.is_mobile() else 130.0
 	RenderingServer.directional_shadow_atlas_set_size(atlas, true)
 	RenderingServer.directional_soft_shadow_filter_set_quality(filter)
 

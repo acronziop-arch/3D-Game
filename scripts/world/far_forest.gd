@@ -1,6 +1,6 @@
 class_name FarForest
 extends Node3D
-## Деревья, камни и руины далёких чанков. Вблизи у каждого чанка свои объекты
+## Земля, деревья, камни и руины далёких чанков. Вблизи у каждого чанка свои объекты
 ## (по одному на вид и вариант модели), а издалека всё это — сотни отдельных
 ## вызовов отрисовки. Здесь далёкие чанки собраны в области REGION × REGION чанков,
 ## и в каждой области один объект на вид дерева или камня. Для браузера на телефоне
@@ -112,6 +112,28 @@ func _rebuild(r: Vector2i, region: Dictionary) -> void:
 			region["chunks"].erase(c)
 			continue
 		chunk.collect_far_props(by_id, origin)
+	# Земля области — одним мешем вместо шестнадцати.
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var has_ground := false
+	for c: Vector2i in region["chunks"]:
+		var chunk: Chunk = region["chunks"][c]
+		var mesh := chunk.terrain_mesh()
+		if mesh:
+			st.append_from(mesh, 0, Transform3D(Basis.IDENTITY, chunk.position - origin))
+			has_ground = true
+	if has_ground:
+		var ground := MeshInstance3D.new()
+		ground.mesh = st.commit()
+		ground.mesh.surface_set_material(0, ModelLibrary.terrain_material())
+		# Так далеко тени уже не рисуются.
+		ground.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		ground.position = origin
+		add_child(ground)
+		region["nodes"].append(ground)
+		# Теперь землю рисует область — свою чанки прячут (не раньше: иначе мелькнёт дыра).
+		for c: Vector2i in region["chunks"]:
+			(region["chunks"][c] as Chunk).set_terrain_in_region(true)
 	for key: String in by_id:
 		var entry: Dictionary = by_id[key]
 		var parts := key.split(":")

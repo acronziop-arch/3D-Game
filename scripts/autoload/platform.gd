@@ -200,9 +200,11 @@ func reflection_scale() -> float:
 	return [0.3, 0.35, 0.45, 0.5][Settings.quality_level()]
 
 
-## Дальность мелочи (камешки, кустики), м.
+## Дальность мелочи (папоротник, тростник, цветы), м. На телефоне ближе: дальше
+## 60–80 м этих мелочей на маленьком экране не разглядеть.
 func decor_distance() -> float:
-	return maxf(70.0, float(Settings.get_value("grass_distance")) * 1.4)
+	var grass := float(Settings.get_value("grass_distance"))
+	return maxf(45.0, grass * 0.8) if is_mobile() else maxf(70.0, grass * 1.4)
 
 
 ## Дальность прорисовки в чанках. На телефоне — не больше 7 (224 м): дальше
@@ -214,4 +216,9 @@ func view_radius() -> int:
 
 ## Дальность кустов, мелких камней и руды, м: дальше они меньше пикселя-двух.
 func detail_distance() -> float:
-	return maxf(110.0, float(Settings.get_value("grass_distance")) * 1.6)
+	return maxf(90.0 if is_mobile() else 110.0, float(Settings.get_value("grass_distance")) * (1.2 if is_mobile() else 1.6))
+
+
+## С какого расстояния, м, деревья и камни чанка рисуются упрощённо (общими областями).
+func prop_lod_distance() -> float:
+	return 90.0 if is_mobile() else 120.0

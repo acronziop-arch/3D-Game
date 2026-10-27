@@ -45,8 +45,6 @@ var _cover_jobs := {}
 var _cover_timer := 0.0
 ## Ближе этого расстояния (м от точки взгляда до середины чанка) трава — полными пучками.
 const COVER_LOD_NEAR := 52.0
-## Дальше этого чанк рисует деревья и камни упрощённо, без мелочи (см. Chunk.props_far).
-const PROP_LOD_FAR := 120.0
 
 
 ## Стартовая область мира загружена.
@@ -148,7 +146,7 @@ func _finalize() -> void:
 		if (c - _center).length_squared() > (view_radius + 2) * (view_radius + 2):
 			continue
 		var chunk := Chunk.new()
-		chunk.props_far = _chunk_distance(c) > PROP_LOD_FAR
+		chunk.props_far = _chunk_distance(c) > Platform.prop_lod_distance()
 		chunk.setup(c, job["out"])
 		add_child(chunk)
 		chunk.far_props_changed.connect(far_forest.mark_dirty)
@@ -216,6 +214,9 @@ func _chunk_distance(c: Vector2i) -> float:
 ## Раз в четверть секунды: чанкам, к которым подошли, — траву (в фоне, если есть
 ## потоки); далёким — убираем её (меньше памяти); ближним — полные пучки, дальним — упрощённые.
 func _update_cover(delta: float, generated_this_frame: bool) -> void:
+	# Изменившиеся области дальнего леса — по одной за кадр (не в кадре со стройкой чанка).
+	if not generated_this_frame:
+		far_forest.rebuild_dirty(1)
 	# Готовая трава — в сцену, по одному чанку за кадр.
 	for c: Vector2i in _cover_jobs.keys():
 		var job: Dictionary = _cover_jobs[c]
@@ -239,15 +240,17 @@ func _update_cover(delta: float, generated_this_frame: bool) -> void:
 	var best := Vector2i.ZERO
 	var best_d := INF
 	var rebuilt := 0
+	# Дальше этого чанк рисует деревья и камни упрощённо, без мелочи (см. Chunk.props_far).
+	var lod_far := Platform.prop_lod_distance()
 	for c: Vector2i in chunks:
 		var chunk: Chunk = chunks[c]
 		var d := _chunk_distance(c)
 		# Объекты перестраиваются не больше двух чанков за раз — без рывков.
 		# Запас ±8 м: чанк на границе не переключается туда-сюда.
 		var far := chunk.props_far
-		if d > PROP_LOD_FAR + 8.0:
+		if d > lod_far + 8.0:
 			far = true
-		elif d < PROP_LOD_FAR - 8.0:
+		elif d < lod_far - 8.0:
 			far = false
 		if rebuilt < 2 and chunk.set_prop_lod(far):
 			rebuilt += 1
@@ -256,6 +259,7 @@ func _update_cover(delta: float, generated_this_frame: bool) -> void:
 				far_forest.add_chunk(chunk)
 			else:
 				far_forest.remove_chunk(c)
+				chunk.set_terrain_in_region(false)
 			far_forest.rebuild_now(c)
 		if chunk.cover_ready:
 			if d < COVER_LOD_NEAR - 4.0:
@@ -267,7 +271,6 @@ func _update_cover(delta: float, generated_this_frame: bool) -> void:
 		elif d < radius and not _cover_jobs.has(c) and d < best_d:
 			best = c
 			best_d = d
-	far_forest.rebuild_dirty(2)
 	if best_d == INF or _cover_jobs.size() >= 2:
 		return
 	# Без потоков трава считается прямо здесь — но не в кадре, где уже строился чанк.

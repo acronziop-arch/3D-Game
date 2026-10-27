@@ -544,11 +544,10 @@ textarea.dlg-field {
 			<div class="dlg-card" role="dialog" aria-modal="true"></div>
 		</div>
 
-		<script src="index.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":18305080,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"index","experimentalVK":false,"fileSizes":{"mt/index.wasm":38820072,"index.pck":18325624,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
 const GODOT_THREADS_ENABLED = false;
-const engine = new Engine(GODOT_CONFIG);
+// Движок загружается ниже: многопоточная сборка (mt/) или обычная (index.js).
 
 (function () {
 	const overlay = document.getElementById('status');
@@ -804,10 +803,102 @@ const engine = new Engine(GODOT_CONFIG);
 	});
 	window.addEventListener('pagehide', saveNow);
 
+	// --- Многопоточность ------------------------------------------------------------------
+	// Многопоточная сборка движка строит мир в фоновых потоках — без рывков при движении.
+	// Ей нужна «изоляция» страницы (заголовки COOP/COEP); на GitHub Pages их добавляет
+	// помощник coi.sw.js. Нет изоляции (первый заход, приватный режим) или многопоточная
+	// версия однажды не запустилась — грузится обычная. В настройках её можно выключить.
+	const MT_BASE = 'mt/' + GODOT_CONFIG['executable'];
+	const MT_BOOT = 'everstead-mt-boot';
+
+	function storage(key, value) {
+		try {
+			if (value === undefined) {
+				return localStorage.getItem(key);
+			}
+			if (value === null) {
+				localStorage.removeItem(key);
+			} else {
+				localStorage.setItem(key, value);
+			}
+		} catch (e) {
+			// Хранилище недоступно (приватный режим) — работаем без него.
+		}
+		return null;
+	}
+
+	function threadsAllowed() {
+		if (storage('everstead-threads') === 'off') {
+			return false;
+		}
+		// Прошлый запуск многопоточной версии не дошёл до игры — в этот раз обычная.
+		const boot = Number(storage(MT_BOOT) || 0);
+		if (boot && Date.now() - boot < 15 * 60 * 1000) {
+			storage(MT_BOOT, null);
+			return false;
+		}
+		return true;
+	}
+
+	function isolated() {
+		return window.crossOriginIsolated === true && typeof SharedArrayBuffer !== 'undefined';
+	}
+
+	// Помощник, добавляющий заголовки изоляции. Ждём не дольше 3 с.
+	function registerHelper() {
+		if (!('serviceWorker' in navigator) || !window.isSecureContext) {
+			return Promise.resolve(false);
+		}
+		const registered = navigator.serviceWorker.register('coi.sw.js').then(() => navigator.serviceWorker.ready).then(() => true);
+		const timeout = new Promise((resolve) => setTimeout(() => resolve(false), 3000));
+		return Promise.race([registered, timeout]).catch(() => false);
+	}
+
+	function chooseBuild() {
+		const want = threadsAllowed();
+		let reloaded = null;
+		try {
+			reloaded = sessionStorage.getItem('everstead-coi-reload');
+		} catch (e) {
+			reloaded = '1';
+		}
+		// Перезагрузка с помощником не дала изоляции (так бывает в некоторых браузерах) —
+		// больше не перезагружаем зря при каждом запуске.
+		if (reloaded && !isolated() && 'serviceWorker' in navigator && navigator.serviceWorker.controller) {
+			storage('everstead-coi-useless', '1');
+		}
+		if (isolated() || !want) {
+			return Promise.resolve(want && isolated());
+		}
+		return registerHelper().then((ok) => {
+			if (storage('everstead-coi-useless')) {
+				return false;
+			}
+			// Помощник только что встал: страница станет изолированной после перезагрузки (один раз).
+			if (ok && !reloaded && navigator.serviceWorker.controller) {
+				try {
+					sessionStorage.setItem('everstead-coi-reload', '1');
+				} catch (e) {
+					return false;
+				}
+				window.location.reload();
+				return new Promise(() => {});
+			}
+			return false;
+		});
+	}
+
 	// Игра сама сообщает, как идёт подготовка, и когда мир готов.
 	window.everstead = {
 		progress: (fraction, text) => setProgress(DOWNLOAD_SHARE + (1 - DOWNLOAD_SHARE) * fraction, text),
-		ready: hideOverlay,
+		ready: () => {
+			storage(MT_BOOT, null);
+			hideOverlay();
+		},
+		// Настройка «Многопоточность»: 'auto' или 'off' (применится при следующем запуске).
+		setThreads: (mode) => storage('everstead-threads', mode === 'off' ? 'off' : null),
+		threadsMode: () => storage('everstead-threads') || 'auto',
+		reload: () => window.location.reload(),
 		askName: askName,
 		shareWorld: shareWorld,
 		importWorld: importWorld,
@@ -866,26 +957,61 @@ const engine = new Engine(GODOT_CONFIG);
 		finished = true;
 	}
 
-	const missing = Engine.getMissingFeatures({
-		threads: GODOT_THREADS_ENABLED,
-	});
-
-	if (missing.length !== 0) {
-		displayFailureNotice('Браузер не поддерживает то, что нужно игре:\n' + missing.join('\n')
-			+ '\nПопробуйте свежий Safari, Chrome или Firefox.');
-	} else {
-		engine.startGame({
-			'onProgress': function (current, total) {
-				if (current > 0 && total > 0) {
-					setProgress(DOWNLOAD_SHARE * current / total, current < total ? 'Загружаем игру…' : 'Запускаем движок…');
+	function startEngine(threads) {
+		const base = threads ? MT_BASE : GODOT_CONFIG['executable'];
+		const script = document.createElement('script');
+		script.src = base + '.js';
+		script.onerror = () => {
+			if (threads) {
+				// Многопоточной сборки нет на сервере — обычная.
+				script.remove();
+				startEngine(false);
+			} else {
+				displayFailureNotice('Не удалось загрузить игру. Проверьте интернет и обновите страницу.');
+			}
+		};
+		script.onload = () => {
+			const missing = Engine.getMissingFeatures({ threads: threads });
+			if (missing.length !== 0) {
+				if (threads) {
+					storage(MT_BOOT, String(Date.now()));
+					window.location.reload();
+					return;
 				}
-			},
-		}).then(() => {
-			setProgress(DOWNLOAD_SHARE + 0.02, 'Запускаем движок…');
-			// Страховка: если игра так и не сообщила о готовности, не держим экран вечно.
-			setTimeout(hideOverlay, 120000);
-		}, displayFailureNotice);
+				displayFailureNotice('Браузер не поддерживает то, что нужно игре:\n' + missing.join('\n')
+					+ '\nПопробуйте свежий Safari, Chrome или Firefox.');
+				return;
+			}
+			const config = Object.assign({}, GODOT_CONFIG, { 'executable': base, 'mainPack': GODOT_CONFIG['executable'] + '.pck' });
+			const engine = new Engine(config);
+			if (threads) {
+				// Метка снимается, когда игра покажет первый экран (everstead.ready).
+				storage(MT_BOOT, String(Date.now()));
+			}
+			engine.startGame({
+				'onProgress': function (current, total) {
+					if (current > 0 && total > 0) {
+						setProgress(DOWNLOAD_SHARE * current / total, current < total ? 'Загружаем игру…' : 'Запускаем движок…');
+					}
+				},
+			}).then(() => {
+				setProgress(DOWNLOAD_SHARE + 0.02, 'Запускаем движок…');
+				// Страховка: если игра так и не сообщила о готовности, не держим экран вечно.
+				setTimeout(hideOverlay, 120000);
+			}, (err) => {
+				if (threads) {
+					// Многопоточная не запустилась — сразу обычная (метка запуска осталась).
+					console.error(err);
+					window.location.reload();
+					return;
+				}
+				displayFailureNotice(err);
+			});
+		};
+		document.body.appendChild(script);
 	}
+
+	chooseBuild().then(startEngine);
 }());
 		</script>
 	</body>

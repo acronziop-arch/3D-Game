@@ -19,6 +19,10 @@ config/quit_on_go_back=false
 boot_splash/bg_color=Color(0.9607843, 0.9529412, 0.9372549, 1)
 boot_splash/show_image=false
 
+[audio]
+
+driver/driver.web="Dummy"
+
 [autoload]
 
 Platform="*res://scripts/autoload/platform.gd"
