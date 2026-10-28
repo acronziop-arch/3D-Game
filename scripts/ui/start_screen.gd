@@ -1,15 +1,12 @@
 class_name StartScreen
 extends CanvasLayer
-## Стартовый экран: слева логотип, «Новый мир» и «Мир от друга», справа — список
-## сохранённых миров с превью карты. У каждого мира — «Играть», «Поделиться» и
-## «Удалить». Поделиться — это отправить другу файл (или текстовый код) со всем
-## миром: постройками, ресурсами, рельефом и метками; онлайн для этого не нужен.
-## Когда мир выбран (WorldState уже открыл или создал его), экран сообщает chosen
-## и плавно исчезает, открывая экран загрузки.
+## Стартовый экран: слева логотип и «Новый мир», справа — список сохранённых миров
+## с превью карты. У каждого мира — «Играть» и «Удалить». Когда мир выбран
+## (WorldState уже открыл или создал его), экран сообщает chosen и плавно исчезает,
+## открывая экран загрузки.
 ##
-## В браузере имя мира, «Поделиться» и выбор файла — HTML-окна из web_shell.html:
-## только по нажатию на настоящую кнопку страницы Safari разрешает открыть
-## «Поделиться», выбрать файл и показать клавиатуру.
+## В браузере имя нового мира вводится в HTML-окне из web_shell.html: только по
+## нажатию на настоящее поле страницы Safari показывает клавиатуру.
 
 signal chosen
 
@@ -161,10 +158,7 @@ func _build_intro() -> Control:
 	var create := _big_button("Новый мир", "plus", true)
 	create.pressed.connect(_on_new)
 	box.add_child(create)
-	var friend := _big_button("Мир от друга", "import", false)
-	friend.pressed.connect(_on_import)
-	box.add_child(friend)
-	var note := UiStyle.label("Миры хранятся на этом устройстве. Чтобы перенести мир или отдать его другу — «Поделиться».",
+	var note := UiStyle.label("Миры хранятся на этом устройстве.",
 		int(_px(13, 11)), UiStyle.MUTED, 700)
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -319,9 +313,6 @@ func _world_row(w: Dictionary) -> Control:
 	_style_primary(play, 14)
 	play.pressed.connect(_play.bind(id))
 	h.add_child(play)
-	var share := _icon_button("share", "Поделиться", side)
-	share.pressed.connect(_share.bind(id))
-	h.add_child(share)
 	var remove := _icon_button("trash", "Удалить", side)
 	remove.pressed.connect(_ask_delete.bind(id, title))
 	h.add_child(remove)
@@ -455,88 +446,6 @@ func _on_new() -> void:
 	field.grab_focus.call_deferred()
 
 
-func _on_import() -> void:
-	if _done or _modal:
-		return
-	var js: Variant = _web()
-	if js:
-		_js_callback = JavaScriptBridge.create_callback(func(args: Array) -> void:
-			var code := _js_text(args)
-			if code != "":
-				_import.call_deferred(code))
-		js.importWorld(_js_callback)
-		return
-	var area := TextEdit.new()
-	area.placeholder_text = "Вставьте код мира"
-	area.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
-	area.custom_minimum_size = Vector2(0, _px(110, 70))
-	area.add_theme_font_size_override("font_size", int(_px(13, 12)))
-	area.add_theme_stylebox_override("normal", UiStyle.box(Color.WHITE, 12, 10, 2, CARD_BORDER))
-	area.add_theme_stylebox_override("focus", UiStyle.box(Color(0, 0, 0, 0), 12, 10, 2, ACCENT))
-	area.add_theme_color_override("font_color", UiStyle.TEXT)
-	var paste := func() -> void: area.text = DisplayServer.clipboard_get()
-	var from_file := func() -> void:
-		var dialog := FileDialog.new()
-		dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
-		dialog.access = FileDialog.ACCESS_FILESYSTEM
-		dialog.use_native_dialog = true
-		dialog.filters = PackedStringArray(["*.txt ; Мир Everstead", "* ; Все файлы"])
-		dialog.file_selected.connect(func(path: String) -> void:
-			area.text = FileAccess.get_file_as_string(path)
-			dialog.queue_free())
-		dialog.canceled.connect(dialog.queue_free)
-		_root.add_child(dialog)
-		dialog.popup_centered_ratio(0.7)
-	var add := func() -> void:
-		if area.text.strip_edges() != "":
-			_close_modal()
-			_import(area.text)
-	_open_modal("Мир от друга", "Вставьте код мира, который прислал друг, или откройте его файл.", [area],
-		[["Вставить", false, paste], ["Из файла…", false, from_file], ["Добавить", true, add]])
-
-
-func _import(code: String) -> void:
-	var err := WorldState.import_code(code)
-	if err != "":
-		_say(err, true)
-		return
-	refresh()
-	_say("Мир друга добавлен — он первый в списке")
-
-
-func _share(id: String) -> void:
-	if _done or _modal:
-		return
-	var code := WorldState.export_code(id)
-	if code == "":
-		_say("Не удалось прочитать мир", true)
-		return
-	var title: String = ""
-	for w: Dictionary in WorldState.list_worlds():
-		if w["id"] == id:
-			title = w.get("name", "")
-	var js: Variant = _web()
-	if js:
-		_js_callback = JavaScriptBridge.create_callback(func(_args: Array) -> void: pass)
-		js.shareWorld(title, WorldState.share_file_name(id), code, _js_callback)
-		return
-	# ПК и телефон без браузера: код — в буфер обмена, файл — в «Документы/Everstead».
-	DisplayServer.clipboard_set(code)
-	var dir := OS.get_system_dir(OS.SYSTEM_DIR_DOCUMENTS)
-	dir = (dir if dir != "" else ProjectSettings.globalize_path("user://")).path_join("Everstead")
-	DirAccess.make_dir_recursive_absolute(dir)
-	var path := dir.path_join(WorldState.share_file_name(id))
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file:
-		file.store_string(code)
-		file.close()
-		_say("Код мира скопирован, файл — в «Документы/Everstead»")
-		if OS.has_feature("pc"):
-			OS.shell_show_in_file_manager(path)
-	else:
-		_say("Код мира скопирован — отправьте его другу")
-
-
 func _ask_delete(id: String, title: String) -> void:
 	if _done or _modal:
 		return
@@ -548,7 +457,7 @@ func _ask_delete(id: String, title: String) -> void:
 			_say("Мир «%s» удалён" % title)]], true)
 
 
-# --- Окно поверх списка (ввод имени, мир от друга, удаление) -----------------------------------
+# --- Окно поверх списка (ввод имени, удаление) -----------------------------------
 
 ## buttons: [[текст, главная?, Callable]]. danger — главная кнопка красная.
 func _open_modal(title: String, text: String, content: Array, buttons: Array, danger := false) -> void:

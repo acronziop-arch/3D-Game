@@ -226,44 +226,6 @@ def finish(out):
     return Image.alpha_composite(shadow, out)
 
 
-def badge_icon(base_path, out_path, up, color, size=128):
-    """Иконка со значком в правом нижнем углу (как у «Стройки» — домик с плюсом):
-    кружок цвета color с белой стрелкой вверх (up) или вниз."""
-    s = 4
-    n = size * s
-    canvas = Image.new("RGBA", (n, n), (0, 0, 0, 0))
-    base = Image.open(base_path).convert("RGBA").resize((int(n * 0.86), int(n * 0.86)), Image.LANCZOS)
-    canvas.alpha_composite(base, (0, 0))
-    d = int(n * 0.5)
-    x0, y0 = n - d - 2 * s, n - d - 4 * s
-    c = np.array(color, np.float32)
-    dark = tuple(int(v) for v in c * 0.72)
-    light = tuple(int(v) for v in np.minimum(c * 1.18 + 20, 255))
-    shade = Image.new("L", (n, n), 0)
-    ImageDraw.Draw(shade).ellipse((x0, y0 + 3 * s, x0 + d, y0 + d + 3 * s), fill=90)
-    shade = shade.filter(ImageFilter.GaussianBlur(4 * s))
-    shadow = Image.new("RGBA", (n, n), (46, 36, 28, 0))
-    shadow.putalpha(shade)
-    canvas.alpha_composite(shadow)
-    draw = ImageDraw.Draw(canvas)
-    draw.ellipse((x0, y0, x0 + d, y0 + d), fill=(255, 255, 255, 255))
-    rim = 3 * s
-    draw.ellipse((x0 + rim, y0 + rim, x0 + d - rim, y0 + d - rim), fill=dark + (255,))
-    draw.ellipse((x0 + rim + 2 * s, y0 + rim, x0 + d - rim - 2 * s, y0 + d - rim - 4 * s), fill=tuple(int(v) for v in c) + (255,))
-    draw.ellipse((x0 + d * 0.3, y0 + rim + 2 * s, x0 + d * 0.7, y0 + d * 0.36), fill=light + (150,))
-    # Белая стрелка: древко и наконечник.
-    cx, cy = x0 + d / 2, y0 + d / 2
-    w, head, length = d * 0.13, d * 0.25, d * 0.25
-    sign = -1 if up else 1
-    tip = cy + sign * length
-    base_y = tip - sign * head
-    draw.rectangle((cx - w, min(base_y, cy - sign * length), cx + w, max(base_y, cy - sign * length)), fill=(255, 255, 255, 255))
-    draw.polygon([(cx, tip), (cx - head, base_y), (cx + head, base_y)], fill=(255, 255, 255, 255))
-    canvas.resize((size, size), Image.LANCZOS).save(out_path)
-
-
-# --- Иконки, нарисованные кодом: объёмные серые «трубки», как у остальных иконок ---------------
-
 def _seg_dist(xx, yy, a, b):
     px, py = xx - a[0], yy - a[1]
     ex, ey = b[0] - a[0], b[1] - a[1]
@@ -427,10 +389,6 @@ if __name__ == "__main__":
     run(s2, ROWS + [["wool"]], (all_names - FROM_SHEET1 - DRAWN) | {"wool"}, out, 0, bands2)
     bands1 = [(4, 94), (99, 192), (197, 290), (293, 388), (392, 490), (498, 581), (585, 676), (683, 769), (773, 862), (865, 960)]
     run(s1, ROWS + [EXTRA_SHEET1], FROM_SHEET1 | set(EXTRA_SHEET1) - {"wool"}, out, 15, bands1)
-    # «Поделиться миром» и «Мир от друга» — свиток со значком-стрелкой.
-    badge_icon(os.path.join(out, "scroll.png"), os.path.join(out, "share.png"), True, (92, 172, 74))
-    badge_icon(os.path.join(out, "scroll.png"), os.path.join(out, "import.png"), False, (70, 138, 214))
-    print("   share, import")
     rotate_icon(os.path.join(out, "rotate.png"))
     auto_icon(os.path.join(out, "auto.png"))
     print("   rotate, auto")

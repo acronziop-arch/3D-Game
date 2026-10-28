@@ -4,16 +4,13 @@ extends Node
 ## Мир бесконечный, поэтому храним только изменения, а не сам мир.
 ##
 ## Миров может быть несколько: у каждого своё имя и свой файл в user://worlds/,
-## список с именами и датами — в user://worlds/index.dat. Мир можно передать
-## другу: export_code() упаковывает файл мира в текстовый код, import_code()
-## добавляет такой код как новый мир.
+## список с именами и датами — в user://worlds/index.dat.
 
 const WORLDS_DIR := "user://worlds/"
 const INDEX_PATH := "user://worlds/index.dat"
 ## Старое единственное сохранение — переносится в список миров при первом запуске.
 const LEGACY_PATH := "user://world.save"
 const SAVE_VERSION := 4
-const CODE_PREFIX := "EVERSTEAD1:"
 ## Превью — PREVIEW_CELLS клеток карты (по 4 м) вокруг камеры.
 const PREVIEW_CELLS := 48
 const BUILDING_DOT := Color("#5A4636")
@@ -264,65 +261,6 @@ func rename_world(id: String, title: String) -> void:
 		world_name = _clean_name(title)
 
 
-## Мир целиком (постройки, ресурсы, рельеф, метки) в виде текстового кода — его
-## можно отправить другу файлом или сообщением. Онлайн для этого не нужен.
-func export_code(id: String) -> String:
-	if id == world_id:
-		save_game()
-	var bytes := FileAccess.get_file_as_bytes(_path(id))
-	if bytes.is_empty():
-		return ""
-	var entry: Dictionary = _read_index().get(id, {})
-	var packed := var_to_bytes({"name": entry.get("name", "Мир"), "save": bytes})
-	var size := packed.size()
-	var compressed := packed.compress(FileAccess.COMPRESSION_GZIP)
-	return CODE_PREFIX + str(size) + ":" + Marshalls.raw_to_base64(compressed)
-
-
-## Добавляет мир из кода друга. Возвращает пустую строку или причину ошибки.
-func import_code(code: String) -> String:
-	code = code.strip_edges()
-	var start := code.find(CODE_PREFIX)
-	if start < 0:
-		return "Это не код мира Everstead"
-	code = code.substr(start + CODE_PREFIX.length())
-	var sep := code.find(":")
-	if sep < 0:
-		return "Код мира повреждён"
-	var size := code.substr(0, sep).to_int()
-	# Мессенджеры могут разбить длинный код на строки — пробелы и переносы убираем.
-	var body := code.substr(sep + 1)
-	for ch in [" ", "\n", "\r", "\t"]:
-		body = body.replace(ch, "")
-	var compressed := Marshalls.base64_to_raw(body)
-	if size <= 0 or size > 64 * 1024 * 1024 or compressed.is_empty():
-		return "Код мира повреждён"
-	var packed := compressed.decompress(size, FileAccess.COMPRESSION_GZIP)
-	var data: Variant = bytes_to_var(packed)
-	if not (data is Dictionary) or not (data.get("save") is PackedByteArray):
-		return "Код мира повреждён"
-	var id := _new_id()
-	DirAccess.make_dir_recursive_absolute(WORLDS_DIR)
-	var file := FileAccess.open(_path(id), FileAccess.WRITE)
-	if file == null:
-		return "Не удалось сохранить мир"
-	file.store_buffer(data["save"])
-	file.close()
-	# Проверяем, что внутри настоящее сохранение, и берём из него данные для списка.
-	file = FileAccess.open(_path(id), FileAccess.READ)
-	var save: Variant = file.get_var() if file else null
-	file = null
-	if not (save is Dictionary) or not int(save.get("version", 0)) in [3, SAVE_VERSION]:
-		DirAccess.remove_absolute(_path(id))
-		return "Мир из другой версии игры — обновите страницу и попробуйте снова"
-	var now := Time.get_unix_time_from_system()
-	var building_list: Array = save.get("buildings", [])
-	_touch_index(id, {"name": _unique_name(_clean_name(str(data.get("name", "Мир друга")))), "seed": save.get("seed", 0),
-		"created": now, "played": now, "buildings": building_list.size()})
-	_save_preview(id, save.get("explored", {}), save.get("camera", {}).get("pos", Vector3.ZERO), building_list)
-	return ""
-
-
 ## Имя для нового мира, которого ещё нет в списке.
 func suggest_name() -> String:
 	var taken := _taken_names()
@@ -332,14 +270,6 @@ func suggest_name() -> String:
 		if not taken.has(title):
 			return title
 	return _unique_name("Новый мир")
-
-
-## Имя файла, которым мир отправляется другу.
-func share_file_name(id: String) -> String:
-	var title: String = _read_index().get(id, {}).get("name", "Мир")
-	for ch in ["/", "\\", ":", "*", "?", "\"", "<", ">", "|"]:
-		title = title.replace(ch, " ")
-	return "Everstead — %s.txt" % title.strip_edges()
 
 
 func _taken_names() -> Dictionary:

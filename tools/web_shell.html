@@ -250,9 +250,8 @@ body {
 	}
 }
 
-/* --- Окна стартового экрана: имя мира, «Поделиться», «Мир от друга» --------------------------
-   Это настоящие HTML-кнопки и поля: только по нажатию на них Safari разрешает открыть
-   «Поделиться», выбрать файл и показать клавиатуру. */
+/* --- Окно стартового экрана: имя нового мира -------------------------------------------------
+   Это настоящее HTML-поле: только по нажатию на него Safari показывает клавиатуру. */
 
 #dlg {
 	position: fixed;
@@ -335,14 +334,6 @@ body {
 	border-color: #E8643C;
 }
 
-textarea.dlg-field {
-	height: 84px;
-	resize: none;
-	font-size: 13px;
-	font-weight: 700;
-	word-break: break-all;
-}
-
 .dlg-buttons {
 	display: flex;
 	flex-wrap: wrap;
@@ -350,7 +341,7 @@ textarea.dlg-field {
 	margin-top: 16px;
 }
 
-.dlg-buttons button, .dlg-file {
+.dlg-buttons button {
 	flex: 1 1 120px;
 	min-height: 48px;
 	padding: 10px 14px;
@@ -367,7 +358,7 @@ textarea.dlg-field {
 	appearance: none;
 }
 
-.dlg-buttons button:active, .dlg-file:active {
+.dlg-buttons button:active {
 	transform: scale(0.97);
 }
 
@@ -375,52 +366,6 @@ textarea.dlg-field {
 	background: #E8643C;
 	color: #FFFFFF;
 	box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.16);
-}
-
-.dlg-file {
-	position: relative;
-	display: flex;
-	box-sizing: border-box;
-	justify-content: center;
-	align-items: center;
-	margin-top: 14px;
-	box-shadow: 0 0 0 2px #E6DACB;
-	overflow: hidden;
-}
-
-/* Само поле выбора файла — прозрачное, поверх кнопки: нажатие приходится прямо на него. */
-.dlg-file input {
-	position: absolute;
-	inset: 0;
-	width: 100%;
-	height: 100%;
-	opacity: 0;
-	cursor: pointer;
-}
-
-.dlg-or {
-	margin-top: 12px;
-	font-size: 13px;
-	font-weight: 800;
-	color: #A39585;
-	text-align: center;
-}
-
-.dlg-note {
-	min-height: 1.2em;
-	margin-top: 10px;
-	font-size: 14px;
-	font-weight: 800;
-	color: #5E8C4A;
-	text-align: center;
-}
-
-.dlg-note.bad {
-	color: #C4554A;
-}
-
-.dlg-note:empty {
-	display: none;
 }
 
 /* Телефон боком: окно у верхнего края, чтобы его не закрыла клавиатура. */
@@ -434,13 +379,10 @@ textarea.dlg-field {
 	.dlg-title {
 		font-size: 19px;
 	}
-	textarea.dlg-field {
-		height: 54px;
-	}
 	.dlg-buttons {
 		margin-top: 12px;
 	}
-	.dlg-buttons button, .dlg-file {
+	.dlg-buttons button {
 		min-height: 42px;
 	}
 }
@@ -642,41 +584,6 @@ const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 		}
 	}
 
-	function download(file) {
-		const url = URL.createObjectURL(file);
-		const a = el('a');
-		a.href = url;
-		a.download = file.name;
-		document.body.appendChild(a);
-		a.click();
-		a.remove();
-		setTimeout(() => URL.revokeObjectURL(url), 20000);
-	}
-
-	async function copyText(text) {
-		try {
-			await navigator.clipboard.writeText(text);
-			return true;
-		} catch (e) {
-			// Старые браузеры: копируем через скрытое поле.
-		}
-		const ta = el('textarea');
-		ta.value = text;
-		ta.style.position = 'fixed';
-		ta.style.opacity = '0';
-		document.body.appendChild(ta);
-		ta.focus();
-		ta.select();
-		let ok = false;
-		try {
-			ok = document.execCommand('copy');
-		} catch (e) {
-			ok = false;
-		}
-		ta.remove();
-		return ok;
-	}
-
 	function askName(title, text, value, okText, cb) {
 		openDialog(title, text, cb, (c) => {
 			const input = el('input', 'dlg-field');
@@ -705,86 +612,6 @@ const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 			button(buttons, 'Отмена', false, () => closeDialog(''));
 			button(buttons, okText, true, ok);
 			setTimeout(() => input.focus(), 80);
-		});
-	}
-
-	function shareWorld(name, fileName, code, cb) {
-		openDialog('Поделиться миром', 'Отправьте другу файл мира «' + name + '» — он откроет Everstead, нажмёт '
-			+ '«Мир от друга» и выберет этот файл. Или скопируйте код и пришлите его сообщением.', cb, (c) => {
-			const file = new File([code], fileName, { type: 'text/plain' });
-			const buttons = row(c);
-			const note = el('div', 'dlg-note');
-			const say = (text, bad) => {
-				note.className = bad ? 'dlg-note bad' : 'dlg-note';
-				note.textContent = text;
-			};
-			button(buttons, 'Отправить файл', true, async () => {
-				try {
-					if (navigator.canShare && navigator.canShare({ files: [file] })) {
-						await navigator.share({ files: [file], title: 'Everstead — ' + name });
-						say('Готово!', false);
-					} else {
-						download(file);
-						say('Файл сохранён в «Загрузки»', false);
-					}
-				} catch (e) {
-					if (e && e.name === 'AbortError') {
-						return;
-					}
-					download(file);
-					say('Файл сохранён в «Загрузки»', false);
-				}
-			});
-			button(buttons, 'Скопировать код', false, async () => {
-				if (await copyText(code)) {
-					say('Код скопирован — вставьте его в сообщение другу', false);
-				} else {
-					say('Не удалось скопировать', true);
-				}
-			});
-			c.appendChild(note);
-			button(row(c), 'Готово', false, () => closeDialog(''));
-		});
-	}
-
-	function importWorld(cb) {
-		openDialog('Мир от друга', 'Выберите файл мира, который прислал друг, или вставьте его код.', cb, (c) => {
-			const pick = el('label', 'dlg-file', 'Выбрать файл');
-			const input = el('input');
-			input.type = 'file';
-			pick.appendChild(input);
-			c.appendChild(pick);
-			c.appendChild(el('div', 'dlg-or', 'или'));
-			const area = el('textarea', 'dlg-field');
-			area.placeholder = 'Вставьте код мира';
-			area.spellcheck = false;
-			area.autocomplete = 'off';
-			area.setAttribute('autocapitalize', 'off');
-			c.appendChild(area);
-			const note = el('div', 'dlg-note bad');
-			c.appendChild(note);
-			input.addEventListener('change', () => {
-				const f = input.files && input.files[0];
-				if (!f) {
-					return;
-				}
-				const reader = new FileReader();
-				reader.onload = () => closeDialog(String(reader.result || ''));
-				reader.onerror = () => {
-					note.textContent = 'Не удалось прочитать файл';
-				};
-				reader.readAsText(f);
-			});
-			const buttons = row(c);
-			button(buttons, 'Отмена', false, () => closeDialog(''));
-			button(buttons, 'Добавить мир', true, () => {
-				const v = area.value.trim();
-				if (v) {
-					closeDialog(v);
-				} else {
-					note.textContent = 'Сначала выберите файл или вставьте код';
-				}
-			});
 		});
 	}
 
@@ -898,8 +725,6 @@ const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 		threadsMode: () => storage('everstead-threads') || 'auto',
 		reload: () => window.location.reload(),
 		askName: askName,
-		shareWorld: shareWorld,
-		importWorld: importWorld,
 	};
 
 	const tips = [
