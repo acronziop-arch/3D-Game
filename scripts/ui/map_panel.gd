@@ -28,6 +28,8 @@ var _color_buttons: Array[Button] = []
 var _icon_buttons: Array[Button] = []
 var _icon_grid: GridContainer
 var _editor_buttons: GridContainer
+## Ширина, в которую должно влезть окно метки.
+var _editor_room := 360.0
 var _edit_index := -1
 var _edit_pos := Vector3.ZERO
 var _edit_color := COLORS[0]
@@ -211,11 +213,27 @@ func _fit() -> void:
 	var w: float = minf(vp.x - m["left"] - m["right"] - 20.0, 980.0)
 	var h: float = vp.y - m["top"] - m["bottom"] - 90.0
 	map.custom_minimum_size = Vector2(w - 24.0, maxf(h, 160.0))
-	# Окно метки не шире экрана: значки — в две-три колонки, кнопки — в два ряда.
-	var room: float = vp.x - m["left"] - m["right"] - 32.0
-	_icon_grid.columns = clampi(floori((room + 6.0) / 116.0), 2, 4)
-	_editor_buttons.columns = 4 if room >= 470.0 else 2
+	# Окно метки не шире экрана: значки — в две-три колонки, кнопки — в один-два ряда.
+	_editor_room = vp.x - m["left"] - m["right"] - 32.0
+	_icon_grid.columns = clampi(floori((_editor_room + 6.0) / 116.0), 2, 4)
+	_center_editor()
+
+
+## Окно метки — по центру экрана, по своему размеру. reset_size() оставлял левый край
+## в середине экрана, и окно уходило за правый край.
+func _center_editor() -> void:
+	# Кнопки — одним рядом, если влезают все видимые (у новой метки «Удалить» нет), иначе по две.
+	var shown := _editor_buttons.get_children().filter(func(c: Node) -> bool: return (c as Control).visible)
+	var row_w := 0.0
+	for b: Control in shown:
+		row_w += b.get_combined_minimum_size().x + 8.0
+	_editor_buttons.columns = shown.size() if row_w - 8.0 <= _editor_room else 2
 	_editor.reset_size()
+	var s := _editor.get_combined_minimum_size()
+	_editor.offset_left = -s.x * 0.5
+	_editor.offset_right = s.x * 0.5
+	_editor.offset_top = -s.y * 0.5
+	_editor.offset_bottom = s.y * 0.5
 
 
 func open() -> void:
@@ -290,7 +308,7 @@ func _open_editor(index: int, pos: Vector3) -> void:
 	_delete_button.visible = index >= 0
 	_sync_editor()
 	_editor.visible = true
-	_editor.reset_size()
+	_center_editor()
 
 
 func _sync_editor() -> void:

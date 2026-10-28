@@ -4,10 +4,11 @@ extends Node
 ##   нажать — действие инструмента (добыть, поставить здание, выбрать для сноса);
 ##   тянуть одним пальцем — двигать камеру; в режиме «Ровнять» — выравнивать землю,
 ##     в стройке — тянуть призрак здания, если палец начал движение на нём;
+##   жест, начатый в мире, продолжается и над интерфейсом — до отпускания пальца;
 ##   два пальца: щипок — приближение, поворот — вращение, сдвиг — перемещение,
 ##     оба пальца вверх-вниз — наклон камеры;
 ##   три быстрых касания двумя пальцами — спрятать или вернуть интерфейс.
-## Касания поверх интерфейса сюда не доходят: их забирают кнопки и панели.
+## Касания, начатые поверх интерфейса, сюда не доходят: их забирают кнопки и панели.
 
 signal hide_ui_requested
 
@@ -40,6 +41,17 @@ var _last_two_tap := 0
 var _last_mid := Vector2.ZERO
 var _last_dist := 0.0
 var _last_angle := 0.0
+
+
+## Палец, начавший жест в мире, ведёт его до конца и над кнопками и панелями: иначе камера
+## или линия ограды обрывались, стоило пальцу задеть интерфейс (его забирал себе Control).
+func _input(event: InputEvent) -> void:
+	if event is InputEventScreenDrag and _touches.has((event as InputEventScreenDrag).index):
+		_on_drag(event as InputEventScreenDrag)
+		get_viewport().set_input_as_handled()
+	elif event is InputEventScreenTouch and not event.pressed and _touches.has((event as InputEventScreenTouch).index):
+		_on_touch(event as InputEventScreenTouch)
+		get_viewport().set_input_as_handled()
 
 
 func _unhandled_input(event: InputEvent) -> void:

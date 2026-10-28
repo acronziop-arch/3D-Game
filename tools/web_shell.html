@@ -713,6 +713,41 @@ const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 		});
 	}
 
+	// --- Очистка кэша ---------------------------------------------------------------------
+	// Кнопка «Очистить кэш» в настройках: файлы игры скачиваются заново мимо кэша браузера
+	// (бывает, что после обновления он отдаёт старую версию), и страница перезапускается.
+	// Миры и настройки лежат в IndexedDB — их это не касается; игра сохраняет мир заранее.
+	let engineBase = GODOT_CONFIG['executable'];
+
+	function clearCache() {
+		const files = [window.location.href.split('#')[0], engineBase + '.js', engineBase + '.wasm',
+			GODOT_CONFIG['executable'] + '.pck'];
+		let status = null;
+		let done = 0;
+		openDialog('Обновляем игру', 'Скачиваем свежую версию, потом игра перезапустится. Миры и настройки останутся.', null, (c) => {
+			status = el('div', 'dlg-text', 'Скачано 0 из ' + files.length);
+			c.appendChild(status);
+		});
+		const step = () => {
+			done += 1;
+			if (status) {
+				status.textContent = 'Скачано ' + done + ' из ' + files.length;
+			}
+		};
+		// cache: 'reload' — мимо кэша, и свежий ответ сразу ложится в кэш вместо старого.
+		const jobs = files.map((url) => fetch(url, { cache: 'reload' }).then((r) => r.arrayBuffer()).catch(() => null).then(step));
+		if ('caches' in window) {
+			jobs.push(caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))).catch(() => null));
+		}
+		if ('serviceWorker' in navigator) {
+			jobs.push(navigator.serviceWorker.getRegistrations().then((regs) => Promise.all(regs.map((r) => r.update()))).catch(() => null));
+		}
+		// Отметки о неудачных запусках многопоточной версии — тоже заново (выбор игрока остаётся).
+		storage(MT_BOOT, null);
+		storage('everstead-coi-useless', null);
+		return Promise.all(jobs).then(() => setTimeout(() => window.location.reload(), 300));
+	}
+
 	// Игра сама сообщает, как идёт подготовка, и когда мир готов.
 	window.everstead = {
 		progress: (fraction, text) => setProgress(DOWNLOAD_SHARE + (1 - DOWNLOAD_SHARE) * fraction, text),
@@ -724,6 +759,7 @@ const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 		setThreads: (mode) => storage('everstead-threads', mode === 'off' ? 'off' : null),
 		threadsMode: () => storage('everstead-threads') || 'auto',
 		reload: () => window.location.reload(),
+		clearCache: clearCache,
 		askName: askName,
 	};
 
@@ -782,6 +818,7 @@ const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 
 	function startEngine(threads) {
 		const base = threads ? MT_BASE : GODOT_CONFIG['executable'];
+		engineBase = base;
 		const script = document.createElement('script');
 		script.src = base + '.js';
 		script.onerror = () => {

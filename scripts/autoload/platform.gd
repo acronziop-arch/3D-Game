@@ -217,6 +217,30 @@ func _web_safe_margins(m: Dictionary) -> Dictionary:
 	return m
 
 
+## «Очистить кэш». В браузере файлы игры скачиваются заново мимо кэша браузера, и
+## страница перезапускается (true). В приложении удаляются собранные движком шейдеры —
+## они соберутся заново при следующем запуске (false). Миры и настройки не трогаются.
+func clear_cache() -> bool:
+	if is_web:
+		JavaScriptBridge.eval("(function () { var e = window.everstead; if (e && e.clearCache) { e.clearCache(); }"
+			+ " else { setTimeout(function () { window.location.reload(); }, 300); } })()")
+		return true
+	for dir: String in ["user://shader_cache", "user://vulkan", "user://metal", "user://d3d12"]:
+		_remove_dir(dir)
+	return false
+
+
+static func _remove_dir(path: String) -> void:
+	var dir := DirAccess.open(path)
+	if dir == null:
+		return
+	for sub: String in dir.get_directories():
+		_remove_dir(path.path_join(sub))
+	for file: String in dir.get_files():
+		dir.remove(file)
+	DirAccess.remove_absolute(path)
+
+
 ## Лёгкий отклик вибрацией (на iPhone — Taptic Engine).
 func haptic(strength := 0.5) -> void:
 	if is_mobile() and Settings.get_value("haptics"):

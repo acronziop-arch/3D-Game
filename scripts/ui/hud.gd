@@ -12,6 +12,8 @@ extends CanvasLayer
 ## Выход на стартовый экран (кнопка «В главное меню» в настройках).
 signal menu_requested
 signal markers_changed
+## «Очистить кэш» в настройках.
+signal cache_clear_requested
 
 const LOADING_TIPS := [
 	"Срубите пару деревьев и постройте лесопилку — из брёвен выйдут доски.",
@@ -155,6 +157,7 @@ func _ready() -> void:
 	_settings.save_requested.connect(func() -> void:
 		show_message("Мир сохранён" if WorldState.save_game() else "Не удалось сохранить"))
 	_settings.menu_requested.connect(func() -> void: menu_requested.emit())
+	_settings.cache_clear_requested.connect(func() -> void: cache_clear_requested.emit())
 	# Время, сезон и погода из настроек меняются сразу — за косой чёрной полосой.
 	_wipe = WorldWipe.new()
 	add_child(_wipe)

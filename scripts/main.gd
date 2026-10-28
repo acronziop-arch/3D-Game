@@ -85,6 +85,7 @@ func _ready() -> void:
 	atmosphere.camera_rig = camera_rig
 	hud.bind(interaction)
 	hud.menu_requested.connect(_to_menu)
+	hud.cache_clear_requested.connect(_clear_cache)
 	_markers = Markers.new()
 	_markers.name = "Markers"
 	_markers.chunk_manager = chunk_manager
@@ -396,6 +397,17 @@ func _exit_tree() -> void:
 		if everstead:
 			everstead.onHide = null
 		_on_page_hide = null
+
+
+## «Очистить кэш» в настройках: мир сохраняется заранее — в браузере страница потом
+## перезапустится.
+func _clear_cache() -> void:
+	WorldState.camera_state = camera_rig.get_state()
+	WorldState.save_game()
+	if Platform.clear_cache():
+		hud.show_message("Скачиваем свежую версию игры — потом она перезапустится")
+	else:
+		hud.show_message("Кэш очищен — шейдеры соберутся заново при следующем запуске")
 
 
 ## «В главное меню»: сохраняем мир и показываем стартовый экран заново.

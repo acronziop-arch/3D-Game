@@ -9,6 +9,8 @@ extends Control
 signal save_requested
 ## Сохранить мир и выйти на стартовый экран со списком миров.
 signal menu_requested
+## «Очистить кэш» (см. Platform.clear_cache).
+signal cache_clear_requested
 
 const WIDTH := 940.0
 ## Оттенки фирменных цветов для подложек и акцентов.
@@ -404,6 +406,32 @@ func _build_game(page: VBoxContainer) -> void:
 	menu.pressed.connect(func() -> void: menu_requested.emit())
 	row.add_child(menu)
 	save_card.add_child(row)
+	var cache := _card(page, "trash", "Кэш",
+		"Если после обновления игра осталась прежней — очистите кэш: она скачается заново и перезапустится. Миры и настройки останутся."
+		if Platform.is_web else "Собранные шейдеры удалятся и соберутся заново при следующем запуске. Миры и настройки останутся.", true)
+	var clear := Button.new()
+	clear.text = "Очистить кэш"
+	clear.icon = UiStyle.icon("trash")
+	clear.add_theme_constant_override("icon_max_width", 24)
+	clear.custom_minimum_size = Vector2(0, 46 if _touch else 44)
+	clear.mouse_filter = Control.MOUSE_FILTER_PASS
+	clear.pressed.connect(_on_clear_cache.bind(clear))
+	cache.add_child(clear)
+
+
+## «Очистить кэш». В браузере игра после этого перезапустится — просим нажать ещё раз.
+func _on_clear_cache(b: Button) -> void:
+	if Platform.is_web and not b.has_meta("armed"):
+		b.set_meta("armed", true)
+		b.text = "Нажмите ещё раз"
+		get_tree().create_timer(4.0).timeout.connect(func() -> void:
+			if is_instance_valid(b) and b.has_meta("armed"):
+				b.remove_meta("armed")
+				b.text = "Очистить кэш")
+		return
+	b.remove_meta("armed")
+	b.text = "Очистить кэш"
+	cache_clear_requested.emit()
 
 
 func _build_world(page: VBoxContainer) -> void:
