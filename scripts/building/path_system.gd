@@ -334,6 +334,9 @@ func _refit(i: int, rect: Rect2) -> void:
 ## Чанк загрузился или земля изменилась: дорожки в нём ложатся на рельеф заново,
 ## трава под ними убирается.
 func on_chunk_loaded(chunk: Chunk) -> void:
+	# Мир ещё грузится, дорожки не созданы (restore) — их уложат при создании.
+	if _meshes.size() != WorldState.paths.size():
+		return
 	var area := Rect2(chunk.position.x, chunk.position.z, WorldGen.CHUNK_SIZE, WorldGen.CHUNK_SIZE)
 	for i in WorldState.paths.size():
 		var entry: Dictionary = WorldState.paths[i]
@@ -351,6 +354,8 @@ func refresh_area(rect: Rect2) -> void:
 ## Землю выравнивают (несколько раз в секунду, пока идёт мазок): дорожки сразу ложатся
 ## на новую поверхность, а там, где земля ушла под воду, дорожка обрывается.
 func on_terrain_changed(rect: Rect2) -> void:
+	if _meshes.size() != WorldState.paths.size():
+		return
 	for i in range(WorldState.paths.size() - 1, -1, -1):
 		var entry: Dictionary = WorldState.paths[i]
 		if not _bounds(entry).intersects(rect):
