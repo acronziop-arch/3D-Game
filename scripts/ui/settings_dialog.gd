@@ -33,7 +33,7 @@ const SECTIONS := [
 ## Снимки для «О проекте»: файл в assets/about и подпись.
 const ABOUT_SHOTS := [
 	["harbor_day", "Озёрная гавань ясным утром"],
-	["merchants_evening", "Купеческий город на закате"],
+	["merchants_evening", "Купеческий город поздним вечером"],
 	["mill_rain", "Мельница у реки в дождь"],
 	["north_snow", "Северная заимка в снегопад"],
 	["abbey_fog", "Монастырская обитель в тумане"],
@@ -641,8 +641,9 @@ const HELP := [
 
 
 ## Картинка во всю ширину карточки, высота — по её пропорциям (без своей ширины: иначе
-## она «распирала» бы окно на весь экран).
-func _picture(parent: Control, path: String) -> Control:
+## она «распирала» бы окно на весь экран). max_height > 0 — не выше: в широком окне
+## картинка становится полосой и не занимает весь экран.
+func _picture(parent: Control, path: String, max_height := 0.0) -> Control:
 	if not ResourceLoader.exists(path):
 		return null
 	var pic := TextureRect.new()
@@ -658,7 +659,8 @@ func _picture(parent: Control, path: String) -> Control:
 	parent.add_child(holder)
 	pic.set_meta("aspect", float(pic.texture.get_width()) / pic.texture.get_height())
 	holder.resized.connect(func() -> void:
-		pic.custom_minimum_size.y = (holder.size.x - 8.0) / float(pic.get_meta("aspect")))
+		var h := (holder.size.x - 8.0) / float(pic.get_meta("aspect"))
+		pic.custom_minimum_size.y = minf(h, max_height) if max_height > 0.0 else h)
 	return holder
 
 
@@ -671,7 +673,7 @@ func _build_villages(page: VBoxContainer) -> void:
 	for p: Dictionary in VillageBuilder.PRESETS:
 		var card := _card(page, "preset_" + p["id"], p["name"], p["desc"], alt)
 		alt = not alt
-		_picture(card, "res://assets/villages/%s.jpg" % p["id"])
+		_picture(card, "res://assets/villages/%s.jpg" % p["id"], 240.0)
 		var go := Button.new()
 		go.text = "Открыть деревню"
 		go.icon = UiStyle.icon("arrow")
