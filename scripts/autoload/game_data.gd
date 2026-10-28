@@ -126,7 +126,6 @@ const RECIPES := {
 # place: "land" — только на суше или на настиле, "water" — только на воде,
 #        "bridge" — концы на берегах, середина над водой.
 # drawn: цена метра, если ограду протягивают пальцем любой линией (FenceSystem).
-# yard: false — мелочи вокруг здания не опускаются на склон (вода, настил остаются ровными).
 const BUILDING_CATEGORIES := {
 	"production": "Мастерские",
 	"housing": "Жильё",
@@ -263,7 +262,7 @@ const BUILDINGS := {
 	"chicken_coop": {"name": "Курятник", "category": "housing", "time": 8.0,
 		"cost": {"plank": 10, "log": 4},
 		"desc": "Домик на сваях с лесенкой и загончиком — куры гуляют во дворе."},
-	"fishing_hut": {"name": "Рыбацкая хижина", "category": "housing", "time": 12.0, "yard": false,
+	"fishing_hut": {"name": "Рыбацкая хижина", "category": "housing", "time": 12.0,
 		"cost": {"plank": 14, "log": 8, "cloth": 2},
 		"desc": "Домик на настиле, сушилка для сетей, вяленая рыба и лодка у берега."},
 	"greenhouse": {"name": "Теплица", "category": "garden", "time": 14.0, "ground_only": true,
@@ -272,7 +271,7 @@ const BUILDINGS := {
 	"gazebo": {"name": "Беседка", "category": "yard", "time": 10.0,
 		"cost": {"plank": 12, "log": 4, "stone": 3},
 		"desc": "Шестигранная беседка со скамьями и резными перилами."},
-	"fountain": {"name": "Фонтан", "category": "yard", "time": 12.0, "yard": false,
+	"fountain": {"name": "Фонтан", "category": "yard", "time": 12.0,
 		"cost": {"stone_block": 10, "stone": 8},
 		"desc": "Каменная чаша на столбе: вода переливается в круглый бассейн."},
 	# Декор двора: мелочи для уюта, ставятся сразу и вплотную друг к другу.

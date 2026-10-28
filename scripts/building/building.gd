@@ -317,48 +317,29 @@ func follows_ground() -> bool:
 	return _ground_mesh != null or _yard_mesh != null
 
 
-## Стены — всё, что есть в модели на этой высоте (м): двор начинается за их пятном.
-const YARD_WALL_LO := 1.0
-const YARD_WALL_HI := 1.6
-## Выше этого дворовые мелочи не опускаются (с 0,9 м — плавно меньше).
-const YARD_TOP := 1.6
-
-
-## Двор модели: вершины ниже YARD_TOP снаружи стен (бревна у лесопилки, бочки у
-## таверны, камни у каменотёсни). Считается один раз на вид здания; пустой — двора нет.
+## Двор модели: поверхности с пометкой «yard» (Geo.tag) — бревна у лесопилки, бочки у
+## таверны, камни у каменотёсни. Считается один раз на вид здания; пустой — двора нет.
 static func _yard_of(mesh: Mesh) -> Array:
 	if _yard_cache.has(mesh):
 		return _yard_cache[mesh]
 	var all := []
-	var walls := Rect2()
-	var seen := false
+	var parts := []
+	var any := false
 	for i in mesh.get_surface_count():
 		var arrays := mesh.surface_get_arrays(i)
 		all.append(arrays)
-		for v: Vector3 in arrays[Mesh.ARRAY_VERTEX]:
-			if v.y >= YARD_WALL_LO and v.y <= YARD_WALL_HI:
-				walls = walls.expand(Vector2(v.x, v.z)) if seen else Rect2(Vector2(v.x, v.z), Vector2.ZERO)
-				seen = true
-	var result := []
-	if seen:
-		walls = walls.grow(0.2)
-		var parts := []
-		var any := false
-		for arrays: Array in all:
+		var idx := PackedInt32Array()
+		var weights := PackedFloat32Array()
+		var points := PackedVector3Array()
+		if ModelLibrary.surface_tag(mesh, i) == "yard":
 			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-			var idx := PackedInt32Array()
-			var weights := PackedFloat32Array()
-			var points := PackedVector3Array()
 			for k in verts.size():
-				var v := verts[k]
-				if v.y < YARD_TOP and not walls.has_point(Vector2(v.x, v.z)):
-					idx.append(k)
-					weights.append(1.0 - smoothstep(0.9, YARD_TOP, v.y))
-					points.append(v)
-			any = any or not idx.is_empty()
-			parts.append([idx, weights, points])
-		if any:
-			result = [all, parts]
+				idx.append(k)
+				weights.append(1.0)
+				points.append(verts[k])
+			any = true
+		parts.append([idx, weights, points])
+	var result := [all, parts] if any else []
 	_yard_cache[mesh] = result
 	return result
 
@@ -442,9 +423,8 @@ func setup(building_id: String, angle: float, instant: bool) -> void:
 		_ground_mesh = mesh
 		mesh = _conform(mesh)
 	elif ground_height.is_valid() and def.get("place", "land") == "land" and not def.get("tilt", false) \
-			and not def.has("plant") and def.get("yard", true) and not _yard_of(mesh).is_empty():
-		# Бочки, бревна и камни у стен не висят над склоном (кроме "yard": false — у фонтана
-		# вода и у настила доски должны оставаться ровными).
+			and not def.has("plant") and not _yard_of(mesh).is_empty():
+		# Бочки, бревна и камни у стен не висят над склоном.
 		_yard_mesh = mesh
 		mesh = _fit_yard(mesh)
 	_mesh.mesh = mesh

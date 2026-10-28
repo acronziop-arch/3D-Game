@@ -873,14 +873,16 @@ static func _sawmill(g: Geo, rng: RandomNumberGenerator) -> void:
 	# Пильный стол и штабель брёвен.
 	g.box("log_dark", Vector3(0.2, BASE + 0.45, -0.3), Vector3(3.6, 0.9, 1.0), col("log_dark", rng), 0.05)
 	g.box("log", Vector3(0.2, BASE + 0.95, -0.3), Vector3(3.2, 0.12, 0.7), col("log", rng), 0.03)
+	# Штабель лежит на земле перед цоколем; «yard» — на склоне он ложится по земле (Building._fit_yard).
+	g.tag = "yard"
 	for i in 6:
 		var row := 0 if i < 3 else 1
 		var k := i if i < 3 else i - 3
 		if row == 1 and k == 2:
 			continue
 		var z := 2.6 + (k + row * 0.5) * 0.48
-		# Штабель лежит на земле перед цоколем, а не на высоте цоколя.
 		g.rod("log", Vector3(-2.0, 0.2 + row * 0.42, z), Vector3(2.0, 0.2 + row * 0.42, z), 0.22, 0.22, 8, col("log", rng))
+	g.tag = ""
 
 
 static func _stonemason(g: Geo, rng: RandomNumberGenerator) -> void:
@@ -898,9 +900,11 @@ static func _stonemason(g: Geo, rng: RandomNumberGenerator) -> void:
 		g.pop()
 		g.rod("log", Vector3(side * (w * 0.5 - 0.2), BASE, d * 0.5 - 0.3), Vector3(side * (w * 0.5 - 0.2), BASE + 2.9, d * 0.5 - 0.3), 0.18, 0.16, 7, col("log", rng))
 	gable_roof(g, rng, Vector3(0, BASE + 2.75, 0), w, d, 1.5, "plank_dark", "shingle", 0.4)
+	g.tag = "yard"
 	for i in 5:
 		var p := Vector3(rng.randf_range(-1.8, 1.8), 0.22 + (0.5 if i == 4 else 0.0), d * 0.5 + 0.6 + rng.randf_range(0.0, 0.5))
 		g.box("stone", p, Vector3(0.7, 0.5, 0.5), col("stone", rng), 0.07, Basis(Vector3.UP, rng.randf_range(-0.3, 0.3)))
+	g.tag = ""
 	g.box("plank", Vector3(0, BASE + 0.45, -0.6), Vector3(2.0, 0.9, 0.8), col("plank", rng), 0.04)
 
 
@@ -985,10 +989,12 @@ static func _smithy(g: Geo, rng: RandomNumberGenerator) -> void:
 	gable_roof(g, rng, Vector3(0, BASE + 2.75, 0), w, d, 1.7, "slate", "shingle", 0.45, "plank_v", "")
 	_chimney(g, rng, Vector3(-2.0, BASE + 2.75, -1.2), 0.9, 2.6, "brick")
 	# Горн и кожаные меха снаружи.
+	g.tag = "yard"
 	g.box("brick", Vector3(1.6, 0.5, 3.0), Vector3(1.5, 1.0, 1.1), col("brick", rng), 0.04)
 	g.box("brick", Vector3(1.6, 1.05, 3.0), Vector3(1.6, 0.12, 1.2), col("brick", rng).darkened(0.1), 0.03)
 	g.blob("leather", Vector3(0.45, 0.85, 3.0), Vector3(0.45, 0.22, 0.32), col("leather", rng), rng, 1, 0.1, 0.2)
 	g.box("plank", Vector3(0.45, 0.4, 3.0), Vector3(0.5, 0.8, 0.5), col("plank", rng), 0.03)
+	g.tag = ""
 
 
 static func _well(g: Geo, rng: RandomNumberGenerator) -> void:
@@ -1789,8 +1795,10 @@ static func _tavern(g: Geo, rng: RandomNumberGenerator) -> void:
 	_chimney(g, rng, Vector3(-2.0, BASE + 4.7, -1.0), 0.7, 2.6, "stone")
 	_hanging_sign(g, rng, Vector3(w * 0.5 + 0.05, BASE + 2.3, d * 0.5 - 0.1), 1.0, "plank", "log")
 	# Бочки (под окном, не у самой двери) и скамья у входа.
+	g.tag = "yard"
 	_barrel(g, rng, Vector3(-2.45, 0.0, d * 0.5 + 0.55))
 	_barrel(g, rng, Vector3(-2.95, 0.0, d * 0.5 + 0.75), 0.7, 0.27)
+	g.tag = ""
 	g.box("plank", Vector3(1.5, 0.45, d * 0.5 + 0.45), Vector3(1.6, 0.08, 0.36), col("plank", rng), 0.02)
 	for x: float in [0.85, 2.15]:
 		g.box("plank", Vector3(x, 0.22, d * 0.5 + 0.45), Vector3(0.08, 0.44, 0.3), col("plank", rng).darkened(0.1), 0.01)
@@ -1827,11 +1835,13 @@ static func _bakery(g: Geo, rng: RandomNumberGenerator) -> void:
 	g.rod("crop", pretzel + Vector3(0, 0.22, 0), pretzel + Vector3(0, -0.12, 0.18), 0.05, 0.05, 5, bread, false)
 	g.rod("crop", pretzel + Vector3(0, 0.22, 0), pretzel + Vector3(0, -0.12, -0.18), 0.05, 0.05, 5, bread, false)
 	# Поленница для печи у задней стены.
+	g.tag = "yard"
 	for row in 3:
 		for i in 6:
 			var x := -1.9 + i * 0.32 + (row % 2) * 0.16
 			g.rod("log", Vector3(x, 0.14 + row * 0.25, -d * 0.5 - 0.15), Vector3(x, 0.14 + row * 0.25, -d * 0.5 - 0.85), 0.12, 0.12, 6,
 				col("log", rng, 0.12))
+	g.tag = ""
 
 
 static func _stable(g: Geo, rng: RandomNumberGenerator) -> void:
@@ -1851,10 +1861,12 @@ static func _stable(g: Geo, rng: RandomNumberGenerator) -> void:
 	gable_roof(g, rng, Vector3(0, BASE + 2.7, 0), w, d, 1.7, "plank_dark", "boards", 0.6, "plank_v", "")
 	# Дверца сеновала во фронтоне и тюки сена.
 	g.box("plank_dark", Vector3(w * 0.5 + 0.05, BASE + 3.4, 0), Vector3(0.08, 0.8, 0.9), col("plank_dark", rng), 0.02)
+	g.tag = "yard"
 	for p: Vector3 in [Vector3(-w * 0.5 - 0.6, 0.3, 1.0), Vector3(-w * 0.5 - 0.6, 0.3, 0.1), Vector3(-w * 0.5 - 0.6, 0.85, 0.55)]:
 		g.box("hay", p, Vector3(0.6, 0.55, 0.85), col("hay", rng, 0.08), 0.06)
 	# Поилка у входа.
 	_trough(g, rng, Vector3(1.3, 0, d * 0.5 + 0.9), 1.6)
+	g.tag = ""
 
 
 static func _town_hall(g: Geo, rng: RandomNumberGenerator) -> void:
@@ -1922,8 +1934,10 @@ static func _storehouse(g: Geo, rng: RandomNumberGenerator) -> void:
 	for i in 6:
 		g.box("plank", Vector3(-0.9 + (i + 0.5) * 0.3, (floor_y + 0.1) * 0.5, d * 0.5 + 0.95), Vector3(0.28, 0.06, 1.85),
 			col("plank", rng, 0.08), 0.01, ramp)
+	g.tag = "yard"
 	for p: Vector3 in [Vector3(2.2, 0.3, d * 0.5 + 0.7), Vector3(2.75, 0.3, d * 0.5 + 0.55), Vector3(2.45, 0.9, d * 0.5 + 0.62)]:
 		_crate(g, rng, p, 0.6, rng.randf_range(-0.3, 0.3))
+	g.tag = ""
 
 
 static func _dovecote(g: Geo, rng: RandomNumberGenerator) -> void:
@@ -1962,11 +1976,13 @@ static func _bathhouse(g: Geo, rng: RandomNumberGenerator) -> void:
 	gable_roof(g, rng, Vector3(0, 2.4, 0), w, d, 1.3, "plank_dark", "boards", 0.45, "log", "")
 	_chimney(g, rng, Vector3(-1.2, 2.4, -0.6), 0.5, 1.6, "stone")
 	# Лавка, кадушка и веники у стены.
+	g.tag = "yard"
 	g.box("plank", Vector3(-0.9, 0.45, d * 0.5 + 0.4), Vector3(1.5, 0.08, 0.36), col("plank", rng), 0.02)
 	for x: float in [-1.5, -0.3]:
 		g.box("plank", Vector3(x, 0.22, d * 0.5 + 0.4), Vector3(0.08, 0.44, 0.3), col("plank", rng).darkened(0.1), 0.01)
 	# Кадушка — сбоку у задней стены: спереди она заслоняла дверь.
 	_barrel(g, rng, Vector3(w * 0.5 + 0.5, 0.0, -0.9), 0.55, 0.32)
+	g.tag = ""
 	for k in 3:
 		var at := Vector3(-0.4 + k * 0.25, 1.75, d * 0.5 + 0.2)
 		g.rod("log", at, at + Vector3(0, -0.4, 0.02), 0.02, 0.02, 3, col("log", rng), false)
@@ -2299,8 +2315,10 @@ static func _watermill(g: Geo, rng: RandomNumberGenerator) -> void:
 	# Струя с конца жёлоба на лопасти.
 	g.box("water", Vector3(x0 - 0.03, top - 0.2, p.z), Vector3(0.08, 0.36, 0.46), col("water", rng, 0.02).lightened(0.15))
 	# Мешки муки у двери.
+	g.tag = "yard"
 	for k in 2:
 		g.blob("cloth", Vector3(w * 0.5 + 0.45, 0.3, -0.6 - k * 0.55), Vector3(0.26, 0.32, 0.22), col("cloth", rng, 0.05), rng, 1, 0.1, 0.15)
+	g.tag = ""
 
 
 ## Колесо в плоскости XY вокруг оси Z (в осях узла Rotor).
@@ -2466,7 +2484,8 @@ static func _chicken_coop(g: Geo, rng: RandomNumberGenerator) -> void:
 	g.box("plank", (r0 + r1) * 0.5 + Vector3(0, 0.02, 0), Vector3(0.45, 0.04, r0.distance_to(r1)), col("plank", rng), 0.01, rb)
 	for k in 4:
 		g.box("plank_dark", r0.lerp(r1, (k + 0.5) / 4.0) + Vector3(0, 0.05, 0), Vector3(0.42, 0.03, 0.04), col("plank_dark", rng), 0.0, rb)
-	# Загончик из штакетника перед курятником.
+	# Загончик из штакетника перед курятником (с сеном, кормушкой и курами — по земле).
+	g.tag = "yard"
 	var x0 := -1.6
 	var x1 := 1.6
 	var z0 := cz + d * 0.5 - 0.1
@@ -2503,6 +2522,7 @@ static func _chicken_coop(g: Geo, rng: RandomNumberGenerator) -> void:
 		g.box("crop", head + b * Vector3(0, -0.01, 0.08), Vector3(0.04, 0.03, 0.06), Color(0.95, 0.7, 0.2), 0.0, b)
 		for s: float in [-1.0, 1.0]:
 			g.rod("crop", at + b * Vector3(s * 0.05, 0.1, 0), at + b * Vector3(s * 0.05, 0.0, 0.02), 0.012, 0.012, 3, Color(0.95, 0.7, 0.2), false)
+	g.tag = ""
 
 
 static func _fishing_hut(g: Geo, rng: RandomNumberGenerator) -> void:
@@ -2547,6 +2567,7 @@ static func _fishing_hut(g: Geo, rng: RandomNumberGenerator) -> void:
 		g.blob("crop", at + Vector3(0, -0.36, 0), Vector3(0.06, 0.16, 0.03), Color(0.7, 0.72, 0.74), rng, 0, 0.1, 0.2)
 	_barrel(g, rng, Vector3(-1.85, deck_y + 0.07, 1.3), 0.6, 0.26)
 	# Лодка на берегу у настила: корпус из шпангоутов, скамья и весло.
+	g.tag = "yard"
 	g.push(Transform3D(Basis(Vector3.UP, 0.25), Vector3(0.4, 0.0, 2.9)))
 	var hull := col("plank_dark", rng)
 	var stations := 9
@@ -2573,6 +2594,7 @@ static func _fishing_hut(g: Geo, rng: RandomNumberGenerator) -> void:
 	g.rod("plank", Vector3(-0.7, 0.36, 0.25), Vector3(0.9, 0.3, 0.42), 0.03, 0.03, 4, col("plank", rng))
 	g.box("plank", Vector3(0.95, 0.3, 0.43), Vector3(0.4, 0.03, 0.13), col("plank", rng), 0.0, Basis(Vector3.UP, -0.1))
 	g.pop()
+	g.tag = ""
 
 
 static func _greenhouse(g: Geo, rng: RandomNumberGenerator) -> void:
