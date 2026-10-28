@@ -38,6 +38,8 @@ var _pages := {}
 var _nav_buttons := {}
 var _section := "game"
 var _help_box: VBoxContainer
+var _body: BoxContainer
+var _nav_box: BoxContainer
 var _help_touch := true
 
 
@@ -81,9 +83,11 @@ func _ready() -> void:
 	header.add_child(close_btn)
 	frame.add_child(header)
 
-	var body := HBoxContainer.new()
+	# Направление меняется на вертикальном экране (см. _fit).
+	var body := BoxContainer.new()
 	body.add_theme_constant_override("separation", 12 if _touch else 16)
 	frame.add_child(body)
+	_body = body
 	body.add_child(_build_nav())
 
 	_scroll = SmoothScroll.new()
@@ -121,9 +125,11 @@ func _ready() -> void:
 func _build_nav() -> Control:
 	var nav := PanelContainer.new()
 	nav.add_theme_stylebox_override("panel", UiStyle.box(NAV_BG, 18, 8))
-	var box := VBoxContainer.new()
+	var box := BoxContainer.new()
+	box.vertical = true
 	box.add_theme_constant_override("separation", 6)
 	nav.add_child(box)
+	_nav_box = box
 	var group := ButtonGroup.new()
 	for s: Array in SECTIONS:
 		var b := Button.new()
@@ -138,14 +144,19 @@ func _build_nav() -> Control:
 		b.custom_minimum_size = Vector2(150 if _touch else 180, 50 if _touch else 54)
 		b.add_theme_font_override("font", UiStyle.font(800))
 		b.add_theme_font_size_override("font_size", 15 if _touch else 17)
-		b.add_theme_stylebox_override("normal", UiStyle.box(Color(0, 0, 0, 0), 14, 10))
-		b.add_theme_stylebox_override("hover", UiStyle.box(Color(CARD, 0.7), 14, 10))
-		b.add_theme_stylebox_override("pressed", UiStyle.box(CARD, 14, 10, 2, UiStyle.BRAND, true))
-		b.add_theme_stylebox_override("hover_pressed", UiStyle.box(CARD, 14, 10, 2, UiStyle.BRAND_DARK, true))
+		_style_nav_button(b, 10)
 		b.pressed.connect(func() -> void: _show_section(s[0]))
 		box.add_child(b)
 		_nav_buttons[s[0]] = b
 	return nav
+
+
+## Рамки кнопки раздела; pad — внутренние поля (в строке разделов на телефоне — узкие).
+func _style_nav_button(b: Button, pad: int) -> void:
+	b.add_theme_stylebox_override("normal", UiStyle.box(Color(0, 0, 0, 0), 14, pad))
+	b.add_theme_stylebox_override("hover", UiStyle.box(Color(CARD, 0.7), 14, pad))
+	b.add_theme_stylebox_override("pressed", UiStyle.box(CARD, 14, pad, 2, UiStyle.BRAND, true))
+	b.add_theme_stylebox_override("hover_pressed", UiStyle.box(CARD, 14, pad, 2, UiStyle.BRAND_DARK, true))
 
 
 func _show_section(id: String) -> void:
@@ -158,11 +169,31 @@ func _show_section(id: String) -> void:
 
 
 ## Окно не шире экрана без вырезов и не выше его — содержимое раздела листается.
+## На вертикальном экране разделы — строкой сверху, а не колонкой слева.
 func _fit() -> void:
 	var m := Platform.safe_margins()
 	var vp := get_viewport_rect().size
+	var portrait := vp.x < vp.y
+	_body.vertical = portrait
+	_nav_box.vertical = not portrait
+	for b: Button in _nav_buttons.values():
+		b.custom_minimum_size = Vector2(0, 58) if portrait else Vector2(150 if _touch else 180, 50 if _touch else 54)
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL if portrait else Control.SIZE_FILL
+		b.alignment = HORIZONTAL_ALIGNMENT_CENTER if portrait else HORIZONTAL_ALIGNMENT_LEFT
+		b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP if portrait else VERTICAL_ALIGNMENT_CENTER
+		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER if portrait else HORIZONTAL_ALIGNMENT_LEFT
+		b.add_theme_font_size_override("font_size", 11 if portrait else (15 if _touch else 17))
+		# В строке разделов длинное название сокращается, а не раздвигает окно.
+		b.clip_text = portrait
+		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		if b.get_meta("pad", -1) != (3 if portrait else 10):
+			b.set_meta("pad", 3 if portrait else 10)
+			_style_nav_button(b, 3 if portrait else 10)
+		b.add_theme_constant_override("icon_max_width", 24 if portrait else (30 if _touch else 32))
 	_panel.custom_minimum_size.x = minf(WIDTH, vp.x - m["left"] - m["right"] - 12.0)
 	var chrome := (44.0 + 10.0 + 40.0) if _touch else (40.0 + 14.0 + 52.0)
+	if portrait:
+		chrome += 58.0 + 16.0 + 12.0
 	var room: float = vp.y - m["top"] - m["bottom"] - chrome
 	_scroll.custom_minimum_size.y = maxf(room, 160.0)
 

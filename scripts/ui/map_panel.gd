@@ -21,6 +21,8 @@ var camera_rig: CameraRig
 var _panel: PanelContainer
 var _editor: PanelContainer
 var _editor_title: Label
+var _hint: Label
+var _here: Button
 var _delete_button: Button
 var _color_buttons: Array[Button] = []
 var _icon_buttons: Array[Button] = []
@@ -68,10 +70,12 @@ func _ready() -> void:
 	header.add_child(UiStyle.icon_rect("map", 26))
 	header.add_child(UiStyle.label("Карта", 20, UiStyle.TEXT, 800))
 	var hint := UiStyle.label("Нажмите на карту, чтобы поставить метку", 12, UiStyle.MUTED, 700)
+	_hint = hint
 	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hint.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	header.add_child(hint)
 	var here := Button.new()
+	_here = here
 	here.text = "Метка здесь"
 	here.icon = UiStyle.icon("marker_pin")
 	here.add_theme_constant_override("icon_max_width", 20)
@@ -189,6 +193,11 @@ func _ready() -> void:
 func _fit() -> void:
 	var vp := get_viewport_rect().size
 	var m := Platform.safe_margins() if Platform.is_touch else {"left": 24.0, "top": 24.0, "right": 24.0, "bottom": 24.0}
+	# Узкий (вертикальный) экран: заголовок без пояснения, «Метка здесь» — одним значком.
+	var narrow := vp.x < vp.y
+	_hint.visible = not narrow
+	_here.text = "" if narrow else "Метка здесь"
+	_here.tooltip_text = "Метка здесь"
 	var w: float = minf(vp.x - m["left"] - m["right"] - 20.0, 980.0)
 	var h: float = vp.y - m["top"] - m["bottom"] - 90.0
 	map.custom_minimum_size = Vector2(w - 24.0, maxf(h, 160.0))

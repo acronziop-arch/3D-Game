@@ -9,6 +9,8 @@ extends Node
 ## (мышь превращается в касания), `--notch` добавляет поля как у iPhone с вырезом.
 
 signal layout_changed
+## Игрок перешёл с мыши на касания или обратно (см. using_touch).
+signal pointer_changed
 
 enum Form { DESKTOP, PHONE, TABLET }
 
@@ -20,8 +22,11 @@ const TABLET_UI_HEIGHT := 640
 const EDGE := 14.0
 
 var form := Form.DESKTOP
-## Управление касаниями (на ПК мышь при этом имитирует один палец).
+## Интерфейс под пальцы: крупные кнопки, подсказки для касаний (телефон, планшет).
 var is_touch := false
+## Чем игрок управляет прямо сейчас: последнее событие — касание или мышь. Работают
+## оба способа на любом устройстве: жесты на ноутбуке с сенсорным экраном, мышь на планшете.
+var using_touch := false
 var is_ios := false
 var is_android := false
 ## Браузерная версия (WebGL 2, без потоков).
@@ -46,6 +51,7 @@ func _init() -> void:
 	elif "--tablet" in args:
 		form = Form.TABLET
 	is_touch = form != Form.DESKTOP or "--touch" in args
+	using_touch = is_touch
 	_emulated_notch = "--notch" in args
 
 
@@ -58,6 +64,25 @@ func _ready() -> void:
 		Engine.max_fps = 60
 	get_tree().root.size_changed.connect(_update_layout)
 	_update_layout()
+
+
+func _input(event: InputEvent) -> void:
+	var touch := event is InputEventScreenTouch or event is InputEventScreenDrag
+	if not touch and not (event is InputEventMouseButton or (event is InputEventMouseMotion and event.relative.length() > 2.0)):
+		return
+	if not touch and is_touch_copy(event):
+		return
+	if touch != using_touch:
+		using_touch = touch
+		pointer_changed.emit()
+
+
+## Мышиное событие, которое на самом деле копия касания (или касание-имитация мышью
+## при проверке на ПК): его разбирает TouchInput, обычной мыши оно не нужно.
+static func is_touch_copy(event: InputEvent) -> bool:
+	if not (event is InputEventMouseButton or event is InputEventMouseMotion):
+		return false
+	return event.device == InputEvent.DEVICE_ID_EMULATION or Input.emulate_touch_from_mouse
 
 
 func is_mobile() -> bool:
@@ -104,6 +129,11 @@ func _update_layout() -> void:
 		var target := PHONE_UI_HEIGHT if is_phone() else TABLET_UI_HEIGHT
 		var aspect := maxf(window.x / maxf(window.y, 1.0), 1.0)
 		root.content_scale_size = Vector2i(roundi(target * aspect), target)
+	else:
+		# ПК: окно стоя (узкое окно браузера) — интерфейс по короткой стороне, как на
+		# телефоне, иначе он мельчал бы под широкую раскладку.
+		var window := Vector2(root.size)
+		root.content_scale_size = Vector2i(900, 900) if window.x < window.y else Vector2i(1600, 900)
 	_margins = _safe_margins()
 	layout_changed.emit()
 
@@ -126,12 +156,17 @@ func _safe_margins() -> Dictionary:
 		return m
 	var k := ui_scale()
 	if _emulated_notch:
-		# Как у iPhone с вырезом в альбомной ориентации: 47 pt по бокам, 21 pt снизу.
+		# Как у iPhone с вырезом: боком — 47 pt по бокам и 21 pt снизу,
+		# стоя — 47 pt сверху (вырез) и 34 pt снизу (полоска «домой»).
 		var visible := get_tree().root.get_visible_rect().size
-		var pt := visible.y / 390.0
-		m["left"] = 47.0 * pt
-		m["right"] = 47.0 * pt
-		m["bottom"] = maxf(EDGE, 21.0 * pt)
+		var pt := minf(visible.x, visible.y) / 390.0
+		if visible.x < visible.y:
+			m["top"] = 47.0 * pt
+			m["bottom"] = 34.0 * pt
+		else:
+			m["left"] = 47.0 * pt
+			m["right"] = 47.0 * pt
+			m["bottom"] = maxf(EDGE, 21.0 * pt)
 		return m
 	# В браузере холст занимает весь экран (viewport-fit=cover), а вырез и полоску
 	# «домой» сообщает CSS: env(safe-area-inset-*), в CSS-пикселях.

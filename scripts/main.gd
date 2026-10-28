@@ -97,13 +97,13 @@ func _ready() -> void:
 		var mode: Variant = JavaScriptBridge.eval("window.everstead && window.everstead.threadsMode ? window.everstead.threadsMode() : 'auto'")
 		if mode is String and mode != Settings.get_value("web_threads"):
 			Settings.set_value("web_threads", mode)
-	if Platform.is_touch:
-		var touch := TouchInput.new()
-		touch.name = "TouchInput"
-		touch.camera_rig = camera_rig
-		touch.interaction = interaction
-		touch.hide_ui_requested.connect(hud.toggle_ui_hidden)
-		add_child(touch)
+	# Касания понимаются на любом устройстве (и на ноутбуке с сенсорным экраном).
+	var touch := TouchInput.new()
+	touch.name = "TouchInput"
+	touch.camera_rig = camera_rig
+	touch.interaction = interaction
+	touch.hide_ui_requested.connect(hud.toggle_ui_hidden)
+	add_child(touch)
 	_apply_graphics()
 
 	# Запуск по шагам, чтобы браузер не «зависал»: первый кадр — только экран

@@ -80,6 +80,10 @@ func _ready() -> void:
 	_ring = make_ring(RING_COLOR)
 	_ring.visible = false
 	add_child(_ring)
+	# Взялись за мышь после касаний (или наоборот) — подсказка переезжает и меняет слова.
+	Platform.pointer_changed.connect(func() -> void:
+		_hover_text = ""
+		_touch_anchor = null)
 
 
 ## Кольцо-«стакан»: тонкий обод у земли и светящаяся стенка, тающая кверху.
@@ -152,7 +156,7 @@ func set_tool(new_tool: Tool) -> void:
 func start_building(building_id: String) -> void:
 	set_tool(Tool.BUILD)
 	building_system.select(building_id)
-	if Platform.is_touch:
+	if Platform.using_touch:
 		# Призрак появляется в центре экрана — дальше его можно тянуть пальцем.
 		var center := get_viewport().get_visible_rect().size * Vector2(0.5, 0.45)
 		_touch_anchor = _ground_at(center)
@@ -160,8 +164,8 @@ func start_building(building_id: String) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# В сенсорном режиме мышиные события — копии касаний (их разбирает TouchInput).
-	if Platform.is_touch and (event is InputEventMouseButton or event is InputEventMouseMotion):
+	# Мышиные копии касаний разбирает TouchInput; настоящая мышь работает везде.
+	if Platform.is_touch_copy(event):
 		return
 	if event.is_action_pressed("tool_harvest"):
 		set_tool(Tool.HARVEST)
@@ -403,7 +407,7 @@ func edit_move() -> void:
 	select_building(null)
 	tool = Tool.BUILD
 	building_system.start_move(b)
-	if Platform.is_touch:
+	if Platform.using_touch:
 		_touch_anchor = b.position
 	tool_changed.emit(tool)
 
@@ -606,7 +610,7 @@ func _process(delta: float) -> void:
 	elif _was_flattening:
 		chunk_manager.commit_terrain_edits()
 	_was_flattening = _flattening
-	var touch := Platform.is_touch
+	var touch := Platform.using_touch
 	var camera := camera_rig.camera
 	var pointer := _touch_point if touch else get_viewport().get_mouse_position()
 	var over_ui := not touch and get_viewport().gui_get_hovered_control() != null

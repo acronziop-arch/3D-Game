@@ -521,7 +521,7 @@ func reground_area(rect: Rect2) -> void:
 
 ## Подсказка клавиши — только на ПК.
 static func _key(k: String) -> String:
-	return "" if Platform.is_touch else " [%s]" % k
+	return "" if Platform.using_touch else " [%s]" % k
 
 
 func _props_inside(box: Dictionary) -> bool:

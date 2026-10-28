@@ -30,6 +30,8 @@ void fragment() {
 var _touch := false
 var _root: Control
 var _margin: MarginContainer
+## Логотип и список миров: рядом, а на вертикальном экране — друг под другом.
+var _columns: BoxContainer
 var _list: VBoxContainer
 var _scroll: SmoothScroll
 var _count: Label
@@ -62,12 +64,12 @@ func _ready() -> void:
 	_margin.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_margin)
-	var columns := HBoxContainer.new()
-	columns.add_theme_constant_override("separation", int(_px(40, 18)))
-	columns.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_margin.add_child(columns)
-	columns.add_child(_build_intro())
-	columns.add_child(_build_worlds())
+	_columns = BoxContainer.new()
+	_columns.add_theme_constant_override("separation", int(_px(40, 18)))
+	_columns.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_margin.add_child(_columns)
+	_columns.add_child(_build_intro())
+	_columns.add_child(_build_worlds())
 	_build_toast()
 	_place()
 	Platform.layout_changed.connect(_place)
@@ -84,6 +86,9 @@ func _px(pc: float, touch: float) -> float:
 
 func _place() -> void:
 	var m := Platform.safe_margins() if _touch else {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
+	# Вертикальный экран: логотип и «Новый мир» сверху, список миров — под ними.
+	var vp := _root.get_viewport_rect().size
+	_columns.vertical = vp.x < vp.y
 	var pad := _px(48, 14)
 	_margin.add_theme_constant_override("margin_left", int(m["left"] + pad))
 	_margin.add_theme_constant_override("margin_right", int(m["right"] + pad))
@@ -206,6 +211,7 @@ func _style_primary(b: Button, radius: int) -> void:
 func _build_worlds() -> Control:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	panel.size_flags_stretch_ratio = 1.22
 	panel.mouse_filter = Control.MOUSE_FILTER_PASS
 	panel.add_theme_stylebox_override("panel", UiStyle.box(CARD, 24, int(_px(18, 10)), 2, CARD_BORDER, true))

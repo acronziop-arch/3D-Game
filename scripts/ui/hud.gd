@@ -46,6 +46,14 @@ var _bottom: VBoxContainer
 var _top_left: VBoxContainer
 var _resource_bar: PanelContainer
 var _main_counts := {}
+## Значки ресурсов в верхней строке: на узком экране лишние прячутся (их видно в «…»).
+var _main_items: Array[Control] = []
+## Сетки окна «Все ресурсы»: на узком экране — две колонки.
+var _all_grids: Array[GridContainer] = []
+var _toolbar: PanelContainer
+var _craft_button: Button
+## Экран выше, чем шире (телефон вертикально).
+var _portrait := false
 var _all_panel: PanelContainer
 var _all_counts := {}
 var _minimap: Minimap
@@ -99,7 +107,6 @@ var _notices: Notices
 var _loading: Control
 var _loading_bar: ProgressBar
 var _loading_text: Label
-var _portrait_hint: Control
 var _info_timer := 0.0
 
 
@@ -157,8 +164,6 @@ func _ready() -> void:
 	# Сообщения — поверх всех окон, чтобы их было видно и при открытых настройках.
 	_build_toast()
 	_build_loading()
-	if _touch:
-		_build_portrait_hint()
 	Inventory.changed.connect(_on_inventory_changed)
 	Crafting.queue_changed.connect(_refresh_crafting)
 	Crafting.crafted.connect(func(id: String) -> void: show_message("Готово: %s" % GameData.RECIPES[id]["name"]))
@@ -296,7 +301,7 @@ func toggle_ui_hidden() -> void:
 	_ui_hidden = not _ui_hidden
 	_close_panels()
 	for c in _root.get_children():
-		if c == _notices or c == _loading or c == _portrait_hint:
+		if c == _notices or c == _loading:
 			continue
 		var target := 0.0 if _ui_hidden else 1.0
 		if c is Control:
@@ -322,36 +327,79 @@ func is_ui_hidden() -> bool:
 
 ## Расставляет панели с учётом безопасной зоны экрана (вырез и полоска «домой» на iPhone).
 func _apply_layout() -> void:
-	var m := Platform.safe_margins() if _touch else {"left": 16.0, "top": 16.0, "right": 16.0, "bottom": 16.0}
+	var m := _margins()
 	var vp := _root.get_viewport_rect().size
+	_portrait = vp.x < vp.y
+	# Верхняя строка ресурсов: сколько значков влезает, столько и видно (остальные — в «…»).
+	# Вертикально часы уходят под неё, справа от мини-карты.
+	var clock_w := _clock_row.get_combined_minimum_size().x
+	_fit_resource_bar(vp.x - m["left"] - m["right"] - (0.0 if _portrait else clock_w + 12.0))
+	var bar_h := _resource_bar.get_combined_minimum_size().y
+	var row2: float = m["top"] + bar_h + _px(10, 8)
 	# Панели привязаны к углам; смещения задаём от угла, остальное растёт само.
 	_pin(_top_left, m["left"], m["top"], m["left"], m["top"])
-	_pin(_clock_row, -m["right"], m["top"], -m["right"], m["top"])
+	var clock_top: float = row2 if _portrait else m["top"]
+	_pin(_clock_row, -m["right"], clock_top, -m["right"], clock_top)
 	_pin(_bottom, 0.0, -m["bottom"], 0.0, -m["bottom"])
-	_pin(_actions, -m["right"], -m["bottom"], -m["right"], -m["bottom"])
-	# Сообщения — по центру под верхней строкой, не шире промежутка между
-	# мини-картой и часами.
-	var toast_y: float = m["top"] + _resource_bar.get_combined_minimum_size().y + 10.0
-	_notices.position.y = toast_y
-	_hint_max_width = minf(vp.x - 2.0 * (maxf(m["left"], m["right"]) + ACTIONS_WIDTH + 12.0), 720.0)
-	var below_bar: float = m["top"] + _resource_bar.get_combined_minimum_size().y + 8.0
+	_place_actions(m)
+	# Панель инструментов: вертикально кнопки поуже, чтобы влезли все.
+	for b: Button in _tool_buttons.values() + [_craft_button]:
+		b.custom_minimum_size.x = _px(86, 54 if _portrait else 62)
+	# Под верхней строкой (вертикально — ещё и под мини-картой с часами).
+	var top_band: float = row2 + (maxf(_map_frame.get_combined_minimum_size().y, _clock_row.get_combined_minimum_size().y) + 10.0 \
+		if _portrait else 2.0)
+	_notices.position.y = top_band
+	_hint_max_width = minf(vp.x - 2.0 * (maxf(m["left"], m["right"]) + (8.0 if _portrait else ACTIONS_WIDTH + 12.0)), 720.0)
+	var below_bar: float = top_band if _portrait else row2 - 2.0
 	_pin(_all_panel, m["left"], below_bar, m["left"], below_bar)
+	for grid in _all_grids:
+		grid.columns = 2 if _portrait else int(_px(3, 4))
 	var all_room: float = vp.y - below_bar - m["bottom"] - 60.0
 	var all_scroll := _all_panel.find_child("Scroll", true, false) as SmoothScroll
 	all_scroll.custom_minimum_size.y = minf(all_scroll.content().get_combined_minimum_size().y, all_room)
-	var side := maxf(m["left"], m["right"]) + ACTIONS_WIDTH
+	var side: float = maxf(m["left"], m["right"]) + (0.0 if _portrait else ACTIONS_WIDTH)
 	_build_panel.custom_minimum_size.x = minf(maxf(vp.x - side * 2.0, 360.0), 1000.0)
 	# Ремесло — справа, под часами: центр экрана остаётся для сообщений.
-	var craft_top: float = m["top"] + _clock_row.get_combined_minimum_size().y + 10.0
+	# Вертикально — на всю ширину, под мини-картой.
+	var craft_top: float = top_band if _portrait else m["top"] + _clock_row.get_combined_minimum_size().y + 10.0
 	_pin(_craft_panel, -m["right"], craft_top, -m["right"], craft_top)
-	_craft_panel.custom_minimum_size.x = minf(_px(480, 440), vp.x - m["left"] - m["right"] - _minimap.custom_minimum_size.x - 40.0)
+	_craft_panel.custom_minimum_size.x = vp.x - m["left"] - m["right"] if _portrait \
+		else minf(_px(480, 440), vp.x - m["left"] - m["right"] - _minimap.custom_minimum_size.x - 40.0)
 	# Снизу оставляем место панели инструментов и строке подсказки.
 	# На телефоне строка подсказки на это время прячется (см. _on_hover_changed).
 	var craft_room: float = vp.y - craft_top - m["bottom"] - _px(92, 80) - _px(48, 0) - _px(120, 76)
 	_craft_scroll.custom_minimum_size.y = clampf(_craft_scroll.content().get_combined_minimum_size().y, 80.0, maxf(craft_room, 80.0))
-	if _portrait_hint:
-		# Браузер на телефоне не умеет закрепить альбомную ориентацию — просим повернуть.
-		_portrait_hint.visible = vp.x < vp.y
+	_actions_key = ""
+
+
+## Поля от краёв экрана: на телефоне — безопасная зона (вырез, полоска «домой»).
+func _margins() -> Dictionary:
+	return Platform.safe_margins() if _touch else {"left": 16.0, "top": 16.0, "right": 16.0, "bottom": 16.0}
+
+
+## Прячет последние значки ресурсов, пока строка не влезет в width.
+func _fit_resource_bar(width: float) -> void:
+	for item in _main_items:
+		item.visible = true
+	var shown := _main_items.size()
+	while shown > 2 and _resource_bar.get_combined_minimum_size().x > width:
+		shown -= 1
+		_main_items[shown].visible = false
+
+
+## Кнопки действий: горизонтально — колонкой у правого края; вертикально — рядами
+## над панелью инструментов (там же, где подсказка, только справа от неё не хватит места).
+func _place_actions(m: Dictionary) -> void:
+	var in_bottom := _actions.get_parent() == _bottom
+	if _portrait and not in_bottom:
+		_actions.reparent(_bottom, false)
+		_bottom.move_child(_actions, _toolbar.get_index())
+		_actions.size_flags_horizontal = Control.SIZE_SHRINK_END
+	elif not _portrait and in_bottom:
+		_actions.reparent(_root, false)
+		_actions.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	if not _portrait:
+		_pin(_actions, -m["right"], -m["bottom"], -m["right"], -m["bottom"])
 
 
 ## Смещения краёв от точек привязки; размер дорастает до минимального сам
@@ -389,6 +437,7 @@ func _build_resources() -> void:
 		count.custom_minimum_size = Vector2(_px(30, 24), 0)
 		item.add_child(count)
 		row.add_child(item)
+		_main_items.append(item)
 		_main_counts[id] = count
 		if _touch:
 			# Подсказок при наведении на телефоне нет — название показываем по нажатию.
@@ -464,6 +513,7 @@ func _build_resources() -> void:
 			grid.add_child(item)
 			_all_counts[id] = count
 		box.add_child(grid)
+		_all_grids.append(grid)
 
 
 func _count_text(id: String) -> String:
@@ -553,6 +603,7 @@ func _build_toolbar() -> void:
 	bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	bar.add_theme_stylebox_override("panel", UiStyle.panel(_px(20, 18), _px(10, 6)))
 	_bottom.add_child(bar)
+	_toolbar = bar
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", _px(8, 4))
 	bar.add_child(row)
@@ -574,6 +625,7 @@ func _build_toolbar() -> void:
 	var craft := _tool_button("tool_craft", "Ремесло", "C")
 	craft.pressed.connect(toggle_crafting)
 	row.add_child(craft)
+	_craft_button = craft
 
 
 func _tool_button(icon_name: String, text: String, hotkey: String) -> Button:
@@ -1046,7 +1098,10 @@ func _build_hint() -> void:
 
 
 func _on_hover_changed(text: String) -> void:
-	if _touch:
+	# Пальцем — подсказка строкой над панелью инструментов; мышью — у курсора.
+	if _touch or Platform.using_touch or _hover_panel == null:
+		if _hover_panel:
+			_hover_panel.visible = false
 		if _hint_panel.has_meta("flash"):
 			# Сейчас в строке сообщение — подсказку покажем после него.
 			_hint_panel.set_meta("normal_text", text)
@@ -1059,6 +1114,8 @@ func _on_hover_changed(text: String) -> void:
 		# Пока открыто ремесло, подсказка не нужна — место отдаём рецептам.
 		UiStyle.fade(_hint_panel, text != "" and not _craft_panel.get_meta("fade_target", false), 0.2)
 		return
+	if _hint_panel.get_meta("fade_target", false):
+		UiStyle.fade(_hint_panel, false, 0.2)
 	Rich.fit(_hover_label, text, 460.0, false)
 	_hover_panel.reset_size()
 	_hover_panel.visible = text != ""
@@ -1219,11 +1276,16 @@ func _update_actions() -> void:
 		Interaction.Tool.HARVEST:
 			if not interaction.jobs.is_empty():
 				_action_button("close", "Очередь").pressed.connect(interaction.cancel_all_jobs)
-	# Не залезаем на часы и шестерёнку сверху: лишние кнопки — во вторую колонку.
-	var m := Platform.safe_margins() if _touch else {"top": 16.0, "bottom": 16.0}
-	var room: float = _root.get_viewport_rect().size.y - m["top"] - _clock_row.size.y - 16.0 - m["bottom"]
+	var m := _margins()
 	var count := _actions.get_child_count()
-	_actions.columns = 2 if count * (58.0 + 8.0) - 8.0 > room else 1
+	if _portrait:
+		# Рядами над панелью инструментов: сколько кнопок влезает в ширину.
+		var room_x: float = _root.get_viewport_rect().size.x - m["left"] - m["right"]
+		_actions.columns = clampi(floori((room_x + 8.0) / ACTIONS_WIDTH), 1, maxi(count, 1))
+	else:
+		# Не залезаем на часы и шестерёнку сверху: лишние кнопки — во вторую колонку.
+		var room: float = _root.get_viewport_rect().size.y - m["top"] - _clock_row.size.y - 16.0 - m["bottom"]
+		_actions.columns = 2 if count * (58.0 + 8.0) - 8.0 > room else 1
 	for c in _actions.get_children():
 		c.modulate.a = 0.0
 		c.create_tween().tween_property(c, "modulate:a", 1.0, 0.15)
@@ -1348,29 +1410,6 @@ func set_loading(fraction: float, text: String) -> void:
 
 
 ## Телефон в портретной ориентации (бывает только в браузере): просим повернуть его.
-func _build_portrait_hint() -> void:
-	_portrait_hint = ColorRect.new()
-	(_portrait_hint as ColorRect).color = UiStyle.BASE
-	_portrait_hint.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_portrait_hint.visible = false
-	_root.add_child(_portrait_hint)
-	var box := VBoxContainer.new()
-	box.set_anchors_preset(Control.PRESET_CENTER)
-	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	box.grow_vertical = Control.GROW_DIRECTION_BOTH
-	box.add_theme_constant_override("separation", 14)
-	_portrait_hint.add_child(box)
-	var ic := UiStyle.icon_rect("rotate", 72)
-	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	box.add_child(ic)
-	var title := UiStyle.label("Поверните телефон", 26, UiStyle.TEXT, 900)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(title)
-	var sub := UiStyle.label("Играть удобнее горизонтально", 16, UiStyle.BRAND_DARK, 700)
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(sub)
-
-
 func hide_loading() -> void:
 	var tw := _loading.create_tween()
 	tw.tween_property(_loading, "modulate:a", 0.0, 0.8).set_trans(Tween.TRANS_SINE)
@@ -1425,13 +1464,13 @@ func _process(delta: float) -> void:
 
 ## Сообщения — в свободной полосе между мини-картой и открытым справа окном.
 func _place_notices() -> void:
-	var m := Platform.safe_margins() if _touch else {"left": 16.0, "top": 16.0, "right": 16.0, "bottom": 16.0}
+	var m := _margins()
 	var vp := _root.get_viewport_rect().size
 	var left: float = m["left"]
-	if _map_frame and _map_frame.visible:
+	if _map_frame and _map_frame.visible and not _portrait:
 		left += _map_frame.size.x + 14.0
 	var right: float = vp.x - m["right"]
-	if _craft_panel.get_meta("fade_target", false):
+	if _craft_panel.get_meta("fade_target", false) and not _portrait:
 		right = _craft_panel.global_position.x - 14.0
 	_notices.max_width = clampf(right - left - 12.0, 200.0, 620.0)
 	var x := (left + right) * 0.5 - _notices.size.x * 0.5
@@ -1440,9 +1479,11 @@ func _place_notices() -> void:
 
 ## Плашки над зданиями не заходят под верхнюю строку и нижнюю панель.
 func _place_labels() -> void:
-	var m := Platform.safe_margins() if _touch else {"left": 16.0, "top": 16.0, "right": 16.0, "bottom": 16.0}
+	var m := _margins()
 	var vp := _root.get_viewport_rect().size
 	var top: float = m["top"] + maxf(_resource_bar.size.y, _clock_row.size.y) + 8.0
+	if _portrait:
+		top = _clock_row.position.y + maxf(_map_frame.size.y, _clock_row.size.y) + 8.0
 	var bottom: float = _bottom.global_position.y - 8.0 if _bottom.visible else vp.y - m["bottom"]
 	_labels.safe_rect = Rect2(m["left"], top, vp.x - m["left"] - m["right"], maxf(bottom - top, 40.0))
 

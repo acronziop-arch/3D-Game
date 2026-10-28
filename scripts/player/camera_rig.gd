@@ -52,14 +52,26 @@ func set_state(state: Dictionary) -> void:
 	_target_distance = _distance
 
 
+func _ready() -> void:
+	get_viewport().size_changed.connect(_fit_view)
+	_fit_view()
+
+
+## Экран вертикальный (телефон держат стоя) — угол обзора задаётся по ширине, а не
+## по высоте: иначе по бокам видно совсем узкую полоску мира.
+func _fit_view() -> void:
+	var size := get_viewport().get_visible_rect().size
+	camera.keep_aspect = Camera3D.KEEP_WIDTH if size.x < size.y else Camera3D.KEEP_HEIGHT
+
+
 ## true, если правая кнопка была просто щелчком, а не вращением камеры.
 func was_right_click() -> bool:
 	return _drag_moved < 6.0
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# В сенсорном режиме мышиные события — копии касаний, их разбирает TouchInput.
-	if Platform.is_touch and (event is InputEventMouseMotion or (event is InputEventMouseButton
+	# Мышиные копии касаний разбирает TouchInput; настоящая мышь работает везде.
+	if Platform.is_touch_copy(event) and (event is InputEventMouseMotion or (event is InputEventMouseButton
 			and (event as InputEventMouseButton).button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT, MOUSE_BUTTON_MIDDLE])):
 		return
 	if event is InputEventMouseButton:
