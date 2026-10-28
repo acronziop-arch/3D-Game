@@ -4,7 +4,7 @@ extends Control
 ## (биомы, вода, рельеф) запоминаются в WorldState.explored и сохраняются вместе
 ## с миром. Одно общее полотно (CANVAS × CANVAS пикселей, пиксель — CELL метров)
 ## используют и мини-карта (слева сверху), и большая карта (MapPanel).
-## Поверх полотна: здания, руины, метки игрока и стрелка камеры.
+## Поверх полотна: здания, руины, метки игрока (только на большой карте) и стрелка камеры.
 
 signal tapped(world_pos: Vector2)
 
@@ -31,6 +31,12 @@ var view_meters := 300.0
 var center := Vector2.ZERO
 var follow_camera := true
 var corner_radius := 14.0
+## Рисовать метки игрока (на мини-карте их нет — только на большой карте).
+var show_markers := true
+## Метка, которую сейчас ставят или правят: {"pos", "color", "icon"} — видна сразу.
+var preview := {}
+## Номер метки, которую правят (её место занимает preview, и она светится), −1 — нет.
+var edit_index := -1
 
 var _view: TextureRect
 ## Руины и здания: слой перерисовывается несколько раз в секунду, а между перерисовками
@@ -142,17 +148,19 @@ func _ready() -> void:
 	_view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_view.stretch_mode = TextureRect.STRETCH_SCALE
 	_view.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	var atlas := AtlasTexture.new()
-	atlas.atlas = _tex
-	_view.texture = atlas
+	_view.texture = _tex
 	if _shader == null:
 		_shader = Shader.new()
 		_shader.code = """
 shader_type canvas_item;
-// Скруглённые углы карты и мягкая тень по краю. Маска считается по положению
-// внутри блока (UV у куска полотна — это координаты всего полотна).
+// Кусок полотна карты, скруглённые углы и мягкая тень по краю. Кусок выбирается здесь:
+// за краем полотна — бумага (раньше крайние пиксели растягивались на всю карту).
 uniform vec2 size = vec2(100.0);
 uniform float radius = 14.0;
+// Видимый кусок полотна в его пикселях: xy — угол, zw — размер.
+uniform vec4 region = vec4(0.0, 0.0, 64.0, 64.0);
+uniform vec2 canvas = vec2(512.0);
+uniform vec4 paper : source_color = vec4(0.914, 0.886, 0.827, 1.0);
 varying vec2 local;
 void vertex() {
 	local = VERTEX;
@@ -161,7 +169,11 @@ void fragment() {
 	vec2 p = local;
 	vec2 q = abs(p - size * 0.5) - (size * 0.5 - vec2(radius));
 	float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
-	vec4 c = texture(TEXTURE, UV);
+	vec2 uv = (region.xy + p / size * region.zw) / canvas;
+	vec4 c = texture(TEXTURE, uv);
+	if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
+		c = paper;
+	}
 	float edge = smoothstep(-6.0, 0.0, d);
 	c.rgb *= 1.0 - edge * 0.12;
 	c.a *= 1.0 - smoothstep(-1.0, 0.5, d);
@@ -199,13 +211,15 @@ func _process(delta: float) -> void:
 		_tex.update(_img)
 		_dirty = false
 		_upload_cooldown = 0.25
-	var atlas := _view.texture as AtlasTexture
 	var px := (center / CELL) - Vector2(_origin)
 	var span := view_meters / CELL
 	var aspect := size.x / maxf(size.y, 1.0)
-	atlas.region = Rect2(px - Vector2(span * aspect, span) * 0.5, Vector2(span * aspect, span))
-	(_view.material as ShaderMaterial).set_shader_parameter("size", size)
-	(_view.material as ShaderMaterial).set_shader_parameter("radius", corner_radius)
+	var mat := _view.material as ShaderMaterial
+	mat.set_shader_parameter("region", Vector4(px.x - span * aspect * 0.5, px.y - span * 0.5, span * aspect, span))
+	mat.set_shader_parameter("canvas", Vector2(CANVAS, CANVAS))
+	mat.set_shader_parameter("paper", PAPER)
+	mat.set_shader_parameter("size", size)
+	mat.set_shader_parameter("radius", corner_radius)
 	_redraw_timer -= delta
 	if _redraw_timer <= 0.0:
 		_redraw_timer = 0.1 if Platform.is_mobile() else 0.05
@@ -270,11 +284,23 @@ func _draw_overlay() -> void:
 	# Метки игрока: дальние прижимаются к краю карты, чтобы было видно, где они.
 	var small := size.y < 200.0
 	var pad := corner_radius * 0.6 + (9.0 if small else 13.0)
-	for m: Dictionary in WorldState.markers:
-		var p: Vector3 = m["pos"]
-		var mp := world_to_map(Vector2(p.x, p.z))
-		mp = mp.clamp(Vector2(pad, pad), size - Vector2(pad, pad))
-		draw_marker(ci, mp, m, 0.7 if small else 1.0)
+	if show_markers:
+		for i in WorldState.markers.size():
+			if i == edit_index:
+				continue
+			var m: Dictionary = WorldState.markers[i]
+			var p: Vector3 = m["pos"]
+			var mp := world_to_map(Vector2(p.x, p.z))
+			mp = mp.clamp(Vector2(pad, pad), size - Vector2(pad, pad))
+			draw_marker(ci, mp, m, 0.7 if small else 1.0)
+	# Метку, которую ставят или правят, видно сразу с выбранным цветом и значком;
+	# уже стоящая метка при этом мягко светится фирменным коричневым.
+	if not preview.is_empty():
+		var pp: Vector3 = preview["pos"]
+		var at := world_to_map(Vector2(pp.x, pp.z))
+		if edit_index >= 0:
+			draw_glow(ci, at, 11.0)
+		draw_marker(ci, at, preview)
 	# Камера: стрелка по направлению взгляда.
 	var cam := world_to_map(Vector2(camera_rig.position.x, camera_rig.position.z))
 	var yaw := camera_rig.rotation.y
@@ -310,6 +336,15 @@ static func draw_marker(ci: CanvasItem, at: Vector2, m: Dictionary, scale := 1.0
 	if icon:
 		var s := r * 1.4
 		ci.draw_texture_rect(icon, Rect2(at - Vector2(s, s) * 0.5, Vector2(s, s)), false)
+
+
+## Пульсирующее свечение вокруг метки (фирменный коричневый).
+static func draw_glow(ci: CanvasItem, at: Vector2, r: float) -> void:
+	var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.005)
+	for i in 4:
+		var rr := r + 4.0 + i * 3.5 + pulse * 4.0
+		ci.draw_circle(at, rr, Color(UiStyle.BRAND_DARK, (0.3 - i * 0.065) * (0.55 + 0.45 * pulse)))
+	ci.draw_arc(at, r + 4.0 + pulse * 2.0, 0.0, TAU, 40, Color(UiStyle.BRAND_DARK, 0.9), 2.5, true)
 
 
 static func _draw_ruin(ci: CanvasItem, at: Vector2, r: float) -> void:

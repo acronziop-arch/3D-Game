@@ -373,8 +373,8 @@ func _build_game(page: VBoxContainer) -> void:
 	var mode := _card(page, "marker_star", "Режим игры", "Обычный — добывайте, стройте и развивайтесь. Творческий — всё сразу и без ограничений.")
 	_chips(mode, "game_mode", [["normal", "Обычный", "tool_harvest"], ["creative", "Творческий", "cat_special"]], 2)
 	var land := _card(page, "tool_flatten", "Земля", "", true)
-	_toggle_row(land, "keep_cleared", "Пустая выровненная земля",
-		"Трава и деревья не вырастают снова там, где вы выровняли землю.")
+	_toggle_row(land, "clear_flattened", "Пустая выровненная земля",
+		"Включено — на выровненной земле не растут трава и деревья. Выключено — они остаются, а на поднятой до гор земле растёт только горное.")
 	if Platform.is_mobile():
 		_toggle_row(land, "haptics", "Вибрация", "Лёгкий отклик при нажатиях и стройке.")
 	var save_card := _card(page, "map", "Мир",
@@ -463,14 +463,17 @@ func _build_graphics(page: VBoxContainer) -> void:
 	_chips(quality, "quality", levels, 3)
 	_slider(quality, "render_scale", "Чёткость", "Меньше — быстрее, но картинка мягче.", 0.5, 1.0, 0.05,
 		func(v: float) -> String: return "%d%%" % roundi(v * 100.0), true)
-	var shadows := _card(page, "day", "Тени", "Мягкие тени красивее, простые — быстрее.", true)
+	var textures := _card(page, "marker_tree", "Текстуры",
+		"«Мультик» — мягкие пятна цвета, как в мультфильме. «Реализм» — волокна дерева, кора, зерно камня и листочки с рельефом.", true)
+	_chips(textures, "textures", [["cartoon", "Мультик", ""], ["realism", "Реализм", ""]], 2)
+	var shadows := _card(page, "day", "Тени", "Мягкие тени красивее, простые — быстрее.")
 	_chips(shadows, "shadow_quality", [["off", "Нет", ""], ["low", "Простые", ""], ["medium", "Средние", ""], ["high", "Мягкие", ""]], 4 if not _touch else 2)
 	_slider(shadows, "shadow_distance", "Дальность теней", "Как далеко от камеры видны тени. Дальше — красивее, но тяжелее.",
 		40.0, 400.0, 10.0, func(v: float) -> String: return "%d м" % v, true)
-	var water := _card(page, "cat_water", "Вода")
+	var water := _card(page, "cat_water", "Вода", "", true)
 	_toggle_row(water, "reflections", "Отражения", "Небо, деревья и дома отражаются в воде.")
 	_toggle_row(water, "fish", "Рыбы", "В реках и озёрах плавают рыбы.")
-	var nature := _card(page, "grass_tall", "Трава и дальность", "", true)
+	var nature := _card(page, "grass_tall", "Трава и дальность")
 	_slider(nature, "view_distance", "Дальность прорисовки", "Как далеко виден мир.", 4.0, 10.0, 1.0,
 		func(v: float) -> String: return "%d м" % (v * 32))
 	# Трава пересеивается в каждом чанке — применяем, когда ползунок отпустили.
@@ -485,7 +488,7 @@ func _build_graphics(page: VBoxContainer) -> void:
 func _build_threads(page: VBoxContainer) -> void:
 	var card := _card(page, "compass", "Многопоточность",
 		"Мир строится в фоновых потоках процессора — меньше рывков, когда вы ведёте камеру. "
-		+ "Если игра в браузере вылетает — выключите. Меняется после перезапуска игры.")
+		+ "Если игра в браузере вылетает — выключите. Меняется после перезапуска игры.", true)
 	_chips(card, "web_threads", [["auto", "Авто", "auto"], ["off", "Выключена", ""]], 2)
 	var status := _desc("")
 	if OS.has_feature("threads"):

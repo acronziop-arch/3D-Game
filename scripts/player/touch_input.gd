@@ -46,6 +46,9 @@ var _last_angle := 0.0
 ## Палец, начавший жест в мире, ведёт его до конца и над кнопками и панелями: иначе камера
 ## или линия ограды обрывались, стоило пальцу задеть интерфейс (его забирал себе Control).
 func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch or event is InputEventScreenDrag:
+		# Отсюда событие дальше не пойдёт — сами сообщаем, что управляют пальцем.
+		Platform.note_touch()
 	if event is InputEventScreenDrag and _touches.has((event as InputEventScreenDrag).index):
 		_on_drag(event as InputEventScreenDrag)
 		get_viewport().set_input_as_handled()

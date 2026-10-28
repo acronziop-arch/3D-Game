@@ -33,6 +33,10 @@ var is_android := false
 var is_web := false
 
 var _emulated_notch := false
+## Когда было последнее касание. Мышиные события сразу после него — копии касаний
+## (браузер телефона присылает и такие): они не переключают управление на мышь.
+var _last_touch_msec := -100000
+const TOUCH_GRACE_MSEC := 700
 var _margins := {"left": EDGE, "top": EDGE, "right": EDGE, "bottom": EDGE}
 
 
@@ -67,22 +71,33 @@ func _ready() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	var touch := event is InputEventScreenTouch or event is InputEventScreenDrag
-	if not touch and not (event is InputEventMouseButton or (event is InputEventMouseMotion and event.relative.length() > 2.0)):
+	if event is InputEventScreenTouch or event is InputEventScreenDrag:
+		note_touch()
 		return
-	if not touch and is_touch_copy(event):
+	if not (event is InputEventMouseButton or (event is InputEventMouseMotion and event.relative.length() > 2.0)):
 		return
-	if touch != using_touch:
-		using_touch = touch
+	if is_touch_copy(event):
+		return
+	if using_touch:
+		using_touch = false
+		pointer_changed.emit()
+
+
+## Было касание (зовёт и TouchInput: движения пальца он забирает раньше, чем их видит _input).
+func note_touch() -> void:
+	_last_touch_msec = Time.get_ticks_msec()
+	if not using_touch:
+		using_touch = true
 		pointer_changed.emit()
 
 
 ## Мышиное событие, которое на самом деле копия касания (или касание-имитация мышью
 ## при проверке на ПК): его разбирает TouchInput, обычной мыши оно не нужно.
-static func is_touch_copy(event: InputEvent) -> bool:
+func is_touch_copy(event: InputEvent) -> bool:
 	if not (event is InputEventMouseButton or event is InputEventMouseMotion):
 		return false
-	return event.device == InputEvent.DEVICE_ID_EMULATION or Input.emulate_touch_from_mouse
+	return event.device == InputEvent.DEVICE_ID_EMULATION or Input.emulate_touch_from_mouse \
+		or Time.get_ticks_msec() - _last_touch_msec < TOUCH_GRACE_MSEC
 
 
 func is_mobile() -> bool:

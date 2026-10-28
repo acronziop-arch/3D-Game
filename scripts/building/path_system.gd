@@ -513,8 +513,8 @@ func remove(i: int) -> Dictionary:
 
 # --- Геометрия ---------------------------------------------------------------------------------
 
-## Сглаживание (два прохода Чайкина) и равномерные точки через MESH_STEP.
-static func _smooth(raw: PackedVector2Array) -> PackedVector2Array:
+## Сглаживание (два прохода Чайкина) и равномерные точки через step.
+static func _smooth(raw: PackedVector2Array, step := MESH_STEP) -> PackedVector2Array:
 	var pts := raw
 	for pass_i in 2:
 		if pts.size() < 3:
@@ -534,11 +534,11 @@ static func _smooth(raw: PackedVector2Array) -> PackedVector2Array:
 		var a := pts[i]
 		var b := pts[i + 1]
 		var seg := a.distance_to(b)
-		var t := MESH_STEP - carry
+		var t := step - carry
 		while t <= seg:
 			out.append(a.lerp(b, t / seg))
-			t += MESH_STEP
-		carry = seg - (t - MESH_STEP)
+			t += step
+		carry = seg - (t - step)
 	if out[out.size() - 1].distance_to(pts[pts.size() - 1]) > 0.05:
 		out.append(pts[pts.size() - 1])
 	return out

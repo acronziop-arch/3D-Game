@@ -4,11 +4,11 @@ extends Node3D
 ##   1 Добыча — щелчок по дереву, кусту, камню, руде или сундуку ставит его в очередь;
 ##     щелчок по зданию показывает его название.
 ##   2 Стройка — размещение выбранного здания (поворот на любой угол). Ограды можно
-##     вести линией (зажать и вести) или ставить по одной.
+##     протянуть любой линией (зажать и вести, FenceSystem) или ставить по одной секции.
 ##   3 Ровнять — зажать ЛКМ: земля тянется к высоте точки нажатия (авто) или к ней
 ##     плюс/минус заданная поправка.
 ##   4 Природа — косить траву, сеять траву и цветы, сажать деревья.
-##   5 Правка — выбрать здание: передвинуть, повернуть или снести.
+##   5 Правка — выбрать здание: передвинуть, повернуть или снести; ограду или дорожку — убрать.
 ## Действия выполняются по одному, у каждого своё время (не больше 30 с).
 ## В творческом режиме добыча мгновенная.
 ## На телефоне те же инструменты работают от касаний (см. TouchInput).
@@ -43,17 +43,19 @@ var camera_rig: CameraRig
 var chunk_manager: ChunkManager
 var building_system: BuildingSystem
 var path_system: PathSystem
+var fence_system: FenceSystem
 var tool := Tool.HARVEST
 ## [{"kind": "prop"|"chest", "name", "time", "elapsed", ...}]
 var jobs: Array[Dictionary] = []
 ## Поправка высоты выравнивания, м (0 — авто: по высоте точки нажатия).
 var flatten_offset := 0.0
 var nature_mode := "mow"
-## Ограды и частокол: вести линией (палец ложит секции следом) или ставить по одной.
-var fence_line := true
+## Ограды и частокол: протянуть пальцем любой линией или ставить по одной секции.
+var fence_draw := true
 var selected_building: Building
-## Выбранная в правке плавная дорожка (−1 — нет).
+## Выбранные в правке плавная дорожка и протянутая ограда (−1 — нет).
 var selected_path := -1
+var selected_fence := -1
 
 var _ground: Variant = null
 var _hover := {}
@@ -65,9 +67,8 @@ var _painting := false
 ## Рисование дорожки (зажата мышь или палец ведёт по земле).
 var _build_painting := false
 var _smooth_drawing := false
-## Ограду ведут линией; сколько построек было до начала линии.
-var _lining := false
-var _line_before := 0
+## Ограду протягивают (зажата мышь или палец ведёт по земле).
+var _fence_drawing := false
 var _was_flattening := false
 var _edit_commit_timer := 1.0
 var _paint_timer := 0.0
@@ -153,11 +154,12 @@ func set_tool(new_tool: Tool) -> void:
 	_hover_building = null
 	select_building(null)
 	_select_path(-1)
+	_select_fence(-1)
 	_flattening = false
 	_painting = false
 	_end_build_paint()
 	_end_smooth_path()
-	_end_line(null, false)
+	_end_fence()
 	_touch_info = ""
 	tool = new_tool
 	tool_changed.emit(tool)
@@ -196,7 +198,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("edit_move") and tool == Tool.EDIT:
 		edit_move()
 	elif event.is_action_pressed("edit_delete") and tool == Tool.EDIT:
-		if selected_path >= 0:
+		if selected_fence >= 0:
+			remove_selected_fence()
+		elif selected_path >= 0:
 			remove_selected_path()
 		else:
 			demolish_selected()
@@ -230,8 +234,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				_painting = false
 				_end_build_paint()
 				_end_smooth_path()
-				# Щелчок без протяжки ставит одну секцию ограды — там, где призрак.
-				_end_line(null, true)
+				_end_fence()
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed and camera_rig.was_right_click():
 			if tool == Tool.BUILD and building_system.moving:
 				building_system.cancel()
@@ -322,54 +325,48 @@ func _end_build_paint() -> void:
 		building_system.paint_end()
 
 
-## Ограда: вести линией или ставить по одной.
-func toggle_fence_line() -> void:
-	_end_line(null, false)
-	fence_line = not fence_line
-	message.emit("Ограда — линией: ведите пальцем, секции встанут следом" if fence_line
-		else "Ограда — по одной секции: тяните её и нажмите «Построить»")
+## Ограда: протянуть линией или ставить по одной секции.
+func toggle_fence_draw() -> void:
+	_end_fence()
+	fence_draw = not fence_draw
+	message.emit("Ограда — протянуть: ведите пальцем, она встанет следом любой линией" if fence_draw
+		else "Ограда — по одной секции: ставится, как обычная постройка")
 	options_changed.emit()
 	Platform.haptic(0.2)
 
 
-## Выбрана ограда, и её ведут линией.
-func _line_mode() -> bool:
-	return fence_line and building_system.is_line()
+## Выбрана ограда, и её протягивают линией.
+func _fence_mode() -> bool:
+	return fence_draw and building_system.is_fence()
 
 
-func _begin_line(start: Vector3) -> void:
-	_lining = true
-	_line_before = building_system.buildings.size()
-	building_system.line_begin(start)
-	Platform.haptic(0.2)
-
-
-func _extend_line(ground: Variant) -> void:
-	if not _lining or ground == null:
-		return
-	var before := building_system.buildings.size()
-	var reason := building_system.line_to(ground)
-	if building_system.buildings.size() > before:
-		Platform.haptic(0.2)
+func _begin_fence(ground: Variant) -> bool:
+	if ground == null:
+		return false
+	var reason := fence_system.begin(building_system.selected_id, ground)
 	if reason != "":
 		message.emit(reason)
-		_lining = false
-		building_system.line_end(null)
+		return false
+	_fence_drawing = true
+	Platform.haptic(0.2)
+	return true
 
 
-## Линия закончена в точке at. single — мышью: если секций так и не встало, ставим одну
-## на место призрака (обычный щелчок).
-func _end_line(at: Variant, single: bool) -> void:
-	if not _lining:
+func _extend_fence(ground: Variant) -> void:
+	if not _fence_drawing or ground == null:
 		return
-	_lining = false
-	var reason := building_system.line_end(at)
-	if building_system.buildings.size() > _line_before:
-		return
-	if single:
-		confirm_build()
-	elif reason != "":
+	var reason := fence_system.extend(ground)
+	if reason != "":
 		message.emit(reason)
+		if not fence_system.is_drawing():
+			_fence_drawing = false
+
+
+func _end_fence() -> void:
+	if _fence_drawing:
+		_fence_drawing = false
+		fence_system.finish()
+		Platform.haptic(0.3)
 
 
 ## Грядка: сменить культуру (у новой — до постройки, у готовой — в правке).
@@ -395,6 +392,7 @@ func select_building(b: Building) -> void:
 	if b:
 		b.set_highlight(true)
 		_select_path(-1)
+		_select_fence(-1)
 	options_changed.emit()
 
 
@@ -404,20 +402,48 @@ func _select_path(i: int) -> void:
 		path_system.select(i)
 
 
-## Правка: выбрать здание, а если его нет — плавную дорожку под точкой.
-func _edit_pick(b: Building, ground: Variant) -> void:
+func _select_fence(i: int) -> void:
+	selected_fence = i
+	if fence_system:
+		fence_system.select(i)
+
+
+## Правка: выбрать здание, а если его нет — ограду под лучом (from, dir) или плавную
+## дорожку под точкой земли.
+func _edit_pick(b: Building, ground: Variant, from := Vector3.ZERO, dir := Vector3.ZERO) -> void:
 	if b:
 		select_building(null if b == selected_building else b)
 		if selected_building:
 			_show_building_name(selected_building)
 			Platform.haptic(0.2)
 		return
-	var i := path_system.pick(ground) if ground != null and path_system else -1
 	select_building(null)
+	var f := fence_system.pick(from, dir) if fence_system and dir != Vector3.ZERO else -1
+	if f >= 0:
+		_select_path(-1)
+		_select_fence(-1 if f == selected_fence else f)
+		if selected_fence >= 0:
+			message.emit(fence_system.name_of(selected_fence))
+			Platform.haptic(0.2)
+		options_changed.emit()
+		return
+	_select_fence(-1)
+	var i := path_system.pick(ground) if ground != null and path_system else -1
 	_select_path(-1 if i == selected_path else i)
 	if selected_path >= 0:
 		message.emit(path_system.name_of(selected_path))
 		Platform.haptic(0.2)
+	options_changed.emit()
+
+
+## Правка: убрать выбранную протянутую ограду.
+func remove_selected_fence() -> void:
+	if selected_fence < 0:
+		return
+	var refund := fence_system.remove(selected_fence)
+	selected_fence = -1
+	message.emit("Ограда убрана" + ("" if refund.is_empty() else "   вернули %s" % Rich.cost(refund, 16)))
+	Platform.haptic(0.4)
 	options_changed.emit()
 
 
@@ -548,7 +574,9 @@ func touch_tap(screen: Vector2) -> void:
 				message.emit("Выберите здание в меню стройки")
 			elif building_system.is_smooth_path():
 				message.emit("Ведите пальцем по земле — дорожка ляжет следом")
-			elif (_line_mode() or building_system.is_paintable()) and ground != null:
+			elif _fence_mode():
+				message.emit("Ведите пальцем по земле — ограда встанет следом")
+			elif building_system.is_paintable() and ground != null:
 				# Плитка кладётся сразу, без подтверждения.
 				_touch_anchor = ground
 				building_system.update_ghost(ground, 1.0)
@@ -560,7 +588,7 @@ func touch_tap(screen: Vector2) -> void:
 				chunk_manager.paint_cover(ground, brush_radius * 0.5, nature_mode)
 				Platform.haptic(0.15)
 		Tool.EDIT:
-			_edit_pick(building_system.pick(from, dir), ground)
+			_edit_pick(building_system.pick(from, dir), ground, from, dir)
 
 
 ## Палец начал движение: true — инструмент забирает жест себе, иначе это движение камеры.
@@ -570,14 +598,9 @@ func touch_drag_begin(screen: Vector2) -> bool:
 			if building_system.is_smooth_path():
 				# Плавная дорожка: камера стоит, лента ложится за пальцем.
 				return _begin_smooth_path(_ground_at(screen))
-			if _line_mode():
-				# Ограду ведут пальцем: секции встают следом, камера — двумя пальцами.
-				var from: Variant = _ground_at(screen)
-				if from == null:
-					return false
-				_touch_anchor = from
-				_begin_line(from)
-				return true
+			if _fence_mode():
+				# Ограду ведут пальцем: она встаёт следом, камера — двумя пальцами.
+				return _begin_fence(_ground_at(screen))
 			if building_system.is_paintable():
 				# Дорожку рисуют пальцем: плитки ложатся следом.
 				var start: Variant = _ground_at(screen)
@@ -619,9 +642,8 @@ func touch_drag(screen: Vector2) -> void:
 		var ground: Variant = _ground_at(screen)
 		if ground != null and _smooth_drawing:
 			_extend_smooth_path(ground)
-		elif ground != null and _lining:
-			_touch_anchor = ground
-			_extend_line(ground)
+		elif ground != null and _fence_drawing:
+			_extend_fence(ground)
 		elif ground != null and _build_painting:
 			_touch_anchor = ground
 			_paint_build_to(ground)
@@ -634,7 +656,7 @@ func touch_drag_end() -> void:
 	_painting = false
 	_end_build_paint()
 	_end_smooth_path()
-	_end_line(_touch_anchor, false)
+	_end_fence()
 
 
 func _set_touch_info(text: String) -> void:
@@ -657,8 +679,8 @@ func _primary_action() -> void:
 		Tool.BUILD:
 			if building_system.is_smooth_path():
 				_begin_smooth_path(_ground)
-			elif _line_mode() and _ground != null:
-				_begin_line(_ground)
+			elif _fence_mode():
+				_begin_fence(_ground)
 			elif building_system.is_paintable():
 				_begin_build_paint()
 			else:
@@ -672,7 +694,9 @@ func _primary_action() -> void:
 			_painting = true
 			_paint_timer = 0.0
 		Tool.EDIT:
-			_edit_pick(_hover_building, _ground)
+			var mouse := get_viewport().get_mouse_position()
+			_edit_pick(_hover_building, _ground, camera_rig.camera.project_ray_origin(mouse),
+				camera_rig.camera.project_ray_normal(mouse))
 
 
 # --- Каждый кадр ------------------------------------------------------------------
@@ -727,11 +751,12 @@ func _process(delta: float) -> void:
 				if _hover_building:
 					text = Rich.title(GameData.BUILDINGS[_hover_building.id]["name"])
 		Tool.BUILD:
-			building_system.update_ghost(_touch_anchor if touch else _ground, delta)
+			# Ограду протягивают — призрак секции не нужен.
+			building_system.update_ghost(null if _fence_mode() else _touch_anchor if touch else _ground, delta)
 			if not touch:
 				_paint_build_to(_ground)
 				_extend_smooth_path(_ground)
-				_extend_line(_ground)
+				_extend_fence(_ground)
 			var id := building_system.selected_id
 			if id == "":
 				text = "Выберите здание в меню стройки"
@@ -749,15 +774,18 @@ func _process(delta: float) -> void:
 					+ ("" if cost.is_empty() else Rich.muted(" за 2 м"))
 				text += "\n" + Rich.muted("Ведите пальцем по земле — дорожка ляжет следом" if touch
 					else "Зажмите %s и ведите — дорожка ляжет следом" % Rich.key("ЛКМ"))
+			elif _fence_mode():
+				var cost := FenceSystem.cost_of(id)
+				text = Rich.title(GameData.BUILDINGS[id]["name"]) + Rich.SEP + Rich.cost(cost, 18, true) \
+					+ ("" if cost.is_empty() else Rich.muted(" за 1 м"))
+				text += "\n" + Rich.muted("Ведите пальцем по земле — ограда встанет следом" if touch
+					else "Зажмите %s и ведите — ограда встанет следом" % Rich.key("ЛКМ"))
 			else:
 				var def: Dictionary = GameData.BUILDINGS[id]
 				text = Rich.title(def["name"]) + Rich.SEP + Rich.time(0.0 if GameMode.is_creative() else def["time"]) \
 					+ Rich.SEP + Rich.cost(def["cost"], 18, true)
 				if not building_system.is_valid and building_system.invalid_reason != "":
 					text += "\n" + Rich.bad(building_system.invalid_reason)
-				elif _line_mode():
-					text += "\n" + Rich.muted("Ведите пальцем — ограда встанет следом; нажмите — одна секция" if touch
-						else "%s поставить, зажмите и ведите — линией   %s повернуть   %s отмена" % [Rich.key("ЛКМ"), Rich.key("R"), Rich.key("ПКМ")])
 				elif touch:
 					text += "\n" + Rich.muted("Тяните здание пальцем или нажмите, куда поставить")
 				else:
@@ -805,8 +833,13 @@ func _process(delta: float) -> void:
 					+ Rich.muted("при сносе вернётся %s" % ("половина" if selected_building.is_complete else "всё"))
 				if not touch:
 					text += "\n" + Rich.muted("%s передвинуть   %s повернуть   %s снести" % [Rich.key("M"), Rich.key("R"), Rich.key("Delete")])
+			elif selected_fence >= 0 or selected_path >= 0:
+				text = Rich.title(fence_system.name_of(selected_fence) if selected_fence >= 0 else path_system.name_of(selected_path)) \
+					+ Rich.SEP + Rich.muted("если убрать, вернётся половина")
+				if not touch:
+					text += "\n" + Rich.muted("%s убрать" % Rich.key("Delete"))
 			else:
-				text = "Нажмите на здание, чтобы выбрать его"
+				text = "Нажмите на здание, ограду или дорожку, чтобы выбрать"
 
 	_update_ring(ring_visible, ring_color, delta)
 	if text != _hover_text:

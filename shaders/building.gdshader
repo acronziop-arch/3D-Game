@@ -4,6 +4,8 @@
 // материалов (у общих build_progress = 1), поэтому стройка видна и в браузере.
 // Стекло (glass = 1): небо и блик солнца в окне, капли в дождь, изморозь зимой.
 // Во время дождя по стенам сбегают струйки воды.
+// surface — узор материала (см. world.gdshaderinc): 1 дерево (волокна вдоль UV2 —
+// см. Geo.grain), 2 камень, 3 обожжённая глина. Узор привязан к модели, а не к миру.
 shader_type spatial;
 render_mode diffuse_lambert_wrap, specular_schlick_ggx;
 
@@ -21,13 +23,25 @@ uniform float glass = 0.0;
 // 1 — за проёмом (стекло или открытое окно) видна комната.
 uniform float interior = 0.0;
 uniform float build_progress = 1.0;
+uniform float surface = 0.0;
 
 varying vec3 world_pos;
 varying vec3 world_normal;
 varying float landing;
+varying vec3 obj_pos;
+varying vec3 obj_normal;
+varying vec3 grain_dir;
 
 void vertex() {
 	landing = 0.0;
+	// Узор — по точке модели (сдвинутой на место здания, чтобы одинаковые дома различались).
+	obj_pos = VERTEX + MODEL_MATRIX[3].xyz * vec3(0.37, 0.0, 0.53);
+	obj_normal = NORMAL;
+	grain_dir = vec3(0.0);
+	if (surface > 0.5 && surface < 1.5 && (UV2.x > 0.001 || UV2.y > 0.001)) {
+		vec2 e = UV2 - 1.0;
+		grain_dir = vec3(e.x, sqrt(max(1.0 - dot(e, e), 0.0)), e.y);
+	}
 	if (build_progress < 0.999) {
 		float t = clamp((build_progress - COLOR.a) * 12.0, 0.0, 1.0);
 		if (t <= 0.0) {
@@ -225,6 +239,22 @@ void fragment() {
 		rough = 0.9;
 		wet_k = 0.0;
 	} else if (porosity > 0.0) {
+		if (surface > 0.5) {
+			// Узор материала; мелкие подробности гаснут вдали (иначе рябит).
+			float detail = texture_detail * (1.0 - smoothstep(30.0, 85.0, length(VERTEX)));
+			float h = 0.0;
+			vec3 on = normalize(obj_normal);
+			if (surface < 1.5) {
+				c = w_wood(c, obj_pos, grain_dir, on, detail, rough, h);
+			} else if (surface < 2.5) {
+				c = w_stone(c, obj_pos, n, detail, rough, h);
+			} else {
+				c = w_clay(c, obj_pos, detail, rough, h);
+			}
+			if (detail > 0.01) {
+				NORMAL = w_bump(NORMAL, VERTEX, h, 0.012 * detail);
+			}
+		}
 		// Дождь на стенах: мокрые дорожки, по ним сбегают капли, а на шершавой
 		// поверхности висят бусины воды с бликами.
 		float vertical = 1.0 - smoothstep(0.35, 0.65, abs(n.y));

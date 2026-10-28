@@ -15,6 +15,7 @@ const WARMUP_SHARE := 0.35
 var _autosave := AUTOSAVE_INTERVAL
 var _markers: Markers
 var _paths: PathSystem
+var _fences: FenceSystem
 var _perf_time := 0.0
 var _perf_frames := 0
 var _perf_grace := 10.0
@@ -61,13 +62,20 @@ func _ready() -> void:
 	_paths.chunk_manager = chunk_manager
 	add_child(_paths)
 	chunk_manager.chunk_loaded.connect(_paths.on_chunk_loaded)
-	# Землю выравнивают: здания и дорожки встают на неё сразу, во время мазка.
+	_fences = FenceSystem.new()
+	_fences.name = "Fences"
+	_fences.chunk_manager = chunk_manager
+	add_child(_fences)
+	chunk_manager.chunk_loaded.connect(_fences.on_chunk_loaded)
+	# Землю выравнивают: здания, дорожки и ограды встают на неё сразу, во время мазка.
 	chunk_manager.terrain_changed.connect(building_system.reground_area)
 	chunk_manager.terrain_changed.connect(_paths.on_terrain_changed)
-	# После пересева травы в чанке снова убираем её под зданиями и дорожками.
+	chunk_manager.terrain_changed.connect(_fences.on_terrain_changed)
+	# После пересева травы в чанке снова убираем её под зданиями, дорожками и оградами.
 	chunk_manager.building_hook = func(chunk: Chunk) -> void:
 		building_system.on_chunk_loaded(chunk)
 		_paths.on_chunk_loaded(chunk)
+		_fences.on_chunk_loaded(chunk)
 	chunk_manager.blocked_by_building = func(p: Vector2) -> bool:
 		for b in building_system.buildings:
 			if is_instance_valid(b) and Building.obb_has_point(b.obb(0.5), p):
@@ -80,6 +88,7 @@ func _ready() -> void:
 	interaction.chunk_manager = chunk_manager
 	interaction.building_system = building_system
 	interaction.path_system = _paths
+	interaction.fence_system = _fences
 	water.camera_rig = camera_rig
 	water.chunk_manager = chunk_manager
 	atmosphere.camera_rig = camera_rig
@@ -237,6 +246,7 @@ func _on_world_ready() -> void:
 	_autosave = AUTOSAVE_INTERVAL_WEB if Platform.is_web else AUTOSAVE_INTERVAL
 	building_system.restore_from_save()
 	_paths.restore()
+	_fences.restore()
 	_markers.refresh()
 	# С потоками остальные модели подгружаются в фоне, без рывков в игре.
 	if Platform.threaded():
@@ -271,7 +281,7 @@ func _on_setting_changed(key: String) -> void:
 			chunk_manager.refresh_all_cover()
 		"grass_distance":
 			chunk_manager.apply_cover_distance()
-		"render_scale", "shadow_quality", "shadow_distance":
+		"render_scale", "shadow_quality", "shadow_distance", "textures":
 			_apply_graphics()
 		"quality":
 			_perf_grace = 10.0
@@ -312,6 +322,7 @@ func _apply_graphics() -> void:
 			env.glow_enabled = level >= 2
 	# Комнаты за окнами — только на высоком и наивысшем качестве.
 	RenderingServer.global_shader_parameter_set("interiors", 1.0 if level >= 2 else 0.0)
+	RenderingServer.global_shader_parameter_set("texture_detail", 1.0 if Settings.get_value("textures") == "realism" else 0.0)
 	# Тени: размер карты теней, мягкость краёв и дальность (её игрок задаёт сам).
 	var q: String = Settings.get_value("shadow_quality")
 	sun.shadow_enabled = q != "off"

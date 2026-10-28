@@ -63,7 +63,7 @@ func is_ready() -> bool:
 
 
 func start(world_seed: int) -> void:
-	gen = WorldGen.new(world_seed)
+	gen = WorldGen.new(world_seed, WorldState.terrain_version)
 	far_forest = FarForest.new()
 	far_forest.name = "FarForest"
 	far_forest.use_threads = use_threads
@@ -302,7 +302,7 @@ func _update_cover(delta: float, generated_this_frame: bool) -> void:
 	var out := {}
 	# Копии сетки: в фоне её не должно менять выравнивание земли.
 	var args := [best, chunk.heights.duplicate(), chunk.colors.duplicate(), cover_density(), out, WorldState.cover_edits_for_chunk(best),
-		_edits_for_chunk(best) if Settings.get_value("keep_cleared") else {}]
+		_edits_for_chunk(best) if Settings.get_value("clear_flattened") else {}]
 	if use_threads:
 		_cover_jobs[best] = {"task": WorkerThreadPool.add_task(gen._scatter_cover.bindv(args)), "out": out}
 	else:
@@ -317,7 +317,7 @@ func cover_density() -> float:
 
 func _extra_for_chunk(c: Vector2i) -> Dictionary:
 	return {"cover": WorldState.cover_edits_for_chunk(c), "planted": WorldState.planted_in_chunk(c),
-		"keep_cleared": bool(Settings.get_value("keep_cleared"))}
+		"keep_cleared": bool(Settings.get_value("clear_flattened"))}
 
 
 func _edits_for_chunk(c: Vector2i) -> Dictionary:
@@ -451,7 +451,7 @@ func _refresh_cover(c: Vector2i) -> void:
 	var edits := _edits_for_chunk(c)
 	var out := {}
 	gen._scatter_cover(c, chunk.heights, chunk.colors, cover_density(), out, WorldState.cover_edits_for_chunk(c),
-		edits if Settings.get_value("keep_cleared") else {})
+		edits if Settings.get_value("clear_flattened") else {})
 	chunk.rebuild_cover(out)
 	building_hook.call(chunk)
 

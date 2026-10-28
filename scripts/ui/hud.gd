@@ -469,6 +469,8 @@ func _build_resources() -> void:
 	_minimap.custom_minimum_size = Vector2(side, side)
 	_minimap.view_meters = 220.0
 	_minimap.corner_radius = radius
+	# Метки — только на большой карте: на маленькой они загромождали обзор.
+	_minimap.show_markers = false
 	_minimap.tooltip_text = "Карта [Tab]"
 	_minimap.tapped.connect(func(_p: Vector2) -> void: open_map())
 	map_frame.add_child(_minimap)
@@ -1208,12 +1210,12 @@ func _rotate_button() -> Button:
 func _update_actions() -> void:
 	var bs := interaction.building_system
 	var selected_crop: String = interaction.selected_building.crop if is_instance_valid(interaction.selected_building) else ""
-	var key := "%d|%s|%s|%s|%s|%s|%s|%d" % [interaction.tool, bs.selected_id, bs.moving != null,
+	# Режим ограды меняет набор кнопок: протягивают — без «Повернуть» и «Построить».
+	var key := "%d|%s|%s|%s|%s|%s|%s|%d|%d|%s" % [interaction.tool, bs.selected_id, bs.moving != null,
 		is_instance_valid(interaction.selected_building), not interaction.jobs.is_empty(), _drawer_open,
 		interaction.selected_building.get_instance_id() if is_instance_valid(interaction.selected_building) else 0,
-		interaction.selected_path]
-	var state := "%s|%s|%s|%s|%s" % [interaction.nature_mode, interaction.flatten_offset_text(), bs.crop_choice, selected_crop,
-		interaction.fence_line]
+		interaction.selected_path, interaction.selected_fence, interaction.fence_draw]
+	var state := "%s|%s|%s|%s" % [interaction.nature_mode, interaction.flatten_offset_text(), bs.crop_choice, selected_crop]
 	if key == _actions_key:
 		if state != _actions_state:
 			_actions_state = state
@@ -1240,13 +1242,13 @@ func _update_actions() -> void:
 					_state_button(func() -> Array:
 						var c: Dictionary = CropPatch.CROPS[bs.crop_choice]
 						return [c["icon"], c["name"], true]).pressed.connect(interaction.next_crop)
-				if bs.is_line():
-					# Ограда: вести линией или ставить по одной секции.
+				if bs.is_fence():
+					# Ограда: протянуть любой линией или ставить по одной секции.
 					_state_button(func() -> Array:
-						return ["path_smooth", "Линией", true] if interaction.fence_line else ["path_tiles", "По одной", false]) \
-						.pressed.connect(interaction.toggle_fence_line)
-				if bs.is_path():
-					# Дорожка ложится плавной лентой следом за пальцем.
+						return ["path_smooth", "Протянуть", true] if interaction.fence_draw else ["path_tiles", "По одной", false]) \
+						.pressed.connect(interaction.toggle_fence_draw)
+				if bs.is_path() or bs.is_fence() and interaction.fence_draw:
+					# Дорожка и протянутая ограда ложатся следом за пальцем — ставить нечего.
 					_action_button("close", "Отмена").pressed.connect(to_harvest)
 				else:
 					_rotate_button()
@@ -1269,7 +1271,10 @@ func _update_actions() -> void:
 			_action_button("plus", "Шире").pressed.connect(func() -> void: interaction.resize_brush(1.0))
 			_action_button("minus", "Уже").pressed.connect(func() -> void: interaction.resize_brush(-1.0))
 		Interaction.Tool.EDIT:
-			if interaction.selected_path >= 0:
+			if interaction.selected_fence >= 0:
+				_action_button("trash", "Убрать").pressed.connect(interaction.remove_selected_fence)
+				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction._edit_pick(null, null))
+			elif interaction.selected_path >= 0:
 				_action_button("trash", "Убрать").pressed.connect(interaction.remove_selected_path)
 				_action_button("close", "Отмена").pressed.connect(func() -> void: interaction._edit_pick(null, null))
 			elif is_instance_valid(interaction.selected_building):

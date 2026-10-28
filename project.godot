@@ -131,3 +131,7 @@ wind_drift={
 "type": "vec2",
 "value": Vector2(0, 0)
 }
+texture_detail={
+"type": "float",
+"value": 1.0
+}

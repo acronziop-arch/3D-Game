@@ -73,7 +73,11 @@ const BIOMES := {
 		"props": {"tree_jungle": 44.0, "fern": 24.0, "bush": 16.0, "tree_maple": 3.0, "flowers": 4.0, "rock": 2.0}},
 }
 
+## Вид рельефа нынешних новых миров (см. _init).
+const TERRAIN_VERSION := 2
+
 var world_seed: int
+var terrain_version := TERRAIN_VERSION
 var _continent: FastNoiseLite
 var _hills: FastNoiseLite
 var _ridges: FastNoiseLite
@@ -86,12 +90,15 @@ var _rivers: FastNoiseLite
 var _warp: FastNoiseLite
 
 
-func _init(seed_value: int) -> void:
+## version — вид рельефа: 1 — прежние редкие пологие горы (миры, созданные до
+## обновления, остаются как были: под постройками не вырастают горы), 2 — нынешние.
+func _init(seed_value: int, version := TERRAIN_VERSION) -> void:
 	world_seed = seed_value
+	terrain_version = version
 	_continent = _make_noise(seed_value, 0.0011, 4)
 	_hills = _make_noise(seed_value + 1, 0.012, 3)
 	_ridges = _make_noise(seed_value + 2, 0.0034, 3, FastNoiseLite.FRACTAL_RIDGED)
-	_mountain_mask = _make_noise(seed_value + 3, 0.0011, 3)
+	_mountain_mask = _make_noise(seed_value + 3, 0.0014 if version >= 2 else 0.0011, 3)
 	_temperature = _make_noise(seed_value + 4, 0.0008, 3)
 	_moisture = _make_noise(seed_value + 5, 0.001, 3)
 	_forest = _make_noise(seed_value + 6, 0.018, 2)
@@ -177,9 +184,12 @@ static func _has_water(heights: PackedFloat32Array) -> bool:
 	return false
 
 
-## 0 — равнина, 1 — сердце гор. Гор стало меньше: только там, где шум высокий.
+## 0 — равнина, 1 — сердце гор. Горы встречаются чаще прежнего, но их всё равно
+## меньше, чем лесов, равнин и тундры (около восьмой части суши).
 func mountain_amount(x: float, z: float) -> float:
-	return smoothstep(0.2, 0.5, _mountain_mask.get_noise_2d(x, z))
+	if terrain_version < 2:
+		return smoothstep(0.2, 0.5, _mountain_mask.get_noise_2d(x, z))
+	return smoothstep(0.19, 0.45, _mountain_mask.get_noise_2d(x, z))
 
 
 func height_at(x: float, z: float) -> float:
@@ -190,12 +200,18 @@ func height_at(x: float, z: float) -> float:
 	h = maxf(h, 2.2 + _hills.get_noise_2d(x * 2.0, z * 2.0) * 0.6)
 	var m := mountain_amount(x, z)
 	if m > 0.0:
-		# Горы реже и мягче: гребни смешаны с плавными холмами, вершины скруглены.
+		# Настоящие горы: гребни поверх широкого подножия, вершины под снегом
+		# (в мирах версии 1 — прежние мягкие холмы).
 		var ridge := clampf((_ridges.get_noise_2d(x, z) + 0.6) / 1.6, 0.0, 1.0)
 		var dome := (_hills.get_noise_2d(x * 0.3 + 91.0, z * 0.3 - 47.0) + 1.0) * 0.5
-		var r := lerpf(dome, ridge, 0.45)
-		r = r * r * (3.0 - 2.0 * r)
-		h += m * (5.0 + r * 32.0)
+		if terrain_version < 2:
+			var r1 := lerpf(dome, ridge, 0.45)
+			r1 = r1 * r1 * (3.0 - 2.0 * r1)
+			h += m * (5.0 + r1 * 32.0)
+		else:
+			var r := lerpf(dome, ridge, 0.6)
+			r = r * r * (3.0 - 2.0 * r)
+			h += m * (7.0 + r * 52.0) * (0.75 + 0.25 * m)
 	var w := water_mask(x, z)
 	if w.z > 0.0:
 		# Широкая пологая долина: берега спускаются к руслу без обрывов.
@@ -258,7 +274,7 @@ func find_spawn() -> Vector3:
 			if h < 2.0 or h > 14.0 or not (biome_at(p.x, p.y, h) in good):
 				continue
 			var flat := absf(height_at(p.x + 12.0, p.y) - h) + absf(height_at(p.x, p.y + 12.0) - h)
-			if flat > 2.0:
+			if flat > 2.0 or not _room_from_mountains(p):
 				continue
 			if fallback == Vector3.INF:
 				fallback = Vector3(p.x, h, p.y)
@@ -270,6 +286,17 @@ func find_spawn() -> Vector3:
 		if fallback != Vector3.INF and r > 600:
 			return fallback
 	return fallback if fallback != Vector3.INF else Vector3(0.0, maxf(height_at(0.0, 0.0), WATER_LEVEL), 0.0)
+
+
+## Старт — не у самого подножия: вокруг на 120 м гор нет (видно их можно и ближе).
+func _room_from_mountains(p: Vector2) -> bool:
+	if mountain_amount(p.x, p.y) > 0.0:
+		return false
+	for k in 8:
+		var a := k * TAU / 8.0
+		if mountain_amount(p.x + cos(a) * 120.0, p.y + sin(a) * 120.0) > 0.25:
+			return false
+	return true
 
 
 # --- Генерация чанка (рабочий поток) ---------------------------------------------

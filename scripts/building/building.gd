@@ -9,6 +9,9 @@ extends Node3D
 
 signal completed(building: Building)
 
+## Колёса, которые крутятся с постоянной скоростью (рад/с), а не от ветра.
+const STEADY_ROTORS := {"watermill": 0.55}
+
 static var _ghost_material: ShaderMaterial
 ## Высота земли в точке (x, z) — её задаёт BuildingSystem.
 static var ground_height: Callable
@@ -18,6 +21,8 @@ static var _highlight_material: StandardMaterial3D
 static var _surface_cache := {}
 ## Леса по видам зданий: id -> Mesh.
 static var _scaffold_meshes := {}
+## Двор моделей (см. _yard_of): Mesh -> [] или [поверхности, [индексы, веса, точки]...].
+static var _yard_cache := {}
 
 var id := ""
 ## Поворот вокруг вертикали, радианы (любой угол).
@@ -35,6 +40,8 @@ var ground_normal := Vector3.UP
 var _mesh: MeshInstance3D
 ## Исходный меш у построек, которые ложатся по земле (см. _conform), — для пересчёта.
 var _ground_mesh: Mesh
+## Исходный меш у зданий с дворовыми мелочами (см. _fit_yard), — для пересчёта.
+var _yard_mesh: Mesh
 var _ghost: MeshInstance3D
 var _rotor: Node3D
 var _rotor_mesh: MeshInstance3D
@@ -290,13 +297,113 @@ static func _subdivide(arrays: Array, max_edge: float) -> Array:
 	return out
 
 
-## Снова уложить по земле — после переноса или поворота.
+## Снова уложить по земле — после переноса, поворота или выравнивания земли рядом.
 func refit_ground() -> void:
-	if _ground_mesh and is_inside_tree():
+	if not is_inside_tree():
+		return
+	if _ground_mesh:
 		_mesh.mesh = _conform(_ground_mesh)
-		if _ghost:
-			_ghost.mesh = _mesh.mesh
-		_fit_extras()
+	elif _yard_mesh:
+		_mesh.mesh = _fit_yard(_yard_mesh)
+	else:
+		return
+	if _ghost:
+		_ghost.mesh = _mesh.mesh
+	_fit_extras()
+
+
+## Меш следует за землёй (его надо укладывать заново, когда земля рядом меняется).
+func follows_ground() -> bool:
+	return _ground_mesh != null or _yard_mesh != null
+
+
+## Стены — всё, что есть в модели на этой высоте (м): двор начинается за их пятном.
+const YARD_WALL_LO := 1.0
+const YARD_WALL_HI := 1.6
+## Выше этого дворовые мелочи не опускаются (с 0,9 м — плавно меньше).
+const YARD_TOP := 1.6
+
+
+## Двор модели: вершины ниже YARD_TOP снаружи стен (бревна у лесопилки, бочки у
+## таверны, камни у каменотёсни). Считается один раз на вид здания; пустой — двора нет.
+static func _yard_of(mesh: Mesh) -> Array:
+	if _yard_cache.has(mesh):
+		return _yard_cache[mesh]
+	var all := []
+	var walls := Rect2()
+	var seen := false
+	for i in mesh.get_surface_count():
+		var arrays := mesh.surface_get_arrays(i)
+		all.append(arrays)
+		for v: Vector3 in arrays[Mesh.ARRAY_VERTEX]:
+			if v.y >= YARD_WALL_LO and v.y <= YARD_WALL_HI:
+				walls = walls.expand(Vector2(v.x, v.z)) if seen else Rect2(Vector2(v.x, v.z), Vector2.ZERO)
+				seen = true
+	var result := []
+	if seen:
+		walls = walls.grow(0.2)
+		var parts := []
+		var any := false
+		for arrays: Array in all:
+			var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var idx := PackedInt32Array()
+			var weights := PackedFloat32Array()
+			var points := PackedVector3Array()
+			for k in verts.size():
+				var v := verts[k]
+				if v.y < YARD_TOP and not walls.has_point(Vector2(v.x, v.z)):
+					idx.append(k)
+					weights.append(1.0 - smoothstep(0.9, YARD_TOP, v.y))
+					points.append(v)
+			any = any or not idx.is_empty()
+			parts.append([idx, weights, points])
+		if any:
+			result = [all, parts]
+	_yard_cache[mesh] = result
+	return result
+
+
+## Дворовые мелочи опускаются на землю под собой (поднимать их не нужно: здание
+## стоит по самой высокой точке под стенами). Опускать нечего — общий меш.
+func _fit_yard(mesh: Mesh) -> Mesh:
+	var yard := _yard_of(mesh)
+	if yard.is_empty():
+		return mesh
+	var xf := global_transform
+	var y0 := global_position.y
+	# На настиле над водой земля под двором — дно: мелочи стоят на настиле.
+	if float(ground_height.call(global_position.x, global_position.z)) < WorldGen.WATER_LEVEL + 0.2:
+		return mesh
+	var drops := []
+	var any := false
+	for part: Array in yard[1]:
+		var weights: PackedFloat32Array = part[1]
+		var points: PackedVector3Array = part[2]
+		var d := PackedFloat32Array()
+		d.resize(points.size())
+		for k in points.size():
+			var w := xf * points[k]
+			var ground := maxf(float(ground_height.call(w.x, w.z)), WorldGen.WATER_LEVEL + 0.2)
+			var drop: float = minf(ground - y0, 0.0) * weights[k]
+			d[k] = drop
+			if drop < -0.03:
+				any = true
+		drops.append(d)
+	if not any:
+		return mesh
+	var out := ArrayMesh.new()
+	var all: Array = yard[0]
+	for i in all.size():
+		var arrays: Array = (all[i] as Array).duplicate()
+		var verts := (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).duplicate()
+		var idx: PackedInt32Array = (yard[1][i] as Array)[0]
+		var d: PackedFloat32Array = drops[i]
+		for k in idx.size():
+			verts[idx[k]] = verts[idx[k]] + Vector3(0, d[k], 0)
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		out.surface_set_material(i, mesh.surface_get_material(i))
+	return out
 
 
 ## Насколько поднять (или опустить) точку модели p, чтобы она легла на землю.
@@ -334,6 +441,12 @@ func setup(building_id: String, angle: float, instant: bool) -> void:
 	if def.get("conform", false) and ground_height.is_valid():
 		_ground_mesh = mesh
 		mesh = _conform(mesh)
+	elif ground_height.is_valid() and def.get("place", "land") == "land" and not def.get("tilt", false) \
+			and not def.has("plant") and def.get("yard", true) and not _yard_of(mesh).is_empty():
+		# Бочки, бревна и камни у стен не висят над склоном (кроме "yard": false — у фонтана
+		# вода и у настила доски должны оставаться ровными).
+		_yard_mesh = mesh
+		mesh = _fit_yard(mesh)
 	_mesh.mesh = mesh
 	add_child(_mesh)
 	if data["rotor_mesh"]:
@@ -504,8 +617,8 @@ func _set_progress(value: float) -> void:
 
 func _process(delta: float) -> void:
 	if _rotor:
-		# Крылья мельницы: чем сильнее ветер, тем быстрее.
-		var target := (0.35 + Weather.wind * 1.8) if is_complete else 0.0
+		# Крылья мельницы: чем сильнее ветер, тем быстрее; водяное колесо крутится ровно.
+		var target := float(STEADY_ROTORS.get(id, 0.35 + Weather.wind * 1.8)) if is_complete else 0.0
 		_rotor_speed = lerpf(_rotor_speed, target, 1.0 - exp(-0.6 * delta))
 		_rotor.rotate_object_local(Vector3.BACK, _rotor_speed * delta)
 	if is_complete or _removing:

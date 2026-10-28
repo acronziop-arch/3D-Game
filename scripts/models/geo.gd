@@ -15,6 +15,8 @@ const KIND_SOLID := 0.0
 const KIND_LEAF := 1.0
 const KIND_NEEDLE := 2.0
 const KIND_PLANT := 3.0
+## Материалы с волокнами (см. grain).
+const WOOD := ["log", "log_dark", "plank", "plank_dark"]
 
 ## Текущая трансформация для добавляемой геометрии.
 var xform := Transform3D.IDENTITY
@@ -31,6 +33,11 @@ var pane := Vector2.ZERO
 ## Пометка деталей: геометрия уходит в отдельную поверхность «материал__пометка».
 ## Так двери и окна («opening») можно выделить другим оттенком в превью стройки.
 var tag := ""
+## Направление волокон дерева у следующих деталей (в локальных осях; ноль — не задано).
+## Коробки, цилиндры и плитки ставят его сами — вдоль длинной стороны или оси. Зданиям
+## (with_uv2 = false) оно уходит в UV2 деревянных поверхностей: (1 + x, 1 + z) направления
+## в осях модели, повёрнутого вверх (y ≥ 0), — по нему шейдер ведёт волокна досок и брёвен.
+var grain := Vector3.ZERO
 
 var _surfaces := {}
 var _pieces: Array[Dictionary] = []
@@ -98,6 +105,13 @@ func tri(mat: String, a: Vector3, b: Vector3, c: Vector3, color: Color, ref := V
 	var start: int = s["v"].size()
 	if pane != Vector2.ZERO:
 		s["pane"] = true
+	var fiber := Vector2.ZERO
+	if pane == Vector2.ZERO and not with_uv2 and grain != Vector3.ZERO and mat in WOOD:
+		var d := (xform.basis * grain).normalized()
+		if d.y < 0.0:
+			d = -d
+		fiber = Vector2(1.0 + d.x, 1.0 + d.z)
+		s["grain"] = true
 	for i in 3:
 		var v: Vector3 = [a, b, c][i]
 		s["v"].append(v)
@@ -109,6 +123,8 @@ func tri(mat: String, a: Vector3, b: Vector3, c: Vector3, color: Color, ref := V
 		if pane != Vector2.ZERO:
 			var lp: Vector3 = local[i]
 			s["uv2"].append(Vector2(lp.x / pane.x + 0.5, lp.y / pane.y + 0.5))
+		elif fiber != Vector2.ZERO:
+			s["uv2"].append(fiber)
 		else:
 			s["uv2"].append(Vector2(kind, seed_value))
 		_piece["min_y"] = minf(_piece["min_y"], v.y)
@@ -133,6 +149,8 @@ func quad(mat: String, a: Vector3, b: Vector3, c: Vector3, d: Vector3, color: Co
 ## Коробка со скошенными рёбрами (bevel) — «игрушечный» вид, как на референсах.
 func box(mat: String, center: Vector3, size: Vector3, color: Color, bevel := 0.0, basis := Basis.IDENTITY) -> void:
 	push(Transform3D(basis, center))
+	var outer_grain := grain
+	grain = Vector3.RIGHT if size.x >= size.y and size.x >= size.z else (Vector3.UP if size.y >= size.z else Vector3.BACK)
 	begin()
 	var h := size * 0.5
 	bevel = minf(bevel, minf(h.x, minf(h.y, h.z)) * 0.9)
@@ -189,6 +207,7 @@ func box(mat: String, center: Vector3, size: Vector3, color: Color, bevel := 0.0
 					var sg := Vector3(sx, sy, sz)
 					tri(mat, fv.call(0, sg), fv.call(1, sg), fv.call(2, sg), color.darkened(0.06), sg)
 	end()
+	grain = outer_grain
 	pop()
 
 
@@ -198,6 +217,8 @@ func tile(mat: String, center: Vector3, normal: Vector3, up: Vector3, w: float, 
 	normal = normal.normalized()
 	up = (up - normal * up.dot(normal)).normalized()
 	var right := up.cross(normal).normalized()
+	var outer_grain := grain
+	grain = right if w >= h else up
 	bevel = minf(bevel, minf(w, h) * 0.45)
 	var bw := w * 0.5
 	var bh := h * 0.5
@@ -220,12 +241,15 @@ func tile(mat: String, center: Vector3, normal: Vector3, up: Vector3, w: float, 
 	quad(mat, b2, b3, t3, t2, side, normal + up)
 	quad(mat, b3, b0, t0, t3, side, normal - right)
 	end()
+	grain = outer_grain
 
 
 ## Цилиндр вдоль локальной оси Y от base вверх на height.
 func cylinder(mat: String, base: Vector3, r0: float, r1: float, height: float, segments: int, color: Color,
 		cap_top := true, cap_bottom := false, angle_offset := 0.0, basis := Basis.IDENTITY) -> void:
 	push(Transform3D(basis, base))
+	var outer_grain := grain
+	grain = Vector3.UP
 	begin()
 	var top := Vector3(0, height, 0)
 	for i in segments:
@@ -248,6 +272,7 @@ func cylinder(mat: String, base: Vector3, r0: float, r1: float, height: float, s
 		if cap_bottom:
 			tri(mat, Vector3.ZERO, p0, p1, color.darkened(0.2), Vector3.DOWN)
 	end()
+	grain = outer_grain
 	pop()
 
 
@@ -435,7 +460,7 @@ func _arrays(s: Dictionary, from: int, to: int) -> Array:
 	arrays[Mesh.ARRAY_VERTEX] = s["v"].slice(from, to)
 	arrays[Mesh.ARRAY_NORMAL] = s["n"].slice(from, to)
 	arrays[Mesh.ARRAY_COLOR] = s["c"].slice(from, to)
-	if with_uv2 or s.get("pane", false):
+	if with_uv2 or s.get("pane", false) or s.get("grain", false):
 		arrays[Mesh.ARRAY_TEX_UV2] = s["uv2"].slice(from, to)
 	return arrays
 

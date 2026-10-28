@@ -2,7 +2,7 @@ class_name BuildingSystem
 extends Node3D
 ## Размещение зданий: полупрозрачный «призрак» следует за мышью (на телефоне —
 ## за пальцем), стоит на сетке 1 м, поворачивается на любой угол (шаг 15°,
-## на ПК — R / Shift+R, Ctrl+колесо) и подсвечивается зелёным или красным.
+## на ПК — R / Shift+R, Ctrl+колесо) и подсвечивается розовым или красным.
 ## Двери и окна в призраке выделены тёплым светлым оттенком.
 ## Режимы размещения (GameData.BUILDINGS[id].place):
 ##   land   — суша или деревянный настил; над водой показывается красный крестик;
@@ -12,8 +12,8 @@ extends Node3D
 ## Уже построенное здание можно передвинуть и повернуть (start_move).
 ## Плитки дорожек ("snap") цепляются к соседним; в режиме «Плитки» их можно
 ## класть касанием или вести пальцем (paint_*), в режиме «Плавная» дорожку рисует
-## PathSystem. Ограды ("group": "fence") ставятся вплотную друг к другу под любым углом,
-## а их секции ("line" — длина) можно вести линией, стык к стыку (line_*).
+## PathSystem. Ограды ("group": "fence") ставятся, как обычные постройки (можно вплотную
+## и внахлёст друг к другу), а в режиме «Протянуть» их ведёт пальцем FenceSystem.
 
 signal placed(building: Building)
 
@@ -24,8 +24,9 @@ const ROTATE_STEP := PI / 12.0
 const PLATFORM_SIZE := 4.0
 const PLATFORM_TOP := 0.8
 const PLATFORM_MAX_DEPTH := 9.0
-const VALID_TINT := Color(0.45, 1.0, 0.6, 0.3)
-const INVALID_TINT := Color(1.0, 0.35, 0.3, 0.32)
+## Розовый хорошо виден на траве; «нельзя» — тёмно-красный, чтобы его не спутать с розовым.
+const VALID_TINT := Color(1.0, 0.42, 0.86, 0.34)
+const INVALID_TINT := Color(0.9, 0.16, 0.08, 0.38)
 
 var chunk_manager: ChunkManager
 var buildings: Array[Building] = []
@@ -51,9 +52,6 @@ var _ghost_normal := Vector3.UP
 ## Рисование дорожки: последняя положенная плитка.
 var _painting := false
 var _paint_last: Building
-## Ограда линией: откуда встанет следующая секция (null — линию не ведут) и сколько встало.
-var _line_start: Variant = null
-var _line_placed := 0
 
 
 func _ready() -> void:
@@ -93,7 +91,6 @@ func select(building_id: String) -> void:
 	add_child(_ghost)
 	_has_target = false
 	_painting = false
-	_line_start = null
 
 
 func cancel() -> void:
@@ -159,16 +156,7 @@ func update_ghost(hit: Variant, delta: float) -> void:
 		is_valid = false
 		return
 	var target := Vector3(snappedf(p.x, GRID), 0, snappedf(p.z, GRID))
-	if _line_start != null:
-		# Ограду ведут линией: призрак — следующая секция, от конца последней к пальцу.
-		var from: Vector3 = _line_start
-		var d := Vector2(p.x - from.x, p.z - from.z)
-		if d.length() > 0.3:
-			var dir := d.normalized()
-			var length: float = def["line"]
-			target = Vector3(from.x + dir.x * length * 0.5, 0, from.z + dir.y * length * 0.5)
-			_yaw = atan2(-dir.y, dir.x)
-	elif def.has("snap"):
+	if def.has("snap"):
 		# Мелкие секции ставим точнее сетки, а рядом с такой же — цепляем к её концу.
 		target = Vector3(snappedf(p.x, 0.25), 0, snappedf(p.z, 0.25))
 		if moving == null:
@@ -375,69 +363,9 @@ func paint_end() -> void:
 	_paint_last = null
 
 
-## Ограды и частокол («line» — длина секции) можно вести линией (не при переносе).
-func is_line() -> bool:
-	return selected_id != "" and moving == null and GameData.BUILDINGS[selected_id].has("line")
-
-
-## Начало линии ограды: первая секция встанет от этой точки.
-func line_begin(start: Vector3) -> void:
-	_line_start = Vector3(start.x, 0.0, start.z)
-	_line_placed = 0
-
-
-## Линию дотянули до p: секции встают одна за другой, пока до p хватает длины, и каждая
-## повёрнута к нему. Пустая строка — всё хорошо; иначе причина, и линия закончена.
-func line_to(p: Vector3) -> String:
-	if _line_start == null or selected_id == "":
-		return ""
-	var length: float = GameData.BUILDINGS[selected_id]["line"]
-	for i in 8:
-		var from: Vector3 = _line_start
-		var d := Vector2(p.x - from.x, p.z - from.z)
-		if d.length() < length:
-			return ""
-		var dir := d.normalized()
-		_line_start = Vector3(from.x + dir.x * length, 0.0, from.z + dir.y * length)
-		var reason := _line_section(from, dir)
-		# Мешает дерево или здание — здесь пропуск, линия идёт дальше; нет ресурсов — конец.
-		if reason.begins_with("Не хватает"):
-			_line_start = null
-			return reason
-	return ""
-
-
-## Линия закончена в точке p (null — просто закончить). Если палец не дотянул и до одной
-## секции, но всё же повёл (дальше метра), секция встаёт от начала в его сторону.
-func line_end(p: Variant) -> String:
-	var reason := ""
-	if _line_placed == 0 and _line_start != null and p != null:
-		var from: Vector3 = _line_start
-		var to: Vector3 = p
-		var d := Vector2(to.x - from.x, to.z - from.z)
-		if d.length() >= 1.0:
-			reason = _line_section(from, d.normalized())
-	_line_start = null
-	return reason
-
-
-## Секция ограды от точки from в сторону dir. Пустая строка — встала, иначе причина.
-func _line_section(from: Vector3, dir: Vector2) -> String:
-	var length: float = GameData.BUILDINGS[selected_id]["line"]
-	var center := Vector3(from.x + dir.x * length * 0.5, 0.0, from.z + dir.y * length * 0.5)
-	# Секция ограды вытянута вдоль своей оси X.
-	_yaw = atan2(-dir.y, dir.x)
-	var check := _validate(center, _yaw)
-	if check["reason"] != "":
-		return check["reason"]
-	center.y = check["y"]
-	_ghost_target = center
-	_has_target = true
-	is_valid = true
-	var reason := try_place()
-	if reason == "":
-		_line_placed += 1
-	return reason
+## Ограду можно протянуть пальцем любой линией (FenceSystem) — не при переносе.
+func is_fence() -> bool:
+	return selected_id != "" and moving == null and GameData.BUILDINGS[selected_id].has("drawn")
 
 
 ## Где стоит призрак (null — призрака нет или место ещё не выбрано).
@@ -600,7 +528,8 @@ func reground_area(rect: Rect2) -> void:
 		var normal := ground_normal(b.position.x, b.position.z) if tilt else b.ground_normal
 		if normal.y < 0.5:
 			normal = b.ground_normal
-		if absf(y - b.position.y) < 0.004 and normal.is_equal_approx(b.ground_normal):
+		# Высота та же — но меш, который лежит по земле, всё равно укладываем заново.
+		if absf(y - b.position.y) < 0.004 and normal.is_equal_approx(b.ground_normal) and not b.follows_ground():
 			continue
 		var entry: Variant = _save_entry(b)
 		b.position.y = y

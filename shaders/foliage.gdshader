@@ -2,6 +2,8 @@
 //   COLOR.a — гибкость (0 у корня, 1 на макушке): насколько гнётся на ветру;
 //   UV2.x   — тип: 0 твёрдое (ствол, камень), 1 листва, 2 хвоя, 3 трава;
 //   UV2.y   — зерно кучки листвы: по нему листья желтеют и облетают не разом.
+// Узоры (см. world.gdshaderinc): листочки и хвоя, кора на коричневых стволах, зерно
+// и лишайник на серых камнях; на «реализме» — подробнее и с рельефом.
 shader_type spatial;
 render_mode diffuse_burley, specular_schlick_ggx, world_vertex_coords;
 
@@ -13,10 +15,13 @@ varying vec3 world_pos;
 varying vec3 world_normal;
 varying float kind;
 varying float seed_v;
+// Точка до покачивания на ветру: узор держится за листья, а не плывёт по ним.
+varying vec3 tex_pos;
 
 void vertex() {
 	kind = UV2.x;
 	seed_v = UV2.y;
+	tex_pos = VERTEX;
 	float flex = COLOR.a;
 	vec3 origin = MODEL_MATRIX[3].xyz;
 	bool leaf = kind > 0.5 && kind < 1.5;
@@ -53,6 +58,23 @@ void fragment() {
 	}
 	vec3 c = COLOR.rgb;
 	float rough = 0.86;
+	// Узор поверхности; мелкие подробности гаснут вдали (иначе рябит).
+	float detail = texture_detail * (1.0 - smoothstep(25.0, 75.0, length(VERTEX)));
+	float h = 0.0;
+	vec3 wn = normalize(world_normal);
+	if (kind > 0.5 && kind < 2.5) {
+		c = w_leaves(c, tex_pos, wn, step(1.5, kind), detail, h);
+	} else if (kind < 0.5) {
+		float spread = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
+		if (c.r > c.g && c.g >= c.b && c.r - c.b > 0.1 && c.r < 0.75) {
+			c = w_bark(c, tex_pos, wn, detail, rough, h);
+		} else if (spread < 0.09) {
+			c = w_stone(c, tex_pos, wn, detail, rough, h);
+		}
+	}
+	if (detail > 0.01) {
+		NORMAL = w_bump(NORMAL, VERTEX, h, 0.012 * detail);
+	}
 	if (kind > 0.5 && kind < 1.5) {
 		// Листва: осенью каждая кучка желтеет в своё время и в свой цвет.
 		vec3 fall = seed_v < 0.33 ? vec3(0.86, 0.42, 0.1) : (seed_v < 0.66 ? vec3(0.93, 0.7, 0.16) : vec3(0.74, 0.2, 0.1));

@@ -21,6 +21,8 @@ const NAME_IDEAS := ["Тихая долина", "Солнечный холм", "
 var world_id := ""
 var world_name := ""
 var world_seed: int = 0
+## Вид рельефа мира (WorldGen.TERRAIN_VERSION на момент создания): старые миры не меняются.
+var terrain_version := WorldGen.TERRAIN_VERSION
 ## Vector2i(вершина сетки) -> высота.
 var terrain_edits: Dictionary = {}
 ## Vector2i(чанк) -> {индекс объекта: true}.
@@ -37,6 +39,8 @@ var planted: Dictionary = {}
 var markers: Array = []
 ## Плавные дорожки (см. PathSystem).
 var paths: Array = []
+## Протянутые ограды (см. FenceSystem).
+var fences: Array = []
 ## Разведанные клетки карты (Vector2i клетки карты -> цвет).
 var explored: Dictionary = {}
 ## id здания -> сколько достроено (нужно для проверки мастерских).
@@ -46,6 +50,7 @@ var camera_state: Dictionary = {}
 
 func new_world(seed_value := -1) -> void:
 	world_seed = seed_value if seed_value >= 0 else randi() % 1000000
+	terrain_version = WorldGen.TERRAIN_VERSION
 	terrain_edits.clear()
 	removed_props.clear()
 	opened_chests.clear()
@@ -54,6 +59,7 @@ func new_world(seed_value := -1) -> void:
 	planted.clear()
 	markers.clear()
 	paths.clear()
+	fences.clear()
 	explored.clear()
 	completed_counts.clear()
 	camera_state.clear()
@@ -115,6 +121,7 @@ func save_game() -> bool:
 	file.store_var({
 		"version": SAVE_VERSION,
 		"seed": world_seed,
+		"terrain": terrain_version,
 		"edits": terrain_edits,
 		"removed": removed_props,
 		"chests": opened_chests,
@@ -123,6 +130,7 @@ func save_game() -> bool:
 		"planted": planted,
 		"markers": markers,
 		"paths": paths,
+		"fences": fences,
 		"explored": explored,
 		"crafting": Crafting.save_state(),
 		"inventory": Inventory.items,
@@ -144,6 +152,8 @@ func load_game() -> bool:
 		push_warning("Сохранение устарело или повреждено — создаём новый мир.")
 		return false
 	world_seed = data["seed"]
+	# Сохранения до появления новых гор — рельеф версии 1.
+	terrain_version = int(data.get("terrain", 1))
 	terrain_edits = data["edits"]
 	removed_props = data["removed"]
 	opened_chests = data["chests"]
@@ -152,6 +162,7 @@ func load_game() -> bool:
 	planted = data.get("planted", {})
 	markers = data.get("markers", [])
 	paths = data.get("paths", [])
+	fences = data.get("fences", [])
 	explored = data.get("explored", {})
 	camera_state = data["camera"]
 	Crafting.load_state(data.get("crafting", {}))
