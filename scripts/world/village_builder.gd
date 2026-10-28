@@ -10,7 +10,7 @@ const PRESETS: Array[Dictionary] = [
 	{"id": "harbor", "name": "Озёрная гавань", "seed": 41017, "site": "lake", "path": "wood",
 		"desc": "Рыбацкая деревня на берегу озера: причалы, маяк, таверна и рыбацкие хижины.",
 		"plaza": "well", "landmarks": ["tavern", "market", "chapel"],
-		"houses": {"wood_house": 8, "hut": 4, "bathhouse": 2},
+		"houses": {"wood_house": 12, "hut": 6, "bathhouse": 2},
 		"workshops": ["sawmill", "smithy", "storehouse"],
 		"shore": {"lighthouse": 1, "platform": 3, "fishing_hut": 4},
 		"farm": {"vegetable_garden": 3, "chicken_coop": 1, "beehives": 1},
@@ -18,7 +18,7 @@ const PRESETS: Array[Dictionary] = [
 	{"id": "mill", "name": "Мельница у реки", "seed": 52221, "site": "river", "path": "dirt",
 		"desc": "Хлебное село у реки: водяная и ветряные мельницы, пекарня, поля и амбары.",
 		"plaza": "fountain", "landmarks": ["bakery", "tavern", "chapel"],
-		"houses": {"wood_house": 6, "stone_house": 4, "hut": 2},
+		"houses": {"wood_house": 9, "stone_house": 6, "hut": 4},
 		"workshops": ["storehouse", "smithy"],
 		"shore": {"watermill": 1, "fishing_hut": 1},
 		"farm": {"windmill": 2, "barn": 2, "stable": 1, "vegetable_garden": 5, "haystack": 4, "scarecrow": 2},
@@ -26,7 +26,7 @@ const PRESETS: Array[Dictionary] = [
 	{"id": "outpost", "name": "Лесная застава", "seed": 63311, "site": "pine", "path": "dirt",
 		"desc": "Острог в хвойном лесу: частокол, сторожевые башни, бани и лесопилка.",
 		"plaza": "campfire", "landmarks": ["guardhouse", "tavern", "chapel"],
-		"houses": {"hut": 7, "wood_house": 3, "bathhouse": 2},
+		"houses": {"hut": 10, "wood_house": 5, "bathhouse": 3},
 		"workshops": ["sawmill", "smithy", "tannery", "storehouse"],
 		"shore": {},
 		"farm": {"woodpile": 4, "chicken_coop": 1, "vegetable_garden": 2},
@@ -34,7 +34,7 @@ const PRESETS: Array[Dictionary] = [
 	{"id": "highland", "name": "Горное подворье", "seed": 74401, "site": "mountain", "path": "stone",
 		"desc": "Каменное село у подножия гор: крепость, каменотёсня, кузница и часовня.",
 		"plaza": "well", "landmarks": ["keep", "church", "tavern"],
-		"houses": {"stone_house": 8, "brick_house": 2},
+		"houses": {"stone_house": 12, "brick_house": 4},
 		"workshops": ["stonemason", "smithy", "kiln", "storehouse"],
 		"shore": {},
 		"farm": {"stable": 1, "vegetable_garden": 2, "haystack": 2},
@@ -42,7 +42,7 @@ const PRESETS: Array[Dictionary] = [
 	{"id": "birches", "name": "Берёзовая слобода", "seed": 85513, "site": "birch", "path": "dirt",
 		"desc": "Уютная слобода в берёзовой роще: беседки, ульи, огороды и теплицы.",
 		"plaza": "gazebo", "landmarks": ["chapel", "bathhouse", "market"],
-		"houses": {"wood_house": 8, "hut": 4},
+		"houses": {"wood_house": 12, "hut": 6},
 		"workshops": ["weaver", "sawmill"],
 		"shore": {},
 		"farm": {"greenhouse": 2, "vegetable_garden": 4, "beehives": 3, "chicken_coop": 2},
@@ -50,7 +50,7 @@ const PRESETS: Array[Dictionary] = [
 	{"id": "merchants", "name": "Купеческий город", "seed": 96611, "site": "plains", "path": "brick",
 		"desc": "Торговый городок: ратуша, рынок, усадьбы купцов, библиотека и фонтан.",
 		"plaza": "fountain", "landmarks": ["town_hall", "market", "library", "tavern"],
-		"houses": {"brick_house": 7, "manor": 2, "stone_house": 3},
+		"houses": {"brick_house": 11, "manor": 3, "stone_house": 5},
 		"workshops": ["bakery", "glassworks", "smithy", "storehouse"],
 		"shore": {},
 		"farm": {"stable": 1, "dovecote": 1, "vegetable_garden": 2},
@@ -58,7 +58,7 @@ const PRESETS: Array[Dictionary] = [
 	{"id": "farms", "name": "Хутора в полях", "seed": 17713, "site": "plains", "path": "dirt",
 		"desc": "Хутора среди полей: амбары, конюшни, курятники, мельницы и стога.",
 		"plaza": "well", "landmarks": ["barn", "stable", "chapel"],
-		"houses": {"wood_house": 6, "hut": 3},
+		"houses": {"wood_house": 9, "hut": 5},
 		"workshops": ["storehouse", "sawmill"],
 		"shore": {},
 		"farm": {"windmill": 2, "barn": 2, "chicken_coop": 3, "vegetable_garden": 7, "haystack": 6, "scarecrow": 3, "beehives": 2},
@@ -66,7 +66,7 @@ const PRESETS: Array[Dictionary] = [
 	{"id": "fortress", "name": "Крепость на холме", "seed": 28811, "site": "hill", "path": "stone",
 		"desc": "Замок на холме: стены, надвратная башня, караульни и пушки.",
 		"plaza": "castle", "landmarks": ["church", "guardhouse", "tavern"],
-		"houses": {"stone_house": 7, "brick_house": 2},
+		"houses": {"stone_house": 11, "brick_house": 4},
 		"workshops": ["smithy", "stonemason", "storehouse"],
 		"shore": {},
 		"farm": {"stable": 1, "cannon": 3, "vegetable_garden": 2},
@@ -74,7 +74,7 @@ const PRESETS: Array[Dictionary] = [
 	{"id": "abbey", "name": "Монастырская обитель", "seed": 39917, "site": "maple", "path": "stone",
 		"desc": "Тихая обитель в кленовом лесу: храм, колокольня, библиотека и сады.",
 		"plaza": "fountain", "landmarks": ["church", "bell_tower", "library"],
-		"houses": {"stone_house": 5, "wood_house": 3},
+		"houses": {"stone_house": 8, "wood_house": 5},
 		"workshops": ["bakery", "weaver"],
 		"shore": {},
 		"farm": {"greenhouse": 2, "vegetable_garden": 4, "beehives": 3, "gazebo": 1},
@@ -82,7 +82,7 @@ const PRESETS: Array[Dictionary] = [
 	{"id": "north", "name": "Северная заимка", "seed": 40123, "site": "tundra", "path": "dirt",
 		"desc": "Заимка в заснеженной тайге: срубы, бани, костры и частокол.",
 		"plaza": "campfire", "landmarks": ["tavern", "chapel", "storehouse"],
-		"houses": {"hut": 9, "bathhouse": 3},
+		"houses": {"hut": 14, "bathhouse": 4},
 		"workshops": ["sawmill", "tannery", "smithy"],
 		"shore": {},
 		"farm": {"woodpile": 5, "watchtower": 1},
@@ -209,6 +209,17 @@ func _find_site() -> void:
 			var climate := gen.climate_biome(c.x, c.y, h0)
 			if not _climate_ok(want, climate):
 				continue
+			# Вокруг — тот же край: ни пустыни с кактусами, ни джунглей на виду.
+			var pretty := true
+			for i in 10:
+				var d := Vector2(cos(TAU * i / 10.0), sin(TAU * i / 10.0))
+				for rr: float in [60.0, 110.0, 160.0]:
+					var q := c + d * rr
+					var qc := gen.climate_biome(q.x, q.y, gen.height_at(q.x, q.y))
+					if qc in [WorldGen.Biome.DESERT, WorldGen.Biome.JUNGLE] or (want != "tundra" and qc == WorldGen.Biome.TUNDRA):
+						pretty = false
+			if not pretty:
+				continue
 			# Ровность и суша вокруг середины.
 			var lo := INF
 			var hi := -INF
@@ -224,6 +235,9 @@ func _find_site() -> void:
 			if not dry or hi - lo > 6.0:
 				continue
 			var score := -(hi - lo)
+			# Северной заимке — настоящая тундра со снежными елями.
+			if want == "tundra" and climate == WorldGen.Biome.TUNDRA:
+				score += 4.0
 			# Вода: где она ближе всего за пределами середины.
 			var water := Vector2.ZERO
 			var water_count := 0
@@ -531,7 +545,7 @@ func _place_houses() -> void:
 				var r: Rect2 = Footprints.BASE.get(id, Rect2(-1, -1, 2, 2))
 				if _try_street(id, st, i, side):
 					queue.pop_front()
-					i += ceili((r.size.x + rng.randf_range(2.0, 4.5)) / 1.5)
+					i += ceili((r.size.x + rng.randf_range(1.2, 2.6)) / 1.5)
 				else:
 					i += 1
 	for st in _streets:
