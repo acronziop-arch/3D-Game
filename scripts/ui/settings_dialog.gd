@@ -191,7 +191,8 @@ func _style_nav_button(b: Button, pad: int) -> void:
 
 func _show_section(id: String) -> void:
 	_section = id
-	(_nav_buttons[id] as Button).set_pressed_no_signal(true)
+	for key: String in _nav_buttons:
+		(_nav_buttons[key] as Button).set_pressed_no_signal(key == id)
 	_nav_scroll.ensure_control_visible.call_deferred(_nav_buttons[id])
 	for key: String in _pages:
 		(_pages[key] as Control).visible = key == id
@@ -593,7 +594,7 @@ const HELP := [
 			"{2} или «Стройка» — меню зданий; ещё раз — закрыть.",
 			"[b]Разделы[/b]: мастерские, жильё, особые, оборона, на воде, двор, сад и декор.",
 			"[b]Карточка[/b]: цена и время. Недоступное — сразу видно."]},
-	{"title": "Стройка: куда поставить", "icon": "icon_buildings", "image": "build_place",
+	{"title": "Стройка: куда поставить", "icon": "marker_pin", "image": "build_place",
 		"touch": [
 			"[b]Тяните здание пальцем[/b] или нажмите на землю, куда поставить.",
 			"[b]«Повернуть»[/b]: нажмите — повернуть, удерживайте — плавно крутить.",
@@ -729,7 +730,7 @@ func _build_about(page: VBoxContainer) -> void:
 		cap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		cap.custom_minimum_size.x = 80
 		cell.add_child(cap)
-	var what := _card(page, "tool_build", "Что можно делать")
+	var what := _card(page, "icon_buildings", "Что можно делать")
 	for line: String in [
 		"Строить больше 70 зданий: от шалаша и бани до замка, маяка и водяной мельницы.",
 		"Прокладывать дорожки и протягивать ограды любой формы — пальцем или мышью.",
@@ -748,7 +749,7 @@ func _build_about(page: VBoxContainer) -> void:
 
 
 func _build_help() -> void:
-	var intro := _card(_help_box, "help", "Как играть",
+	var intro := _card(_help_box, "icon_modes", "Как играть",
 		"Номера на картинках совпадают с пунктами под ними. Можно посмотреть управление для касаний или для мыши.")
 	_help_choice(intro)
 	var alt := false
