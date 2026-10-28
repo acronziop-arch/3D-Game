@@ -25,6 +25,10 @@ var planted := 0.0
 
 var _mm: MultiMesh
 var _base: Array[Transform3D] = []
+var _rects: Array = []
+var _top := 0.0
+## Высота земли под точкой гряды относительно здания (огород лежит по склону).
+var _lift := Callable()
 var _timer := 0.0
 var _done := false
 
@@ -37,6 +41,8 @@ static func next_crop(current: String) -> String:
 func setup(crop_id: String, planted_time: float, rects: Array, top: float) -> void:
 	crop = crop_id if CROPS.has(crop_id) else "wheat"
 	planted = planted_time
+	_rects = rects
+	_top = top
 	for c in get_children():
 		c.queue_free()
 	_base.clear()
@@ -50,6 +56,7 @@ func setup(crop_id: String, planted_time: float, rects: Array, top: float) -> vo
 			for i in nx:
 				var p := Vector3(r.position.x + (i + 0.5) * r.size.x / nx + rng.randf_range(-0.04, 0.04), top,
 					r.position.y + (j + 0.5) * r.size.y / nz + rng.randf_range(-0.04, 0.04))
+				p.y += _lift_at(p)
 				var s := rng.randf_range(0.85, 1.12)
 				_base.append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), p))
 		if crop == "rice":
@@ -58,6 +65,7 @@ func setup(crop_id: String, planted_time: float, rects: Array, top: float) -> vo
 			plane.size = r.size
 			water.mesh = plane
 			water.position = Vector3(r.get_center().x, top + 0.05, r.get_center().y)
+			water.position.y += _lift_at(water.position)
 			water.material_override = rice_water()
 			water.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			add_child(water)
@@ -71,6 +79,17 @@ func setup(crop_id: String, planted_time: float, rects: Array, top: float) -> vo
 	add_child(mmi)
 	_done = false
 	_apply_growth()
+
+
+## Посадки ложатся на землю: lift(точка в осях здания) — насколько её поднять.
+func lift_to(lift: Callable) -> void:
+	_lift = lift
+	if not _rects.is_empty():
+		setup(crop, planted, _rects, _top)
+
+
+func _lift_at(p: Vector3) -> float:
+	return float(_lift.call(Vector3(p.x, 0.0, p.z))) if _lift.is_valid() else 0.0
 
 
 func growth() -> float:

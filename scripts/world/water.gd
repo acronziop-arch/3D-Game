@@ -154,6 +154,9 @@ func _process(delta: float) -> void:
 	var target := Vector2i(maxi(64, int(size.x)), maxi(64, int(size.y)))
 	if _viewport.size != target:
 		_viewport.size = target
+	# Угол обзора — тот же и по той же стороне: стоя (телефон вертикально) игровая камера
+	# держит его по ширине, и без этого отражение выходило крупным и не на своём месте.
+	_camera.keep_aspect = main_cam.keep_aspect
 	_camera.fov = main_cam.fov
 	_camera.near = main_cam.near
 	_camera.far = REFLECT_FAR

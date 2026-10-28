@@ -44,6 +44,8 @@ var _dust: CPUParticles3D
 var _scaffold: MeshInstance3D
 var _removing := false
 var _crops: CropPatch
+## Огонь костра и факела: [узел, точка в модели] — ложится на землю вместе с мешем.
+var _fires: Array[Array] = []
 ## Свои копии материалов на время стройки (у них меняется build_progress).
 var _progress_materials: Array[ShaderMaterial] = []
 
@@ -166,29 +168,125 @@ static func highlight_material() -> StandardMaterial3D:
 
 
 ## Копия меша, у которой низ «лёг» на землю: каждая вершина сдвинута на разницу
-## высоты земли под ней и под центром. Высокие части (верх факела) не сдвигаются.
+## высоты земли под ней и под центром. Высокие части (верх факела) не сдвигаются,
+## а ограды и частокол сдвигаются целиком: колья не растягиваются, жерди идут по склону.
 func _conform(mesh: Mesh) -> ArrayMesh:
 	var out := ArrayMesh.new()
 	var xf := global_transform
+	var rigid: bool = GameData.BUILDINGS[id].get("group", "") == "fence"
 	# Исходные поверхности читаем один раз на вид постройки: при выравнивании земли
-	# здания укладываются заново много раз в секунду.
+	# здания укладываются заново много раз в секунду. Длинные грани заранее делятся:
+	# земля огорода и жерди ограды изгибаются по земле, а не висят над ней углами.
 	if not _surface_cache.has(mesh):
 		var surfaces := []
 		for i in mesh.get_surface_count():
-			surfaces.append(mesh.surface_get_arrays(i))
+			surfaces.append(_subdivide(mesh.surface_get_arrays(i), CONFORM_EDGE))
 		_surface_cache[mesh] = surfaces
 	var cached: Array = _surface_cache[mesh]
 	for i in mesh.get_surface_count():
 		var arrays: Array = (cached[i] as Array).duplicate()
-		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		# Своя копия вершин: массивы в кэше общие у всех построек этого вида, и без копии
+		# каждая укладка сдвигала бы их снова — костры всплывали, колья частокола ломались.
+		var verts := (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).duplicate()
 		for k in verts.size():
 			var v := verts[k]
 			var w := xf * v
 			var dh: float = ground_height.call(w.x, w.z) - global_position.y
-			verts[k] = v + Vector3(0, dh * (1.0 - smoothstep(1.0, 1.8, v.y)), 0)
+			verts[k] = v + Vector3(0, dh * (1.0 if rigid else 1.0 - smoothstep(1.0, 1.8, v.y)), 0)
 		arrays[Mesh.ARRAY_VERTEX] = verts
 		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		out.surface_set_material(i, mesh.surface_get_material(i))
+	return out
+
+
+## Длиннее этого (м) грани постройки, которая ложится по земле, делятся пополам.
+const CONFORM_EDGE := 0.9
+
+
+## Делит треугольники, пока все их рёбра не станут короче max_edge: середина длинного
+## ребра — новая вершина (общая у соседних треугольников, так что щелей нет).
+static func _subdivide(arrays: Array, max_edge: float) -> Array:
+	for k in [Mesh.ARRAY_BONES, Mesh.ARRAY_WEIGHTS, Mesh.ARRAY_CUSTOM0, Mesh.ARRAY_CUSTOM1, Mesh.ARRAY_CUSTOM2, Mesh.ARRAY_CUSTOM3]:
+		if typeof(arrays[k]) != TYPE_NIL:
+			return arrays
+	var out := arrays.duplicate()
+	var verts := (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).duplicate()
+	var has_normal := typeof(arrays[Mesh.ARRAY_NORMAL]) != TYPE_NIL
+	var has_tangent := typeof(arrays[Mesh.ARRAY_TANGENT]) != TYPE_NIL
+	var has_color := typeof(arrays[Mesh.ARRAY_COLOR]) != TYPE_NIL
+	var has_uv := typeof(arrays[Mesh.ARRAY_TEX_UV]) != TYPE_NIL
+	var has_uv2 := typeof(arrays[Mesh.ARRAY_TEX_UV2]) != TYPE_NIL
+	var normals := (arrays[Mesh.ARRAY_NORMAL] as PackedVector3Array).duplicate() if has_normal else PackedVector3Array()
+	var tangents := (arrays[Mesh.ARRAY_TANGENT] as PackedFloat32Array).duplicate() if has_tangent else PackedFloat32Array()
+	var colors := (arrays[Mesh.ARRAY_COLOR] as PackedColorArray).duplicate() if has_color else PackedColorArray()
+	var uvs := (arrays[Mesh.ARRAY_TEX_UV] as PackedVector2Array).duplicate() if has_uv else PackedVector2Array()
+	var uv2s := (arrays[Mesh.ARRAY_TEX_UV2] as PackedVector2Array).duplicate() if has_uv2 else PackedVector2Array()
+	var src_index := PackedInt32Array()
+	if typeof(arrays[Mesh.ARRAY_INDEX]) != TYPE_NIL:
+		src_index = arrays[Mesh.ARRAY_INDEX]
+	else:
+		src_index.resize(verts.size())
+		for i in verts.size():
+			src_index[i] = i
+	var limit := max_edge * max_edge
+	var mids := {}
+	var index := PackedInt32Array()
+	var stack: Array[Vector3i] = []
+	for t in range(0, src_index.size() - 2, 3):
+		stack.push_back(Vector3i(src_index[t], src_index[t + 1], src_index[t + 2]))
+		while not stack.is_empty():
+			var tri: Vector3i = stack.pop_back()
+			var ab := verts[tri.x].distance_squared_to(verts[tri.y])
+			var bc := verts[tri.y].distance_squared_to(verts[tri.z])
+			var ca := verts[tri.z].distance_squared_to(verts[tri.x])
+			var longest := maxf(ab, maxf(bc, ca))
+			# Защита от разрастания: не больше 60 000 вершин на поверхность.
+			if longest <= limit or verts.size() > 60000:
+				index.append(tri.x)
+				index.append(tri.y)
+				index.append(tri.z)
+				continue
+			# Поворачиваем треугольник так, чтобы длинное ребро было первым (a–b); обход тот же.
+			if bc == longest:
+				tri = Vector3i(tri.y, tri.z, tri.x)
+			elif ca == longest:
+				tri = Vector3i(tri.z, tri.x, tri.y)
+			var key := Vector2i(mini(tri.x, tri.y), maxi(tri.x, tri.y))
+			var m: int = mids.get(key, -1)
+			if m < 0:
+				var a := key.x
+				var b := key.y
+				m = verts.size()
+				verts.append((verts[a] + verts[b]) * 0.5)
+				if has_normal:
+					var n := normals[a] + normals[b]
+					normals.append(n.normalized() if n.length_squared() > 0.000001 else normals[a])
+				if has_tangent:
+					var tv := Vector3(tangents[a * 4] + tangents[b * 4], tangents[a * 4 + 1] + tangents[b * 4 + 1],
+						tangents[a * 4 + 2] + tangents[b * 4 + 2])
+					tv = tv.normalized() if tv.length_squared() > 0.000001 else Vector3(tangents[a * 4], tangents[a * 4 + 1], tangents[a * 4 + 2])
+					tangents.append_array(PackedFloat32Array([tv.x, tv.y, tv.z, tangents[a * 4 + 3]]))
+				if has_color:
+					colors.append(colors[a].lerp(colors[b], 0.5))
+				if has_uv:
+					uvs.append((uvs[a] + uvs[b]) * 0.5)
+				if has_uv2:
+					uv2s.append((uv2s[a] + uv2s[b]) * 0.5)
+				mids[key] = m
+			stack.push_back(Vector3i(tri.x, m, tri.z))
+			stack.push_back(Vector3i(m, tri.y, tri.z))
+	out[Mesh.ARRAY_VERTEX] = verts
+	if has_normal:
+		out[Mesh.ARRAY_NORMAL] = normals
+	if has_tangent:
+		out[Mesh.ARRAY_TANGENT] = tangents
+	if has_color:
+		out[Mesh.ARRAY_COLOR] = colors
+	if has_uv:
+		out[Mesh.ARRAY_TEX_UV] = uvs
+	if has_uv2:
+		out[Mesh.ARRAY_TEX_UV2] = uv2s
+	out[Mesh.ARRAY_INDEX] = index
 	return out
 
 
@@ -198,6 +296,25 @@ func refit_ground() -> void:
 		_mesh.mesh = _conform(_ground_mesh)
 		if _ghost:
 			_ghost.mesh = _mesh.mesh
+		_fit_extras()
+
+
+## Насколько поднять (или опустить) точку модели p, чтобы она легла на землю.
+func _ground_lift(p: Vector3) -> float:
+	var w := global_transform * p
+	return ground_height.call(w.x, w.z) - global_position.y
+
+
+## Огонь и посадки ложатся на землю вместе с мешем: пламя костра — к углям (верх
+## факела не сдвигается), растения — на гряды огорода.
+func _fit_extras() -> void:
+	if _ground_mesh == null or not is_inside_tree():
+		return
+	for f: Array in _fires:
+		var base: Vector3 = f[1]
+		(f[0] as Node3D).position = base + Vector3(0, _ground_lift(base) * (1.0 - smoothstep(1.0, 1.8, base.y)), 0)
+	if _crops:
+		_crops.lift_to(_ground_lift)
 
 
 func setup(building_id: String, angle: float, instant: bool) -> void:
@@ -315,6 +432,7 @@ func _add_extras() -> void:
 		fire.size = f[1]
 		fire.position = f[0]
 		add_child(fire)
+		_fires.append([fire, f[0]])
 	if def.has("crops"):
 		if crop == "":
 			crop = "wheat"
@@ -323,6 +441,7 @@ func _add_extras() -> void:
 		_crops = CropPatch.new()
 		add_child(_crops)
 		_crops.setup(crop, planted, def["crops"], def.get("crop_top", 0.2))
+	_fit_extras()
 
 
 ## Свои копии материалов для меша (общие материалы держат build_progress = 1).

@@ -41,6 +41,8 @@ var _help_box: VBoxContainer
 var _body: BoxContainer
 var _nav_box: BoxContainer
 var _help_touch := true
+## Ряды из двух широких кнопок: на узком экране они встают одна под другой.
+var _stack_rows: Array[BoxContainer] = []
 
 
 func _ready() -> void:
@@ -191,6 +193,9 @@ func _fit() -> void:
 			_style_nav_button(b, 3 if portrait else 10)
 		b.add_theme_constant_override("icon_max_width", 24 if portrait else (30 if _touch else 32))
 	_panel.custom_minimum_size.x = minf(WIDTH, vp.x - m["left"] - m["right"] - 12.0)
+	# Иначе две кнопки рядом распирали бы раздел «Игра» шире остальных.
+	for row in _stack_rows:
+		row.vertical = portrait
 	var chrome := (44.0 + 10.0 + 40.0) if _touch else (40.0 + 14.0 + 52.0)
 	if portrait:
 		chrome += 58.0 + 16.0 + 12.0
@@ -259,9 +264,12 @@ func _toggle_row(parent: Control, key: String, title: String, desc: String) -> v
 	parent.add_child(row)
 
 
+## Кнопки-варианты сеткой не больше columns в ряд. На узком экране колонок меньше:
+## подпись кнопки всегда видна целиком, а не обрезается.
 func _chips(parent: Control, key: String, options: Array, columns: int) -> void:
 	var grid := GridContainer.new()
 	grid.columns = columns
+	var cell := 0.0
 	grid.add_theme_constant_override("h_separation", 8)
 	grid.add_theme_constant_override("v_separation", 8)
 	grid.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -286,6 +294,7 @@ func _chips(parent: Control, key: String, options: Array, columns: int) -> void:
 		b.custom_minimum_size = Vector2(96, 44) if _touch else Vector2(110, 42)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		cell = maxf(cell, maxf(b.custom_minimum_size.x, _chip_width(opt[1], opt[2] != "")))
 		# Иначе список не листается, если палец начал движение на кнопке.
 		b.mouse_filter = Control.MOUSE_FILTER_PASS
 		b.button_pressed = Settings.get_value(key) == opt[0]
@@ -295,6 +304,17 @@ func _chips(parent: Control, key: String, options: Array, columns: int) -> void:
 		grid.add_child(b)
 		_chips_by_key[key][opt[0]] = b
 	parent.add_child(grid)
+	grid.resized.connect(func() -> void:
+		var fit := clampi(floori((grid.size.x + 8.0) / (cell + 8.0)), 1, columns)
+		if fit != grid.columns:
+			grid.columns = fit)
+
+
+## Ширина кнопки-варианта, при которой подпись (со значком) видна целиком:
+## текст, значок 26 с отступом 8, поля рамки по 8 и небольшой запас.
+func _chip_width(text: String, with_icon: bool) -> float:
+	var w := UiStyle.font(800).get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14 if _touch else 15).x
+	return w + (34.0 if with_icon else 0.0) + 16.0 + 8.0
 
 
 ## Ползунок: название с пояснением, значение крупно справа.
@@ -359,9 +379,12 @@ func _build_game(page: VBoxContainer) -> void:
 		"Игра сохраняется сама — регулярно и при сворачивании. В главном меню — все ваши миры и новый мир.")
 	# Заголовок карточки — имя открытого мира (обновляется при каждом открытии окна).
 	_world_title = save_card.get_child(0).get_child(1).get_child(0)
-	var row := HBoxContainer.new()
+	# Длинное имя мира не раздвигает окно.
+	_world_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	var row := BoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	row.mouse_filter = Control.MOUSE_FILTER_PASS
+	_stack_rows.append(row)
 	var save := Button.new()
 	save.text = "Сохранить мир"
 	save.icon = UiStyle.icon("check")
@@ -414,6 +437,8 @@ func _build_graphics(page: VBoxContainer) -> void:
 		func(v: float) -> String: return "%d%%" % roundi(v * 100.0), true)
 	var shadows := _card(page, "day", "Тени", "Мягкие тени красивее, простые — быстрее.", true)
 	_chips(shadows, "shadow_quality", [["off", "Нет", ""], ["low", "Простые", ""], ["medium", "Средние", ""], ["high", "Мягкие", ""]], 4 if not _touch else 2)
+	_slider(shadows, "shadow_distance", "Дальность теней", "Как далеко от камеры видны тени. Дальше — красивее, но тяжелее.",
+		40.0, 400.0, 10.0, func(v: float) -> String: return "%d м" % v, true)
 	var water := _card(page, "cat_water", "Вода")
 	_toggle_row(water, "reflections", "Отражения", "Небо, деревья и дома отражаются в воде.")
 	_toggle_row(water, "fish", "Рыбы", "В реках и озёрах плавают рыбы.")
@@ -584,9 +609,10 @@ func _build_help() -> void:
 
 
 func _help_choice(parent: Control) -> void:
-	var row := HBoxContainer.new()
+	var row := BoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	row.mouse_filter = Control.MOUSE_FILTER_PASS
+	_stack_rows.append(row)
 	var group := ButtonGroup.new()
 	for opt: Array in [[true, "Касания", "tool_harvest"], [false, "Мышь и клавиатура", "settings"]]:
 		var b := Button.new()

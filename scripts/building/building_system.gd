@@ -12,7 +12,8 @@ extends Node3D
 ## Уже построенное здание можно передвинуть и повернуть (start_move).
 ## Плитки дорожек ("snap") цепляются к соседним; в режиме «Плитки» их можно
 ## класть касанием или вести пальцем (paint_*), в режиме «Плавная» дорожку рисует
-## PathSystem. Ограды ("group": "fence") ставятся вплотную друг к другу под любым углом.
+## PathSystem. Ограды ("group": "fence") ставятся вплотную друг к другу под любым углом,
+## а их секции ("line" — длина) можно вести линией, стык к стыку (line_*).
 
 signal placed(building: Building)
 
@@ -50,6 +51,9 @@ var _ghost_normal := Vector3.UP
 ## Рисование дорожки: последняя положенная плитка.
 var _painting := false
 var _paint_last: Building
+## Ограда линией: откуда встанет следующая секция (null — линию не ведут) и сколько встало.
+var _line_start: Variant = null
+var _line_placed := 0
 
 
 func _ready() -> void:
@@ -89,6 +93,7 @@ func select(building_id: String) -> void:
 	add_child(_ghost)
 	_has_target = false
 	_painting = false
+	_line_start = null
 
 
 func cancel() -> void:
@@ -154,7 +159,16 @@ func update_ghost(hit: Variant, delta: float) -> void:
 		is_valid = false
 		return
 	var target := Vector3(snappedf(p.x, GRID), 0, snappedf(p.z, GRID))
-	if def.has("snap"):
+	if _line_start != null:
+		# Ограду ведут линией: призрак — следующая секция, от конца последней к пальцу.
+		var from: Vector3 = _line_start
+		var d := Vector2(p.x - from.x, p.z - from.z)
+		if d.length() > 0.3:
+			var dir := d.normalized()
+			var length: float = def["line"]
+			target = Vector3(from.x + dir.x * length * 0.5, 0, from.z + dir.y * length * 0.5)
+			_yaw = atan2(-dir.y, dir.x)
+	elif def.has("snap"):
 		# Мелкие секции ставим точнее сетки, а рядом с такой же — цепляем к её концу.
 		target = Vector3(snappedf(p.x, 0.25), 0, snappedf(p.z, 0.25))
 		if moving == null:
@@ -361,14 +375,95 @@ func paint_end() -> void:
 	_paint_last = null
 
 
-## Попадает ли луч в призрак здания (чтобы тянуть его пальцем).
-func ghost_hit(from: Vector3, dir: Vector3) -> bool:
+## Ограды и частокол («line» — длина секции) можно вести линией (не при переносе).
+func is_line() -> bool:
+	return selected_id != "" and moving == null and GameData.BUILDINGS[selected_id].has("line")
+
+
+## Начало линии ограды: первая секция встанет от этой точки.
+func line_begin(start: Vector3) -> void:
+	_line_start = Vector3(start.x, 0.0, start.z)
+	_line_placed = 0
+
+
+## Линию дотянули до p: секции встают одна за другой, пока до p хватает длины, и каждая
+## повёрнута к нему. Пустая строка — всё хорошо; иначе причина, и линия закончена.
+func line_to(p: Vector3) -> String:
+	if _line_start == null or selected_id == "":
+		return ""
+	var length: float = GameData.BUILDINGS[selected_id]["line"]
+	for i in 8:
+		var from: Vector3 = _line_start
+		var d := Vector2(p.x - from.x, p.z - from.z)
+		if d.length() < length:
+			return ""
+		var dir := d.normalized()
+		_line_start = Vector3(from.x + dir.x * length, 0.0, from.z + dir.y * length)
+		var reason := _line_section(from, dir)
+		# Мешает дерево или здание — здесь пропуск, линия идёт дальше; нет ресурсов — конец.
+		if reason.begins_with("Не хватает"):
+			_line_start = null
+			return reason
+	return ""
+
+
+## Линия закончена в точке p (null — просто закончить). Если палец не дотянул и до одной
+## секции, но всё же повёл (дальше метра), секция встаёт от начала в его сторону.
+func line_end(p: Variant) -> String:
+	var reason := ""
+	if _line_placed == 0 and _line_start != null and p != null:
+		var from: Vector3 = _line_start
+		var to: Vector3 = p
+		var d := Vector2(to.x - from.x, to.z - from.z)
+		if d.length() >= 1.0:
+			reason = _line_section(from, d.normalized())
+	_line_start = null
+	return reason
+
+
+## Секция ограды от точки from в сторону dir. Пустая строка — встала, иначе причина.
+func _line_section(from: Vector3, dir: Vector2) -> String:
+	var length: float = GameData.BUILDINGS[selected_id]["line"]
+	var center := Vector3(from.x + dir.x * length * 0.5, 0.0, from.z + dir.y * length * 0.5)
+	# Секция ограды вытянута вдоль своей оси X.
+	_yaw = atan2(-dir.y, dir.x)
+	var check := _validate(center, _yaw)
+	if check["reason"] != "":
+		return check["reason"]
+	center.y = check["y"]
+	_ghost_target = center
+	_has_target = true
+	is_valid = true
+	var reason := try_place()
+	if reason == "":
+		_line_placed += 1
+	return reason
+
+
+## Где стоит призрак (null — призрака нет или место ещё не выбрано).
+func ghost_position() -> Variant:
+	return _ghost_target if _ghost != null and _has_target else null
+
+
+## Касается ли палец призрака здания (чтобы тянуть его): по очертанию призрака на экране
+## с запасом slack (ед. интерфейса) — иначе мелкую ограду или кол издалека не ухватить.
+func ghost_hit(cam: Camera3D, screen: Vector2, slack: float) -> bool:
 	if _ghost == null or not _has_target:
 		return false
-	var rect := Building.footprint_for(selected_id, _ghost_target, _yaw).grow(1.0)
-	var top: float = (ModelLibrary.building(selected_id)["bounds"] as AABB).end.y
-	var box := AABB(Vector3(rect.position.x, _ghost_target.y - 1.0, rect.position.y), Vector3(rect.size.x, top + 1.5, rect.size.y))
-	return box.intersects_ray(from, dir) != null
+	var b: AABB = ModelLibrary.building(selected_id)["bounds"]
+	var basis := Basis(Vector3.UP, _yaw)
+	var rect := Rect2()
+	var seen := false
+	for i in 8:
+		var corner := Vector3(b.end.x if (i & 1) != 0 else b.position.x, b.end.y if (i & 2) != 0 else b.position.y,
+			b.end.z if (i & 4) != 0 else b.position.z)
+		var w := _ghost_target + basis * corner
+		if cam.is_position_behind(w):
+			continue
+		var s := cam.unproject_position(w)
+		rect = rect.expand(s) if seen else Rect2(s, Vector2.ZERO)
+		seen = true
+	return seen and rect.grow(slack).has_point(screen)
 
 
 ## Высота верха настила в точке (или -INF, если настила нет).

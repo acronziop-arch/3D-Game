@@ -3,7 +3,7 @@ extends Node
 ##
 ## Качество графики: «Авто» при запуске подбирает уровень под устройство (Platform)
 ## и понижает его, если игра не успевает рисовать кадры (см. main.gd). Уровень —
-## это набор значений (разрешение, тени, трава, дальность, отражения); если игрок
+## это набор значений (разрешение, тени и их дальность, трава, дальность, отражения); если игрок
 ## меняет любое из них вручную, качество становится «Своё».
 
 signal changed(key: String)
@@ -27,6 +27,8 @@ const DEFAULTS := {
 	"reflections": true,
 	## off / low / medium / high — у high мягкие тени с размытыми краями.
 	"shadow_quality": "medium",
+	## Дальность теней, м: дальше этого тени плавно исчезают.
+	"shadow_distance": 120.0,
 	"view_distance": 7,
 	"fish": true,
 	## Густота травы и цветов, 0..1 (1 — пучок на каждые 0,6 м).
@@ -47,13 +49,13 @@ const DEFAULTS := {
 const QUALITY_LEVELS := ["low", "medium", "high", "ultra"]
 const QUALITY_NAMES := {"low": "Низкое", "medium": "Среднее", "high": "Высокое", "ultra": "Максимум"}
 const QUALITY_PRESETS := {
-	"low": {"render_scale": 0.5, "shadow_quality": "off", "grass": 0.3, "grass_distance": 35.0,
+	"low": {"render_scale": 0.5, "shadow_quality": "off", "shadow_distance": 70.0, "grass": 0.3, "grass_distance": 35.0,
 		"view_distance": 4, "reflections": false},
-	"medium": {"render_scale": 0.75, "shadow_quality": "low", "grass": 0.55, "grass_distance": 50.0,
+	"medium": {"render_scale": 0.75, "shadow_quality": "low", "shadow_distance": 80.0, "grass": 0.55, "grass_distance": 50.0,
 		"view_distance": 5, "reflections": true},
-	"high": {"render_scale": 0.9, "shadow_quality": "medium", "grass": 0.8, "grass_distance": 70.0,
+	"high": {"render_scale": 0.9, "shadow_quality": "medium", "shadow_distance": 120.0, "grass": 0.8, "grass_distance": 70.0,
 		"view_distance": 7, "reflections": true},
-	"ultra": {"render_scale": 1.0, "shadow_quality": "high", "grass": 1.0, "grass_distance": 100.0,
+	"ultra": {"render_scale": 1.0, "shadow_quality": "high", "shadow_distance": 220.0, "grass": 1.0, "grass_distance": 100.0,
 		"view_distance": 9, "reflections": true},
 }
 

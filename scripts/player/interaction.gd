@@ -3,7 +3,8 @@ extends Node3D
 ## Инструменты игрока и очередь действий.
 ##   1 Добыча — щелчок по дереву, кусту, камню, руде или сундуку ставит его в очередь;
 ##     щелчок по зданию показывает его название.
-##   2 Стройка — размещение выбранного здания (поворот на любой угол).
+##   2 Стройка — размещение выбранного здания (поворот на любой угол). Ограды можно
+##     вести линией (зажать и вести) или ставить по одной.
 ##   3 Ровнять — зажать ЛКМ: земля тянется к высоте точки нажатия (авто) или к ней
 ##     плюс/минус заданная поправка.
 ##   4 Природа — косить траву, сеять траву и цветы, сажать деревья.
@@ -22,6 +23,8 @@ signal jobs_changed
 signal options_changed
 
 const MAX_JOBS := 6
+## Запас вокруг призрака здания на экране, за который его можно ухватить пальцем (ед. интерфейса).
+const GHOST_GRAB := 26.0
 const RING_COLOR := Color(1.0, 0.95, 0.7, 0.9)
 const BRUSH_COLOR := Color(0.55, 0.85, 1.0, 0.9)
 const JOB_COLOR := Color(1.0, 0.86, 0.45, 0.9)
@@ -46,6 +49,8 @@ var jobs: Array[Dictionary] = []
 ## Поправка высоты выравнивания, м (0 — авто: по высоте точки нажатия).
 var flatten_offset := 0.0
 var nature_mode := "mow"
+## Ограды и частокол: вести линией (палец ложит секции следом) или ставить по одной.
+var fence_line := true
 var selected_building: Building
 ## Выбранная в правке плавная дорожка (−1 — нет).
 var selected_path := -1
@@ -60,6 +65,9 @@ var _painting := false
 ## Рисование дорожки (зажата мышь или палец ведёт по земле).
 var _build_painting := false
 var _smooth_drawing := false
+## Ограду ведут линией; сколько построек было до начала линии.
+var _lining := false
+var _line_before := 0
 var _was_flattening := false
 var _edit_commit_timer := 1.0
 var _paint_timer := 0.0
@@ -81,9 +89,10 @@ func _ready() -> void:
 	_ring.visible = false
 	add_child(_ring)
 	# Взялись за мышь после касаний (или наоборот) — подсказка переезжает и меняет слова.
+	# Призрак здания остаётся, где стоял: пальцем его можно сразу тянуть дальше.
 	Platform.pointer_changed.connect(func() -> void:
 		_hover_text = ""
-		_touch_anchor = null)
+		_touch_anchor = building_system.ghost_position() if Platform.using_touch and building_system else null)
 
 
 ## Кольцо-«стакан»: тонкий обод у земли и светящаяся стенка, тающая кверху.
@@ -148,6 +157,7 @@ func set_tool(new_tool: Tool) -> void:
 	_painting = false
 	_end_build_paint()
 	_end_smooth_path()
+	_end_line(null, false)
 	_touch_info = ""
 	tool = new_tool
 	tool_changed.emit(tool)
@@ -220,6 +230,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				_painting = false
 				_end_build_paint()
 				_end_smooth_path()
+				# Щелчок без протяжки ставит одну секцию ограды — там, где призрак.
+				_end_line(null, true)
 		elif mb.button_index == MOUSE_BUTTON_RIGHT and not mb.pressed and camera_rig.was_right_click():
 			if tool == Tool.BUILD and building_system.moving:
 				building_system.cancel()
@@ -308,6 +320,56 @@ func _end_build_paint() -> void:
 	if _build_painting:
 		_build_painting = false
 		building_system.paint_end()
+
+
+## Ограда: вести линией или ставить по одной.
+func toggle_fence_line() -> void:
+	_end_line(null, false)
+	fence_line = not fence_line
+	message.emit("Ограда — линией: ведите пальцем, секции встанут следом" if fence_line
+		else "Ограда — по одной секции: тяните её и нажмите «Построить»")
+	options_changed.emit()
+	Platform.haptic(0.2)
+
+
+## Выбрана ограда, и её ведут линией.
+func _line_mode() -> bool:
+	return fence_line and building_system.is_line()
+
+
+func _begin_line(start: Vector3) -> void:
+	_lining = true
+	_line_before = building_system.buildings.size()
+	building_system.line_begin(start)
+	Platform.haptic(0.2)
+
+
+func _extend_line(ground: Variant) -> void:
+	if not _lining or ground == null:
+		return
+	var before := building_system.buildings.size()
+	var reason := building_system.line_to(ground)
+	if building_system.buildings.size() > before:
+		Platform.haptic(0.2)
+	if reason != "":
+		message.emit(reason)
+		_lining = false
+		building_system.line_end(null)
+
+
+## Линия закончена в точке at. single — мышью: если секций так и не встало, ставим одну
+## на место призрака (обычный щелчок).
+func _end_line(at: Variant, single: bool) -> void:
+	if not _lining:
+		return
+	_lining = false
+	var reason := building_system.line_end(at)
+	if building_system.buildings.size() > _line_before:
+		return
+	if single:
+		confirm_build()
+	elif reason != "":
+		message.emit(reason)
 
 
 ## Грядка: сменить культуру (у новой — до постройки, у готовой — в правке).
@@ -466,8 +528,10 @@ func touch_tap(screen: Vector2) -> void:
 	var ground_t: float = from.distance_to(ground) if ground != null else 700.0
 	match tool:
 		Tool.HARVEST:
-			# Палец толще курсора — цель можно задеть чуть мимо.
-			var slack := ground_t * 2.0 * tan(deg_to_rad(cam.fov) * 0.5) / get_viewport().get_visible_rect().size.y * 14.0
+			# Палец толще курсора — цель можно задеть чуть мимо. Угол обзора стоя задан по ширине.
+			var view := get_viewport().get_visible_rect().size
+			var fov_side := view.x if cam.keep_aspect == Camera3D.KEEP_WIDTH else view.y
+			var slack := ground_t * 2.0 * tan(deg_to_rad(cam.fov) * 0.5) / fov_side * 14.0
 			var target := chunk_manager.pick(from, dir, ground_t + 1.0, slack)
 			if target.is_empty():
 				var b := building_system.pick(from, dir)
@@ -484,7 +548,7 @@ func touch_tap(screen: Vector2) -> void:
 				message.emit("Выберите здание в меню стройки")
 			elif building_system.is_smooth_path():
 				message.emit("Ведите пальцем по земле — дорожка ляжет следом")
-			elif building_system.is_paintable() and ground != null:
+			elif (_line_mode() or building_system.is_paintable()) and ground != null:
 				# Плитка кладётся сразу, без подтверждения.
 				_touch_anchor = ground
 				building_system.update_ghost(ground, 1.0)
@@ -506,6 +570,14 @@ func touch_drag_begin(screen: Vector2) -> bool:
 			if building_system.is_smooth_path():
 				# Плавная дорожка: камера стоит, лента ложится за пальцем.
 				return _begin_smooth_path(_ground_at(screen))
+			if _line_mode():
+				# Ограду ведут пальцем: секции встают следом, камера — двумя пальцами.
+				var from: Variant = _ground_at(screen)
+				if from == null:
+					return false
+				_touch_anchor = from
+				_begin_line(from)
+				return true
 			if building_system.is_paintable():
 				# Дорожку рисуют пальцем: плитки ложатся следом.
 				var start: Variant = _ground_at(screen)
@@ -515,13 +587,14 @@ func touch_drag_begin(screen: Vector2) -> bool:
 				building_system.update_ghost(start, 1.0)
 				_begin_build_paint()
 				return true
-			if building_system.selected_id == "" or _touch_anchor == null:
+			if building_system.selected_id == "":
 				return false
-			var cam := camera_rig.camera
-			var from := cam.project_ray_origin(screen)
-			var dir := cam.project_ray_normal(screen)
-			var ground: Variant = chunk_manager.raycast(from, dir)
-			if ground == null or not building_system.ghost_hit(from, dir):
+			if _touch_anchor == null:
+				_touch_anchor = building_system.ghost_position()
+			if _touch_anchor == null:
+				return false
+			var ground: Variant = _ground_at(screen)
+			if ground == null or not building_system.ghost_hit(camera_rig.camera, screen, GHOST_GRAB):
 				return false
 			_ghost_offset = (_touch_anchor as Vector3) - (ground as Vector3)
 			return true
@@ -546,6 +619,9 @@ func touch_drag(screen: Vector2) -> void:
 		var ground: Variant = _ground_at(screen)
 		if ground != null and _smooth_drawing:
 			_extend_smooth_path(ground)
+		elif ground != null and _lining:
+			_touch_anchor = ground
+			_extend_line(ground)
 		elif ground != null and _build_painting:
 			_touch_anchor = ground
 			_paint_build_to(ground)
@@ -558,6 +634,7 @@ func touch_drag_end() -> void:
 	_painting = false
 	_end_build_paint()
 	_end_smooth_path()
+	_end_line(_touch_anchor, false)
 
 
 func _set_touch_info(text: String) -> void:
@@ -580,6 +657,8 @@ func _primary_action() -> void:
 		Tool.BUILD:
 			if building_system.is_smooth_path():
 				_begin_smooth_path(_ground)
+			elif _line_mode() and _ground != null:
+				_begin_line(_ground)
 			elif building_system.is_paintable():
 				_begin_build_paint()
 			else:
@@ -652,6 +731,7 @@ func _process(delta: float) -> void:
 			if not touch:
 				_paint_build_to(_ground)
 				_extend_smooth_path(_ground)
+				_extend_line(_ground)
 			var id := building_system.selected_id
 			if id == "":
 				text = "Выберите здание в меню стройки"
@@ -675,6 +755,9 @@ func _process(delta: float) -> void:
 					+ Rich.SEP + Rich.cost(def["cost"], 18, true)
 				if not building_system.is_valid and building_system.invalid_reason != "":
 					text += "\n" + Rich.bad(building_system.invalid_reason)
+				elif _line_mode():
+					text += "\n" + Rich.muted("Ведите пальцем — ограда встанет следом; нажмите — одна секция" if touch
+						else "%s поставить, зажмите и ведите — линией   %s повернуть   %s отмена" % [Rich.key("ЛКМ"), Rich.key("R"), Rich.key("ПКМ")])
 				elif touch:
 					text += "\n" + Rich.muted("Тяните здание пальцем или нажмите, куда поставить")
 				else:

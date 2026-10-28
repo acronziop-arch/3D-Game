@@ -270,7 +270,7 @@ func _on_setting_changed(key: String) -> void:
 			chunk_manager.refresh_all_cover()
 		"grass_distance":
 			chunk_manager.apply_cover_distance()
-		"render_scale", "shadow_quality":
+		"render_scale", "shadow_quality", "shadow_distance":
 			_apply_graphics()
 		"quality":
 			_perf_grace = 10.0
@@ -311,7 +311,7 @@ func _apply_graphics() -> void:
 			env.glow_enabled = level >= 2
 	# Комнаты за окнами — только на высоком и наивысшем качестве.
 	RenderingServer.global_shader_parameter_set("interiors", 1.0 if level >= 2 else 0.0)
-	# Тени: размер карты теней, мягкость краёв и дальность.
+	# Тени: размер карты теней, мягкость краёв и дальность (её игрок задаёт сам).
 	var q: String = Settings.get_value("shadow_quality")
 	sun.shadow_enabled = q != "off"
 	var atlas := 2048
@@ -322,28 +322,32 @@ func _apply_graphics() -> void:
 			filter = RenderingServer.SHADOW_QUALITY_SOFT_LOW
 			sun.shadow_blur = 1.6
 			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-			sun.directional_shadow_max_distance = 70.0
 			sun.light_angular_distance = 0.0
 		"medium":
 			sun.shadow_blur = 2.2
 			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-			sun.directional_shadow_max_distance = 110.0
 			sun.light_angular_distance = 0.0
 		"high":
 			atlas = 4096
 			filter = RenderingServer.SHADOW_QUALITY_SOFT_HIGH
 			sun.shadow_blur = 2.4
 			sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
-			sun.directional_shadow_max_distance = 160.0
 			# Солнце — не точка: тень у основания резкая, а дальше расплывается.
 			sun.light_angular_distance = 0.0 if Platform.is_web else 1.0
 	if light and q == "high":
 		# На телефоне и в браузере каждое деление теней — ещё одна перерисовка мира:
-		# два деления вместо четырёх и карта поменьше, дальность почти та же.
+		# два деления вместо четырёх и карта поменьше.
 		atlas = 2048
 		filter = RenderingServer.SHADOW_QUALITY_SOFT_MEDIUM
 		sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
-		sun.directional_shadow_max_distance = 100.0 if Platform.is_mobile() else 130.0
+	var distance := clampf(float(Settings.get_value("shadow_distance")), 40.0, 400.0)
+	sun.directional_shadow_max_distance = distance
+	# Ближнее деление — на то, что вокруг камеры (до ~70 м), иначе при большой дальности
+	# тени вблизи становятся крупнозернистыми; дальние деления — растянуты на остальное.
+	sun.directional_shadow_split_1 = clampf(70.0 / distance, 0.1, 0.5) \
+		if sun.directional_shadow_mode == DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS else clampf(30.0 / distance, 0.06, 0.2)
+	sun.directional_shadow_split_2 = clampf(80.0 / distance, 0.15, 0.4)
+	sun.directional_shadow_split_3 = clampf(160.0 / distance, 0.4, 0.7)
 	RenderingServer.directional_shadow_atlas_set_size(atlas, true)
 	RenderingServer.directional_soft_shadow_filter_set_quality(filter)
 

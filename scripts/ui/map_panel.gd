@@ -26,6 +26,8 @@ var _here: Button
 var _delete_button: Button
 var _color_buttons: Array[Button] = []
 var _icon_buttons: Array[Button] = []
+var _icon_grid: GridContainer
+var _editor_buttons: GridContainer
 var _edit_index := -1
 var _edit_pos := Vector3.ZERO
 var _edit_color := COLORS[0]
@@ -134,6 +136,7 @@ func _ready() -> void:
 		_color_buttons.append(b)
 	ebox.add_child(colors)
 	var icons := GridContainer.new()
+	_icon_grid = icons
 	icons.columns = 4
 	icons.add_theme_constant_override("h_separation", 6)
 	icons.add_theme_constant_override("v_separation", 6)
@@ -152,15 +155,19 @@ func _ready() -> void:
 		icons.add_child(b)
 		_icon_buttons.append(b)
 	ebox.add_child(icons)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	row.alignment = BoxContainer.ALIGNMENT_END
+	# Кнопки — в один ряд, а на узком экране в два (см. _fit).
+	var row := GridContainer.new()
+	_editor_buttons = row
+	row.columns = 4
+	row.add_theme_constant_override("h_separation", 8)
+	row.add_theme_constant_override("v_separation", 8)
 	_delete_button = Button.new()
 	_delete_button.text = "Удалить"
 	_delete_button.icon = UiStyle.icon("trash")
 	_delete_button.add_theme_constant_override("icon_max_width", 20)
 	_delete_button.add_theme_color_override("font_color", UiStyle.BAD)
 	_delete_button.custom_minimum_size = Vector2(0, 44)
+	_delete_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_delete_button.pressed.connect(_delete_marker)
 	row.add_child(_delete_button)
 	var go := Button.new()
@@ -168,6 +175,7 @@ func _ready() -> void:
 	go.icon = UiStyle.icon("target")
 	go.add_theme_constant_override("icon_max_width", 20)
 	go.custom_minimum_size = Vector2(0, 44)
+	go.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	go.pressed.connect(func() -> void:
 		camera_rig.fly_to(_edit_pos)
 		_editor.visible = false
@@ -176,6 +184,7 @@ func _ready() -> void:
 	var cancel := Button.new()
 	cancel.text = "Отмена"
 	cancel.custom_minimum_size = Vector2(0, 44)
+	cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cancel.pressed.connect(func() -> void: _editor.visible = false)
 	row.add_child(cancel)
 	var ok := Button.new()
@@ -183,6 +192,7 @@ func _ready() -> void:
 	ok.icon = UiStyle.icon("check")
 	ok.add_theme_constant_override("icon_max_width", 20)
 	ok.custom_minimum_size = Vector2(0, 44)
+	ok.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	ok.pressed.connect(_save_marker)
 	row.add_child(ok)
 	ebox.add_child(row)
@@ -201,6 +211,11 @@ func _fit() -> void:
 	var w: float = minf(vp.x - m["left"] - m["right"] - 20.0, 980.0)
 	var h: float = vp.y - m["top"] - m["bottom"] - 90.0
 	map.custom_minimum_size = Vector2(w - 24.0, maxf(h, 160.0))
+	# Окно метки не шире экрана: значки — в две-три колонки, кнопки — в два ряда.
+	var room: float = vp.x - m["left"] - m["right"] - 32.0
+	_icon_grid.columns = clampi(floori((room + 6.0) / 116.0), 2, 4)
+	_editor_buttons.columns = 4 if room >= 470.0 else 2
+	_editor.reset_size()
 
 
 func open() -> void:

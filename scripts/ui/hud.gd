@@ -388,13 +388,13 @@ func _fit_resource_bar(width: float) -> void:
 
 
 ## Кнопки действий: горизонтально — колонкой у правого края; вертикально — рядами
-## над панелью инструментов (там же, где подсказка, только справа от неё не хватит места).
+## по центру над панелью инструментов (справа от подсказки там не хватит места).
 func _place_actions(m: Dictionary) -> void:
 	var in_bottom := _actions.get_parent() == _bottom
 	if _portrait and not in_bottom:
 		_actions.reparent(_bottom, false)
 		_bottom.move_child(_actions, _toolbar.get_index())
-		_actions.size_flags_horizontal = Control.SIZE_SHRINK_END
+		_actions.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	elif not _portrait and in_bottom:
 		_actions.reparent(_root, false)
 		_actions.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
@@ -927,6 +927,8 @@ func _build_craft_panel() -> void:
 	_craft_progress.custom_minimum_size = Vector2(0, _px(8, 5))
 	box.add_child(_craft_progress)
 	_craft_scroll = SmoothScroll.new()
+	# Полоска прокрутки — в своей полосе справа, а не поверх кнопок рецептов.
+	_craft_scroll.bar_room = 10.0
 	box.add_child(_craft_scroll)
 	var rows := VBoxContainer.new()
 	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1207,7 +1209,8 @@ func _update_actions() -> void:
 		is_instance_valid(interaction.selected_building), not interaction.jobs.is_empty(), _drawer_open,
 		interaction.selected_building.get_instance_id() if is_instance_valid(interaction.selected_building) else 0,
 		interaction.selected_path]
-	var state := "%s|%s|%s|%s" % [interaction.nature_mode, interaction.flatten_offset_text(), bs.crop_choice, selected_crop]
+	var state := "%s|%s|%s|%s|%s" % [interaction.nature_mode, interaction.flatten_offset_text(), bs.crop_choice, selected_crop,
+		interaction.fence_line]
 	if key == _actions_key:
 		if state != _actions_state:
 			_actions_state = state
@@ -1234,6 +1237,11 @@ func _update_actions() -> void:
 					_state_button(func() -> Array:
 						var c: Dictionary = CropPatch.CROPS[bs.crop_choice]
 						return [c["icon"], c["name"], true]).pressed.connect(interaction.next_crop)
+				if bs.is_line():
+					# Ограда: вести линией или ставить по одной секции.
+					_state_button(func() -> Array:
+						return ["path_smooth", "Линией", true] if interaction.fence_line else ["path_tiles", "По одной", false]) \
+						.pressed.connect(interaction.toggle_fence_line)
 				if bs.is_path():
 					# Дорожка ложится плавной лентой следом за пальцем.
 					_action_button("close", "Отмена").pressed.connect(to_harvest)
@@ -1279,9 +1287,12 @@ func _update_actions() -> void:
 	var m := _margins()
 	var count := _actions.get_child_count()
 	if _portrait:
-		# Рядами над панелью инструментов: сколько кнопок влезает в ширину.
+		# Рядами над панелью инструментов: сколько кнопок влезает в ширину, а ряды —
+		# поровну (шесть кнопок — три и три, а не пять и одна), чтобы всё стояло по центру.
 		var room_x: float = _root.get_viewport_rect().size.x - m["left"] - m["right"]
-		_actions.columns = clampi(floori((room_x + 8.0) / ACTIONS_WIDTH), 1, maxi(count, 1))
+		var fit := clampi(floori((room_x + 8.0) / ACTIONS_WIDTH), 1, maxi(count, 1))
+		var rows := ceili(float(count) / fit)
+		_actions.columns = maxi(ceili(float(count) / maxi(rows, 1)), 1)
 	else:
 		# Не залезаем на часы и шестерёнку сверху: лишние кнопки — во вторую колонку.
 		var room: float = _root.get_viewport_rect().size.y - m["top"] - _clock_row.size.y - 16.0 - m["bottom"]
