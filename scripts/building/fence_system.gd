@@ -196,6 +196,9 @@ func restore() -> void:
 	for i in WorldState.fences.size():
 		_items.append(_new_item())
 		_rebuild(i)
+	# Чанки вокруг уже загружены: ограды ложатся на их рельеф, трава под ними убирается.
+	for c: Vector2i in chunk_manager.chunks:
+		on_chunk_loaded(chunk_manager.chunks[c])
 
 
 func _new_item() -> Dictionary:

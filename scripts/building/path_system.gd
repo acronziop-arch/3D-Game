@@ -287,6 +287,10 @@ func restore() -> void:
 			WorldState.paths[i]["layer"] = _layer_under(i)
 		_meshes.append(null)
 		_build(i)
+	# Чанки вокруг уже загружены (дорожки создаются после них) — траву под дорожками
+	# убираем сейчас, иначе она так и торчала бы сквозь них до перезагрузки чанка.
+	for c: Vector2i in chunk_manager.chunks:
+		on_chunk_loaded(chunk_manager.chunks[c])
 
 
 func _build(i: int) -> void:

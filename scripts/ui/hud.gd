@@ -70,6 +70,10 @@ var _season_icon: TextureRect
 var _weather_icon: TextureRect
 var _clock_sub: Label
 var _settings: SettingsDialog
+var _frozen: TextureRect
+var _world_frozen := false
+## Мир построен и показан (пока он грузится, окна открываются для прогрева — без паузы).
+var _playing := false
 var _tool_buttons := {}
 var _build_panel: PanelContainer
 var _category_buttons := {}
@@ -116,6 +120,8 @@ var _info_timer := 0.0
 
 func _ready() -> void:
 	_touch = Platform.is_touch
+	# Интерфейс живёт и тогда, когда игра стоит на паузе (открыты настройки или карта).
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	_root = Control.new()
 	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -123,6 +129,14 @@ func _ready() -> void:
 	# Иконки — картинки 128 px: при уменьшении берутся мип-уровни, без ряби.
 	_root.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	add_child(_root)
+	# Застывший кадр мира под окнами настроек и карты (см. _freeze_world).
+	_frozen = TextureRect.new()
+	_frozen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_frozen.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_frozen.stretch_mode = TextureRect.STRETCH_SCALE
+	_frozen.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_frozen.visible = false
+	_root.add_child(_frozen)
 	thumbnails = Thumbnails.new()
 	add_child(thumbnails)
 	thumbnails.thumbnail_ready.connect(_on_thumbnail)
@@ -1433,12 +1447,47 @@ func set_loading(fraction: float, text: String) -> void:
 
 ## Телефон в портретной ориентации (бывает только в браузере): просим повернуть его.
 func hide_loading() -> void:
+	_playing = true
 	var tw := _loading.create_tween()
 	tw.tween_property(_loading, "modulate:a", 0.0, 0.8).set_trans(Tween.TRANS_SINE)
 	tw.tween_callback(_loading.queue_free)
 
 
+## Пока открыты настройки или карта, мир стоит: игра на паузе, а вместо живой 3D-картинки
+## под окном — её последний кадр. Видеокарта рисует только окно, и оно не подтормаживает.
+func _freeze_world(on: bool) -> void:
+	if on == _world_frozen:
+		return
+	_world_frozen = on
+	var vp := get_viewport()
+	if on:
+		var img := vp.get_texture().get_image()
+		# В браузере кадр иногда не прочитать (приходит пустым или чёрным) — тогда мир
+		# только ставится на паузу, а картинка под окном остаётся живой.
+		if img and not img.is_empty() and _has_picture(img):
+			_frozen.texture = ImageTexture.create_from_image(img)
+			_frozen.visible = true
+			vp.disable_3d = true
+		get_tree().paused = true
+	else:
+		vp.disable_3d = false
+		_frozen.visible = false
+		_frozen.texture = null
+		get_tree().paused = false
+
+
+static func _has_picture(img: Image) -> bool:
+	var w := img.get_width()
+	var h := img.get_height()
+	for k in 9:
+		var c := img.get_pixel(w * (k % 3 * 2 + 1) / 6, h * (k / 3 * 2 + 1) / 6)
+		if c.a > 0.5 and c.r + c.g + c.b > 0.05:
+			return true
+	return false
+
+
 func _process(delta: float) -> void:
+	_freeze_world(_playing and is_modal_open())
 	# На телефоне меню стройки и ремесло занимают верх экрана — мини-карта
 	# на это время уходит, чтобы не закрывать их.
 	if _map_frame:

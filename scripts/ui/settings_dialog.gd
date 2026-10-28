@@ -55,6 +55,8 @@ var _section := "game"
 var _help_box: VBoxContainer
 var _body: BoxContainer
 var _nav_box: BoxContainer
+var _nav_scroll: ScrollContainer
+var _about_grid: GridContainer
 var _help_touch := true
 ## Ряды из двух широких кнопок: на узком экране они встают одна под другой.
 var _stack_rows: Array[BoxContainer] = []
@@ -144,10 +146,18 @@ func _ready() -> void:
 func _build_nav() -> Control:
 	var nav := PanelContainer.new()
 	nav.add_theme_stylebox_override("panel", UiStyle.box(NAV_BG, 18, 8))
+	# Разделов много: на узком экране строка листается вбок, на широком колонка — вниз,
+	# а окно не растёт и подписи не обрезаются.
+	_nav_scroll = ScrollContainer.new()
+	_nav_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_nav_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	_nav_scroll.scroll_deadzone = 8
+	nav.add_child(_nav_scroll)
 	var box := BoxContainer.new()
 	box.vertical = true
 	box.add_theme_constant_override("separation", 6)
-	nav.add_child(box)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_nav_scroll.add_child(box)
 	_nav_box = box
 	var group := ButtonGroup.new()
 	for s: Array in SECTIONS:
@@ -165,6 +175,7 @@ func _build_nav() -> Control:
 		b.add_theme_font_size_override("font_size", 15 if _touch else 17)
 		_style_nav_button(b, 10)
 		b.pressed.connect(func() -> void: _show_section(s[0]))
+		b.mouse_filter = Control.MOUSE_FILTER_PASS
 		box.add_child(b)
 		_nav_buttons[s[0]] = b
 	return nav
@@ -181,6 +192,7 @@ func _style_nav_button(b: Button, pad: int) -> void:
 func _show_section(id: String) -> void:
 	_section = id
 	(_nav_buttons[id] as Button).set_pressed_no_signal(true)
+	_nav_scroll.ensure_control_visible.call_deferred(_nav_buttons[id])
 	for key: String in _pages:
 		(_pages[key] as Control).visible = key == id
 	_scroll.reset()
@@ -195,21 +207,27 @@ func _fit() -> void:
 	var portrait := vp.x < vp.y
 	_body.vertical = portrait
 	_nav_box.vertical = not portrait
+	_nav_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER if portrait else ScrollContainer.SCROLL_MODE_DISABLED
+	_nav_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED if portrait else ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	# Строка разделов на узком экране — своей высоты; колонка на широком — во всю высоту
+	# окна (кнопки, что не влезли, листаются).
+	_nav_scroll.custom_minimum_size = Vector2(0, 66) if portrait else Vector2(150 if _touch else 180, 0)
 	for b: Button in _nav_buttons.values():
-		b.custom_minimum_size = Vector2(0, 58) if portrait else Vector2(150 if _touch else 180, 50 if _touch else 54)
+		b.custom_minimum_size = Vector2(76, 58) if portrait else Vector2(150 if _touch else 180, 50 if _touch else 54)
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL if portrait else Control.SIZE_FILL
 		b.alignment = HORIZONTAL_ALIGNMENT_CENTER if portrait else HORIZONTAL_ALIGNMENT_LEFT
 		b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP if portrait else VERTICAL_ALIGNMENT_CENTER
 		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER if portrait else HORIZONTAL_ALIGNMENT_LEFT
-		b.add_theme_font_size_override("font_size", 11 if portrait else (15 if _touch else 17))
-		# В строке разделов длинное название сокращается, а не раздвигает окно.
-		b.clip_text = portrait
-		b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		b.add_theme_font_size_override("font_size", 12 if portrait else (15 if _touch else 17))
+		# Подпись целиком: строка разделов листается, а не обрезает их.
+		b.clip_text = false
 		if b.get_meta("pad", -1) != (3 if portrait else 10):
 			b.set_meta("pad", 3 if portrait else 10)
 			_style_nav_button(b, 3 if portrait else 10)
 		b.add_theme_constant_override("icon_max_width", 24 if portrait else (30 if _touch else 32))
 	_panel.custom_minimum_size.x = minf(WIDTH, vp.x - m["left"] - m["right"] - 12.0)
+	if _about_grid:
+		_about_grid.columns = 1 if _panel.custom_minimum_size.x < 620.0 else 2
 	# Иначе две кнопки рядом распирали бы раздел «Игра» шире остальных.
 	for row in _stack_rows:
 		row.vertical = portrait
@@ -667,7 +685,7 @@ func _build_villages(page: VBoxContainer) -> void:
 func _on_village(b: Button, id: String) -> void:
 	if not b.has_meta("armed"):
 		b.set_meta("armed", true)
-		b.text = "Нажмите ещё раз — откроется новый мир"
+		b.text = "Нажмите ещё раз"
 		get_tree().create_timer(4.0).timeout.connect(func() -> void:
 			if is_instance_valid(b) and b.has_meta("armed"):
 				b.remove_meta("armed")
@@ -691,7 +709,9 @@ func _build_about(page: VBoxContainer) -> void:
 	var gallery := _card(page, "weather_cloudy", "Деревни в разную погоду",
 		"Солнце и дождь, туман и снег, закаты и ночи сменяют друг друга сами — деревня каждый раз выглядит по-новому.", true)
 	var grid := GridContainer.new()
-	grid.columns = 1 if _touch and get_viewport_rect().size.x < get_viewport_rect().size.y else 2
+	# Колонок — сколько влезает по ширине окна (см. _fit).
+	_about_grid = grid
+	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 10)
 	grid.add_theme_constant_override("v_separation", 10)
 	grid.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -705,6 +725,9 @@ func _build_about(page: VBoxContainer) -> void:
 		_picture(cell, "res://assets/about/%s.jpg" % ABOUT_SHOTS[i][0])
 		var cap := UiStyle.label(ABOUT_SHOTS[i][1], 13 if _touch else 14, UiStyle.MUTED, 800)
 		cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		# Подпись переносится по словам и не раздвигает окно.
+		cap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		cap.custom_minimum_size.x = 80
 		cell.add_child(cap)
 	var what := _card(page, "tool_build", "Что можно делать")
 	for line: String in [

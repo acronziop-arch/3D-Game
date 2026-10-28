@@ -430,6 +430,7 @@ func _clear_cache() -> void:
 
 ## Готовая деревня из настроек: текущий мир сохраняется, деревня открывается новым миром.
 func _open_village(id: String) -> void:
+	get_tree().paused = false
 	WorldState.camera_state = camera_rig.get_state()
 	WorldState.save_game()
 	WorldState.close_world()
@@ -441,6 +442,8 @@ func _open_village(id: String) -> void:
 
 ## «В главное меню»: сохраняем мир и показываем стартовый экран заново.
 func _to_menu() -> void:
+	# Настройки ставили игру на паузу — новый экран начинается без неё.
+	get_tree().paused = false
 	WorldState.camera_state = camera_rig.get_state()
 	WorldState.save_game()
 	WorldState.close_world()
