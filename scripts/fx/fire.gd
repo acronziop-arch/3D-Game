@@ -69,6 +69,10 @@ func _ready() -> void:
 	_light.omni_range = 4.0 + size * 4.0
 	_light.omni_attenuation = 1.4
 	_light.shadow_enabled = false
+	# Далёкие огни гаснут: в деревне десятки факелов, а светить нужно только ближним.
+	_light.distance_fade_enabled = true
+	_light.distance_fade_begin = 45.0
+	_light.distance_fade_length = 15.0
 	_light.position = Vector3(0, size * 0.55, 0)
 	add_child(_light)
 

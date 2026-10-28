@@ -1,6 +1,6 @@
 class_name SettingsDialog
 extends Control
-## Окно настроек: слева разделы (Игра, Мир, Графика, Управление), справа —
+## Окно настроек: слева разделы (Игра, Мир, Графика, Деревни, Управление, О проекте), справа —
 ## карточки на своих подложках. У каждой настройки — заголовок, пояснение и
 ## понятный переключатель. «Управление» — подробная справка со скриншотами игры,
 ## где номерами и стрелками показано, куда нажимать.
@@ -11,6 +11,8 @@ signal save_requested
 signal menu_requested
 ## «Очистить кэш» (см. Platform.clear_cache).
 signal cache_clear_requested
+## Открыть готовую деревню (VillageBuilder.PRESETS) новым миром.
+signal village_requested(id: String)
 
 const WIDTH := 940.0
 ## Оттенки фирменных цветов для подложек и акцентов.
@@ -24,7 +26,18 @@ const SECTIONS := [
 	["game", "Игра", "cat_housing"],
 	["world", "Мир", "season_summer"],
 	["graphics", "Графика", "lantern"],
+	["villages", "Деревни", "marker_home"],
 	["help", "Управление", "help"],
+	["about", "О проекте", "marker_star"],
+]
+## Снимки для «О проекте»: файл в assets/about и подпись.
+const ABOUT_SHOTS := [
+	["harbor_day", "Озёрная гавань ясным утром"],
+	["merchants_evening", "Купеческий город на закате"],
+	["mill_rain", "Мельница у реки в дождь"],
+	["north_snow", "Северная заимка в снегопад"],
+	["abbey_fog", "Монастырская обитель в тумане"],
+	["harbor_night", "Ночные огни гавани"],
 ]
 
 var _panel: PanelContainer
@@ -113,8 +126,10 @@ func _ready() -> void:
 	_build_game(_pages["game"])
 	_build_world(_pages["world"])
 	_build_graphics(_pages["graphics"])
+	_build_villages(_pages["villages"])
 	_help_box = _pages["help"]
 	_build_help()
+	_build_about(_pages["about"])
 
 	Platform.layout_changed.connect(_fit)
 	get_viewport().size_changed.connect(_fit)
@@ -604,6 +619,109 @@ const HELP := [
 		"touch": ["Нажмите на карту — [b]поставить метку[/b]: выберите цвет и значок, чтобы отметить свою деревню."],
 		"pc": ["{ЛКМ} на карте — [b]поставить метку[/b]: цвет и значок, чтобы отметить свою деревню."]},
 ]
+
+
+## Картинка во всю ширину карточки, высота — по её пропорциям (без своей ширины: иначе
+## она «распирала» бы окно на весь экран).
+func _picture(parent: Control, path: String) -> Control:
+	if not ResourceLoader.exists(path):
+		return null
+	var pic := TextureRect.new()
+	pic.texture = load(path)
+	pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	pic.mouse_filter = Control.MOUSE_FILTER_PASS
+	var holder := PanelContainer.new()
+	holder.add_theme_stylebox_override("panel", UiStyle.box(Color.WHITE, 14, 4, 2, CARD_BORDER))
+	holder.mouse_filter = Control.MOUSE_FILTER_PASS
+	holder.clip_children = CanvasItem.CLIP_CHILDREN_AND_DRAW
+	holder.add_child(pic)
+	parent.add_child(holder)
+	pic.set_meta("aspect", float(pic.texture.get_width()) / pic.texture.get_height())
+	holder.resized.connect(func() -> void:
+		pic.custom_minimum_size.y = (holder.size.x - 8.0) / float(pic.get_meta("aspect")))
+	return holder
+
+
+## «Деревни»: готовые большие деревни — каждая открывается новым миром.
+func _build_villages(page: VBoxContainer) -> void:
+	_card(page, "marker_home", "Готовые деревни",
+		"Десять больших деревень на красивых местах: улицы, площадь, дома, мастерские, огороды и огни по вечерам. "
+		+ "Деревня откроется новым миром — нынешний мир сохранится и останется в главном меню.")
+	var alt := true
+	for p: Dictionary in VillageBuilder.PRESETS:
+		var card := _card(page, "marker_home", p["name"], p["desc"], alt)
+		alt = not alt
+		_picture(card, "res://assets/villages/%s.jpg" % p["id"])
+		var go := Button.new()
+		go.text = "Открыть деревню"
+		go.icon = UiStyle.icon("arrow")
+		go.add_theme_constant_override("icon_max_width", 22)
+		go.custom_minimum_size = Vector2(0, 46 if _touch else 44)
+		go.mouse_filter = Control.MOUSE_FILTER_PASS
+		go.pressed.connect(_on_village.bind(go, p["id"]))
+		card.add_child(go)
+
+
+## Открыть деревню — со второго нажатия: случайное касание не уводит из нынешнего мира.
+func _on_village(b: Button, id: String) -> void:
+	if not b.has_meta("armed"):
+		b.set_meta("armed", true)
+		b.text = "Нажмите ещё раз — откроется новый мир"
+		get_tree().create_timer(4.0).timeout.connect(func() -> void:
+			if is_instance_valid(b) and b.has_meta("armed"):
+				b.remove_meta("armed")
+				b.text = "Открыть деревню")
+		return
+	b.remove_meta("armed")
+	b.text = "Открываем…"
+	close()
+	village_requested.emit(id)
+
+
+## «О проекте»: снимки деревень в разную погоду и рассказ об игре.
+func _build_about(page: VBoxContainer) -> void:
+	var hero := _card(page, "marker_star", GameData.GAME_NAME,
+		"Уютная стройка в живом трёхмерном мире: от первой хижины у озера до шумного купеческого города.")
+	_picture(hero, "res://assets/about/%s.jpg" % ABOUT_SHOTS[0][0])
+	hero.add_child(_desc(
+		"Здесь нет спешки и проигрышей. Вы сами выбираете место, рубите лес, добываете камень и глину, "
+		+ "обжигаете кирпич и варите стекло — и шаг за шагом превращаете дикий край в деревню, где вечером "
+		+ "загораются окна и факелы, а над крышами поднимается дым из труб."))
+	var gallery := _card(page, "weather_cloudy", "Деревни в разную погоду",
+		"Солнце и дождь, туман и снег, закаты и ночи сменяют друг друга сами — деревня каждый раз выглядит по-новому.", true)
+	var grid := GridContainer.new()
+	grid.columns = 1 if _touch and get_viewport_rect().size.x < get_viewport_rect().size.y else 2
+	grid.add_theme_constant_override("h_separation", 10)
+	grid.add_theme_constant_override("v_separation", 10)
+	grid.mouse_filter = Control.MOUSE_FILTER_PASS
+	gallery.add_child(grid)
+	for i in range(1, ABOUT_SHOTS.size()):
+		var cell := VBoxContainer.new()
+		cell.add_theme_constant_override("separation", 4)
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cell.mouse_filter = Control.MOUSE_FILTER_PASS
+		grid.add_child(cell)
+		_picture(cell, "res://assets/about/%s.jpg" % ABOUT_SHOTS[i][0])
+		var cap := UiStyle.label(ABOUT_SHOTS[i][1], 13 if _touch else 14, UiStyle.MUTED, 800)
+		cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		cell.add_child(cap)
+	var what := _card(page, "tool_build", "Что можно делать")
+	for line: String in [
+		"Строить больше 70 зданий: от шалаша и бани до замка, маяка и водяной мельницы.",
+		"Прокладывать дорожки и протягивать ограды любой формы — пальцем или мышью.",
+		"Ровнять землю, сеять траву и цветы, сажать сады и огороды.",
+		"Добывать лес, камень и руду, открывать сундуки в руинах и ремеслом делать доски, кирпич, стекло и металл.",
+		"Ставить метки на карте и путешествовать по огромному миру с озёрами, реками и горами.",
+		"Открыть одну из десяти готовых деревень — и сразу гулять по большому живому поселению.",
+	]:
+		what.add_child(_help_item(what.get_child_count(), line))
+	var why := _card(page, "marker_heart", "Почему это увлекательно",
+		GameData.GAME_NAME + " — игра, в которую приятно возвращаться: пять минут перед сном или целый вечер. "
+		+ "Каждое решение видно сразу — дом встаёт по брёвнышку, дорожка ложится за пальцем, а деревня растёт "
+		+ "вместе с вашими задумками. Отлично подходит, чтобы отдохнуть, помечтать и порадоваться результату — "
+		+ "одному или вместе с семьёй.", true)
+	why.add_child(_desc("Творческий режим снимает все ограничения — стройте сразу, без добычи."))
 
 
 func _build_help() -> void:

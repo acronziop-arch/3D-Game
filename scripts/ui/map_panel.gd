@@ -37,9 +37,14 @@ var _edit_color := COLORS[0]
 var _edit_icon := "flag"
 var _dragging := false
 var _moved := 0.0
+## Пальцы на карте: индекс → точка (в координатах карты).
 var _touches := {}
 var _pinch_dist := 0.0
 var _pinch_mid := Vector2.ZERO
+## Жест одним пальцем: сколько он прошёл и было ли в жесте больше одного пальца.
+var _touch_moved := 0.0
+var _touch_multi := false
+var _touch_start_msec := 0
 var _pan_tween: Tween
 
 
@@ -132,6 +137,8 @@ func _build_zoom() -> void:
 		b.icon = UiStyle.icon(step[0])
 		b.tooltip_text = step[1]
 		b.add_theme_constant_override("icon_max_width", 20)
+		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		b.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
 		b.custom_minimum_size = Vector2(44, 44)
 		b.add_theme_stylebox_override("normal", UiStyle.box(Color(UiStyle.BASE, 0.94), 14, 6, 2, UiStyle.BRAND, true))
 		b.pressed.connect(func() -> void: _zoom_smooth(step[2]))
@@ -261,6 +268,7 @@ func open() -> void:
 
 func close() -> void:
 	_close_editor()
+	_touches.clear()
 	UiStyle.fade(self, false, 0.18)
 	closed.emit()
 
@@ -271,22 +279,14 @@ func is_open() -> bool:
 
 # --- Листание и масштаб ----------------------------------------------------------------
 
+## Мышь: тянуть — листать, колесо — масштаб, щелчок — метка. Касания разбираются
+## отдельно (_touch_event): мышиные копии касаний здесь не нужны — из-за них карта
+## после щипка «перепрыгивала» к месту, где отпустили палец.
 func _on_map_input(event: InputEvent) -> void:
-	if event is InputEventScreenTouch:
-		var t := event as InputEventScreenTouch
-		if t.pressed:
-			_touches[t.index] = t.position
-		else:
-			_touches.erase(t.index)
-		if _touches.size() == 2:
-			_start_pinch()
-	elif event is InputEventScreenDrag:
-		var d := event as InputEventScreenDrag
-		_touches[d.index] = d.position
-		if _touches.size() >= 2:
-			# Два пальца: щипок меняет масштаб, сдвиг — листает. Нажатием это не считается.
-			_moved = 999.0
-			_pinch()
+	if event is InputEventScreenTouch or event is InputEventScreenDrag:
+		_touch_event(event)
+	elif Platform.is_touch_copy(event):
+		pass
 	elif event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT:
@@ -295,13 +295,13 @@ func _on_map_input(event: InputEvent) -> void:
 				_moved = 0.0
 			else:
 				_dragging = false
-				if _moved < 10.0 and _touches.size() <= 1:
+				if _moved < 10.0:
 					_tap(mb.position)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
 			_zoom_at(1.0 / 1.15, mb.position)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_zoom_at(1.15, mb.position)
-	elif event is InputEventMouseMotion and _dragging and _touches.size() <= 1:
+	elif event is InputEventMouseMotion and _dragging:
 		var mm := event as InputEventMouseMotion
 		_moved += mm.relative.length()
 		_stop_pan()
@@ -311,8 +311,58 @@ func _on_map_input(event: InputEvent) -> void:
 	map.accept_event()
 
 
+## Палец отпустили где угодно (даже не над картой) — он больше не участвует в жесте.
+## Иначе «забытый» палец превращал следующее касание в щипок вокруг старой точки.
+func _input(event: InputEvent) -> void:
+	if not visible or not (event is InputEventScreenTouch):
+		return
+	var t := event as InputEventScreenTouch
+	if not t.pressed and _touches.has(t.index) and not map.get_global_rect().has_point(t.position):
+		_touches.erase(t.index)
+		_touch_count_changed()
+
+
+## Один палец листает, два — щипок (масштаб и сдвиг), короткое касание — метка.
+func _touch_event(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		var t := event as InputEventScreenTouch
+		if t.pressed:
+			if _touches.is_empty():
+				_touch_moved = 0.0
+				_touch_multi = false
+				_touch_start_msec = Time.get_ticks_msec()
+			_touches[t.index] = t.position
+			_touch_multi = _touch_multi or _touches.size() > 1
+			_touch_count_changed()
+		elif _touches.has(t.index):
+			_touches.erase(t.index)
+			if _touches.is_empty() and not _touch_multi and _touch_moved < 12.0 \
+					and Time.get_ticks_msec() - _touch_start_msec < 600:
+				_tap(t.position)
+			_touch_count_changed()
+	else:
+		var d := event as InputEventScreenDrag
+		if not _touches.has(d.index):
+			return
+		var prev: Vector2 = _touches[d.index]
+		_touches[d.index] = d.position
+		_touch_moved += (d.position - prev).length()
+		_stop_pan()
+		if _touches.size() >= 2:
+			_pinch()
+		else:
+			map.center -= (d.position - prev) * map.view_meters / maxf(map.size.y, 1.0)
+
+
+## Сколько пальцев изменилось — щипок начинается заново от их нынешних точек (без скачка).
+func _touch_count_changed() -> void:
+	if _touches.size() >= 2:
+		_start_pinch()
+
+
 func _pinch_pair() -> Array[Vector2]:
 	var keys := _touches.keys()
+	keys.sort()
 	return [_touches[keys[0]], _touches[keys[1]]]
 
 
@@ -326,7 +376,6 @@ func _pinch() -> void:
 	var p := _pinch_pair()
 	var dist := maxf(p[0].distance_to(p[1]), 1.0)
 	var mid := (p[0] + p[1]) * 0.5
-	_stop_pan()
 	_zoom_at(_pinch_dist / dist, mid)
 	map.center -= (mid - _pinch_mid) * map.view_meters / maxf(map.size.y, 1.0)
 	_pinch_dist = dist

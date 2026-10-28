@@ -514,6 +514,16 @@ func set_crop(crop_id: String) -> void:
 		_crops.setup(crop, planted, GameData.BUILDINGS[id]["crops"], GameData.BUILDINGS[id].get("crop_top", 0.2))
 
 
+## Брызги воды (GameData "splash": [[точка, радиус кольца, высота подскока], ...]).
+func _add_splashes() -> void:
+	for sp: Array in GameData.BUILDINGS[id].get("splash", []):
+		var splash := Splash.new()
+		splash.position = sp[0]
+		splash.radius = sp[1]
+		splash.power = sp[2]
+		add_child(splash)
+
+
 func has_crops() -> bool:
 	return GameData.BUILDINGS[id].has("crops")
 
@@ -526,6 +536,9 @@ func _add_extras() -> void:
 		fire.position = f[0]
 		add_child(fire)
 		_fires.append([fire, f[0]])
+	# Брызги — только у достроенного: пока идёт стройка, воды ещё нет.
+	if is_complete:
+		_add_splashes()
 	if def.has("crops"):
 		if crop == "":
 			crop = "wheat"

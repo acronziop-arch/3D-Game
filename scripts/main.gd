@@ -95,6 +95,7 @@ func _ready() -> void:
 	hud.bind(interaction)
 	hud.menu_requested.connect(_to_menu)
 	hud.cache_clear_requested.connect(_clear_cache)
+	hud.village_requested.connect(_open_village)
 	_markers = Markers.new()
 	_markers.name = "Markers"
 	_markers.chunk_manager = chunk_manager
@@ -153,6 +154,10 @@ func _on_warmup_done() -> void:
 			if arg.begins_with("--seed="):
 				seed_value = int(arg.substr(7))
 		WorldState.create_world("Новый мир", seed_value)
+	# `-- --village=ID` — сразу готовая деревня (для проверок и снимков).
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--village="):
+			VillageBuilder.create(arg.substr(10))
 	if WorldState.world_id != "":
 		_start_world()
 		return
@@ -201,6 +206,8 @@ func _warmup_steps() -> Array[Callable]:
 		func() -> Variant: return ShaderWarmup.multimesh(GroundCover.grass_material(far), true, false, false),
 		func() -> Variant: return ShaderWarmup.multimesh(GroundCover.litter_material(far * 1.15), true, true, false),
 		func() -> Variant: return ShaderWarmup.quad(ModelLibrary.building_material("plank")),
+		func() -> Variant: return ShaderWarmup.quad(ModelLibrary.building_material("water"), false),
+		func() -> Variant: return ShaderWarmup.quad(ModelLibrary.building_material("pane"), false),
 		func() -> Variant: return ShaderWarmup.quad(Building.ghost_material(), false),
 		func() -> Variant: return ShaderWarmup.quad(_paths.material_for("path_dirt"), false),
 		func() -> Variant: return ShaderWarmup.multimesh(ModelLibrary.fish_material(), false, true, false),
@@ -419,6 +426,17 @@ func _clear_cache() -> void:
 		hud.show_message("Скачиваем свежую версию игры — потом она перезапустится")
 	else:
 		hud.show_message("Кэш очищен — шейдеры соберутся заново при следующем запуске")
+
+
+## Готовая деревня из настроек: текущий мир сохраняется, деревня открывается новым миром.
+func _open_village(id: String) -> void:
+	WorldState.camera_state = camera_rig.get_state()
+	WorldState.save_game()
+	WorldState.close_world()
+	if not VillageBuilder.create(id):
+		hud.show_message("Не получилось открыть деревню")
+		return
+	get_tree().reload_current_scene()
 
 
 ## «В главное меню»: сохраняем мир и показываем стартовый экран заново.

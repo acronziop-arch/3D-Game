@@ -42,8 +42,9 @@ var _view: TextureRect
 ## Руины и здания: слой перерисовывается несколько раз в секунду, а между перерисовками
 ## просто едет вместе с картой — значки не отстают и не прыгают.
 var _world_layer: Control
-## С каким центром слой нарисован в последний раз.
+## С каким центром и масштабом слой нарисован в последний раз.
 var _layer_center := Vector2.ZERO
+var _layer_meters := 300.0
 ## Поверх: метки, стрелка камеры и рамка — каждый кадр (это быстро).
 var _overlay: Control
 var _redraw_timer := 0.0
@@ -221,12 +222,17 @@ func _process(delta: float) -> void:
 	mat.set_shader_parameter("size", size)
 	mat.set_shader_parameter("radius", corner_radius)
 	_redraw_timer -= delta
-	if _redraw_timer <= 0.0:
+	# Масштаб меняют — слой рисуется заново каждый кадр, иначе значки отстают и прыгают.
+	if _redraw_timer <= 0.0 or absf(view_meters - _layer_meters) > view_meters * 0.002:
 		_redraw_timer = 0.1 if Platform.is_mobile() else 0.05
 		_layer_center = center
+		_layer_meters = view_meters
 		_world_layer.size = size
 		_world_layer.queue_redraw()
-	_world_layer.position = (_layer_center - center) * (size.y / view_meters)
+	# Между перерисовками слой едет и масштабируется вместе с картой.
+	var s := _layer_meters / maxf(view_meters, 0.001)
+	_world_layer.scale = Vector2(s, s)
+	_world_layer.position = size * 0.5 * (1.0 - s) + (_layer_center - center) * (size.y / view_meters)
 	_overlay.queue_redraw()
 
 
@@ -244,7 +250,7 @@ func map_to_world(p: Vector2) -> Vector2:
 ## Руины и здания — относительно _layer_center (слой потом сдвигается вслед за картой).
 func _draw_world() -> void:
 	var ci := _world_layer
-	var k := size.y / view_meters
+	var k := size.y / _layer_meters
 	# С запасом по краям: до следующей перерисовки слой успевает сдвинуться.
 	var rect := Rect2(Vector2.ZERO, size).grow(48.0)
 	var at := func(p: Vector2) -> Vector2: return size * 0.5 + (p - _layer_center) * k

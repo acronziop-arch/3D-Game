@@ -869,7 +869,7 @@ static func _sawmill(g: Geo, rng: RandomNumberGenerator) -> void:
 			g.rod("log", Vector3(x, BASE, z), Vector3(x, BASE + 3.0, z), 0.2, 0.18, 7, col("log", rng))
 	for z: float in [-1.8, 1.8]:
 		g.rod("log", Vector3(-3.1, BASE + 3.1, z), Vector3(3.1, BASE + 3.1, z), 0.17, 0.17, 7, col("log", rng))
-	gable_roof(g, rng, Vector3(0, BASE + 3.2, 0), w, d, 1.4, "log_dark", "boards", 0.45)
+	gable_roof(g, rng, Vector3(0, BASE + 3.2, 0), w, d, 1.4, "log_dark", "boards", 0.45, "log", "")
 	# Пильный стол и штабель брёвен.
 	g.box("log_dark", Vector3(0.2, BASE + 0.45, -0.3), Vector3(3.6, 0.9, 1.0), col("log_dark", rng), 0.05)
 	g.box("log", Vector3(0.2, BASE + 0.95, -0.3), Vector3(3.2, 0.12, 0.7), col("log", rng), 0.03)
@@ -899,7 +899,7 @@ static func _stonemason(g: Geo, rng: RandomNumberGenerator) -> void:
 		wall_body(g, rng, d - 0.8, 2.7, "plank")
 		g.pop()
 		g.rod("log", Vector3(side * (w * 0.5 - 0.2), BASE, d * 0.5 - 0.3), Vector3(side * (w * 0.5 - 0.2), BASE + 2.9, d * 0.5 - 0.3), 0.18, 0.16, 7, col("log", rng))
-	gable_roof(g, rng, Vector3(0, BASE + 2.75, 0), w, d, 1.5, "plank_dark", "shingle", 0.4)
+	gable_roof(g, rng, Vector3(0, BASE + 2.75, 0), w, d, 1.5, "plank_dark", "shingle", 0.4, "plank", "")
 	g.tag = "yard"
 	for i in 5:
 		var p := Vector3(rng.randf_range(-1.8, 1.8), 0.22 + (0.5 if i == 4 else 0.0), d * 0.5 + 0.6 + rng.randf_range(0.0, 0.5))
@@ -922,7 +922,7 @@ static func _kiln(g: Geo, rng: RandomNumberGenerator) -> void:
 	g.cylinder("clay", Vector3(0, BASE + 3.4, 0), 0.38, 0.3, 1.1, 8, col("clay", rng), true)
 	for z: float in [-1.3, 1.3]:
 		g.box("plank", Vector3(3.3, BASE + 1.2, z), Vector3(0.22, 2.4, 0.22), col("plank", rng), 0.03)
-	gable_roof(g, rng, Vector3(3.3, BASE + 2.4, 0), 2.8, 1.6, 0.7, "plank_dark", "shingle", 0.3)
+	gable_roof(g, rng, Vector3(3.3, BASE + 2.4, 0), 2.8, 1.6, 0.7, "plank_dark", "shingle", 0.3, "plank", "")
 	g.box("plank", Vector3(3.3, BASE + 0.35, 0), Vector3(1.4, 0.7, 2.2), col("plank", rng), 0.04)
 
 
@@ -935,12 +935,17 @@ static func _tannery(g: Geo, rng: RandomNumberGenerator) -> void:
 		{"side": "front", "u": -0.9, "w": 0.95, "h": 1.9, "type": "door"},
 		{"side": "front", "u": 1.2, "v": 0.9, "w": 0.8, "h": 0.8},
 	], {"frame": "log_dark", "door": "plank_dark", "corner_trim": "log", "canopy": true})
-	gable_roof(g, rng, Vector3(0, BASE + 2.5, 0), w, d, 1.5, "plank_dark", "boards", 0.45)
+	gable_roof(g, rng, Vector3(0, BASE + 2.5, 0), w, d, 1.5, "plank_dark", "boards", 0.45, "plank", "")
 	g.pop()
-	for x: float in [-1.4, 0.0, 1.4]:
-		g.cylinder("plank", Vector3(x, 0, 2.4), 0.55, 0.6, 0.9, 10, col("plank", rng))
-		g.cylinder("log_dark", Vector3(x, 0.15, 2.4), 0.58, 0.58, 0.08, 10, col("log_dark", rng))
-		g.cylinder("log_dark", Vector3(x, 0.7, 2.4), 0.62, 0.62, 0.08, 10, col("log_dark", rng))
+	# Чаны для кож — у правой стены, чтобы не загораживать дверь; стоят на земле и на склоне.
+	g.tag = "yard"
+	for z: float in [-1.5, -0.1]:
+		var at := Vector3(w * 0.5 + 0.85, 0, z)
+		g.cylinder("plank", at, 0.55, 0.6, 0.9, 10, col("plank", rng), true, true)
+		g.cylinder("log_dark", at + Vector3(0, 0.15, 0), 0.58, 0.58, 0.08, 10, col("log_dark", rng))
+		g.cylinder("log_dark", at + Vector3(0, 0.7, 0), 0.62, 0.62, 0.08, 10, col("log_dark", rng))
+		g.cylinder("water", at + Vector3(0, 0.84, 0), 0.5, 0.5, 0.02, 10, Color(0.42, 0.34, 0.22))
+	g.tag = ""
 
 
 static func _weaver(g: Geo, rng: RandomNumberGenerator) -> void:
@@ -1081,7 +1086,7 @@ static func _church(g: Geo, rng: RandomNumberGenerator) -> void:
 		{"side": "back", "u": 0.0, "v": 1.2, "w": 0.8, "h": 2.2},
 		{"side": "back", "u": 2.4, "v": 1.2, "w": 0.8, "h": 2.2},
 	], {"frame": "stone_block", "glass": true, "quoins": true, "stained": true})
-	gable_roof(g, rng, Vector3(0, BASE + 4.44, 0), nave, w, 2.6, "slate", "shingle", 0.45)
+	gable_roof(g, rng, Vector3(0, BASE + 4.44, 0), nave, w, 2.6, "slate", "shingle", 0.45, "stone_block", "")
 	g.pop()
 	# Апсида с медным куполом.
 	var apse := Vector3(0, BASE, zc - nave * 0.5)
@@ -2025,7 +2030,7 @@ static func _manor(g: Geo, rng: RandomNumberGenerator) -> void:
 		g.push(Transform3D(Basis.IDENTITY, at + Vector3(-0.3, -0.1, 0.42)))
 		window(g, rng, Rect2(0, 0.0, 0.6, 0.7), "stone_block", true, 0.15)
 		g.pop()
-		gable_roof(g, rng, at + Vector3(0, 0.78, -0.2), 1.2, 1.0, 0.55, "roof_tile", "tile", 0.15)
+		gable_roof(g, rng, at + Vector3(0, 0.78, -0.2), 1.0, 1.2, 0.55, "roof_tile", "tile", 0.15, "brick", "")
 	# Крыльцо с колоннами и ступенями.
 	var pz := d * 0.5 + 1.0
 	for x: float in [-1.1, 1.1]:
@@ -2033,7 +2038,7 @@ static func _manor(g: Geo, rng: RandomNumberGenerator) -> void:
 		g.box("stone_block", Vector3(x, BASE + 0.08, pz + 0.4), Vector3(0.42, 0.16, 0.42), col("stone_block", rng), 0.03)
 	g.box("stone_block", Vector3(0, BASE * 0.5, pz), Vector3(2.8, BASE + 0.02, 2.0), col("stone_block", rng), 0.04)
 	g.box("stone_block", Vector3(0, 0.08, pz + 1.15), Vector3(2.4, 0.16, 0.4), col("stone_block", rng).darkened(0.05), 0.03)
-	gable_roof(g, rng, Vector3(0, BASE + 2.4, pz - 0.1), 2.8, 2.2, 0.8, "roof_tile", "tile", 0.15)
+	gable_roof(g, rng, Vector3(0, BASE + 2.4, pz - 0.1), 2.8, 2.2, 0.8, "roof_tile", "tile", 0.15, "plank", "")
 	for x: float in [-2.6, 2.6]:
 		_chimney(g, rng, Vector3(x, roof_y, -0.9), 0.6, 2.8, "brick")
 
@@ -2406,7 +2411,7 @@ static func _library(g: Geo, rng: RandomNumberGenerator) -> void:
 			Vector2(0.26, 2.62), Vector2(0.28, 2.78), Vector2(0.0, 2.78)], 10, rng, 0.02)
 	var py := BASE + 2.78
 	g.box("stone_block", Vector3(0, py + 0.12, d * 0.5 + 0.55), Vector3(3.0, 0.24, 1.3), col("stone_block", rng), 0.04)
-	gable_roof(g, rng, Vector3(0, py + 0.24, d * 0.5 + 0.55), 1.3, 3.0, 0.75, "slate", "shingle", 0.15)
+	gable_roof(g, rng, Vector3(0, py + 0.24, d * 0.5 + 0.55), 1.3, 3.0, 0.75, "slate", "shingle", 0.15, "stone_block", "")
 	# Башенка-читальня у заднего угла.
 	var tower := Vector3(w * 0.5 - 0.3, BASE, -d * 0.5 + 0.3)
 	round_wall(g, rng, tower, 1.25, 1.2, 5.6, "stone_block", [
@@ -2597,62 +2602,138 @@ static func _fishing_hut(g: Geo, rng: RandomNumberGenerator) -> void:
 	g.tag = ""
 
 
+## Брус квадратного сечения t от точки a до точки b.
+static func _beam(g: Geo, mat: String, a: Vector3, b: Vector3, t: float, color: Color) -> void:
+	var dir := b - a
+	var length := dir.length()
+	if length < 0.001:
+		return
+	var y := dir / length
+	var x := y.cross(Vector3.UP) if absf(y.y) < 0.99 else Vector3.RIGHT
+	x = x.normalized()
+	var z := x.cross(y)
+	g.box(mat, (a + b) * 0.5, Vector3(t, length, t), color, 0.01, Basis(x, y, z))
+
+
 static func _greenhouse(g: Geo, rng: RandomNumberGenerator) -> void:
 	var w := 4.4
 	var d := 3.0
-	var wall_h := 1.9
-	var curb := 0.35
-	g.box("stone", Vector3(0, (UNDER + curb) * 0.5, 0), Vector3(w + 0.2, curb - UNDER, d + 0.2), col("stone", rng).darkened(0.3))
+	var y0 := 0.35
+	var y1 := y0 + 1.9
+	var ridge := y1 + 1.2
+	var t := 0.09
+	var hx := w * 0.5
+	var hz := d * 0.5
+	# Цоколь: фундамент под землёй и каменный бортик по периметру (без нахлёстов).
+	g.box("stone", Vector3(0, (UNDER - 0.05) * 0.5, 0), Vector3(w + 0.3, -UNDER - 0.05, d + 0.3), col("stone", rng).darkened(0.3))
+	var curb := 0.26
 	for s: float in [-1.0, 1.0]:
-		g.box("stone", Vector3(0, curb * 0.5, s * (d * 0.5 + 0.02)), Vector3(w + 0.24, curb, 0.26), col("stone", rng), 0.05)
-		g.box("stone", Vector3(s * (w * 0.5 + 0.02), curb * 0.5, 0), Vector3(0.26, curb, d + 0.24), col("stone", rng), 0.05)
+		g.box("stone", Vector3(0, y0 * 0.5 - 0.05, s * hz), Vector3(w + curb, y0 + 0.1, curb), col("stone", rng), 0.04)
+		g.box("stone", Vector3(s * hx, y0 * 0.5 - 0.05, 0), Vector3(curb, y0 + 0.1, d - curb), col("stone", rng), 0.04)
+	# Пол: утоптанная земля и дорожка из плит посередине.
+	g.box("soil", Vector3(0, y0 - 0.06, 0), Vector3(w - curb, 0.08, d - curb), col("soil", rng).darkened(0.1))
+	for k in 7:
+		var x := -hx + 0.55 + k * 0.56
+		g.box("stone", Vector3(x, y0 - 0.005, 0), Vector3(0.5, 0.05, 0.6), col("stone", rng, 0.1).lightened(0.1), 0.02,
+			Basis(Vector3.UP, rng.randf_range(-0.05, 0.05)))
 	var frame := col("plank_dark", rng)
 	var bays := 5
-	var y0 := curb
-	var y1 := curb + wall_h
-	var rise := 1.2
-	# Стойки и стёкла длинных стен.
+	# Каркас: стойки, обвязка снизу и сверху, средний ригель — все узлы сходятся в одних точках.
 	for s: float in [-1.0, 1.0]:
-		var z := s * d * 0.5
+		var z := s * hz
 		for i in bays + 1:
-			var x := -w * 0.5 + i * w / bays
-			g.box("plank_dark", Vector3(x, (y0 + y1) * 0.5, z), Vector3(0.09, wall_h, 0.09), frame, 0.01)
-		g.box("plank_dark", Vector3(0, y1, z), Vector3(w + 0.1, 0.1, 0.1), frame, 0.01)
-		g.box("pane", Vector3(0, (y0 + y1) * 0.5, z), Vector3(w - 0.05, wall_h - 0.06, 0.03), col("pane", rng, 0.02).lightened(0.25))
-		g.box("plank_dark", Vector3(0, y0 + wall_h * 0.45, z), Vector3(w, 0.05, 0.07), frame, 0.0)
-	# Торцы: стекло до конька, спереди — дверь.
+			var x := -hx + i * w / bays
+			_beam(g, "plank_dark", Vector3(x, y0, z), Vector3(x, y1, z), t, frame)
+		_beam(g, "plank_dark", Vector3(-hx - t * 0.5, y0 + t * 0.5, z), Vector3(hx + t * 0.5, y0 + t * 0.5, z), t, frame)
+		_beam(g, "plank_dark", Vector3(-hx - t * 0.5, y1, z), Vector3(hx + t * 0.5, y1, z), t, frame)
+		_beam(g, "plank_dark", Vector3(-hx, y0 + 0.85, z), Vector3(hx, y0 + 0.85, z), t * 0.7, frame)
 	for s: float in [-1.0, 1.0]:
-		var x := s * w * 0.5
-		for z: float in [-d * 0.5, -d * 0.25, 0.0, d * 0.25, d * 0.5]:
-			var top := y1 + rise * (1.0 - absf(z) / (d * 0.5))
-			g.box("plank_dark", Vector3(x, (y0 + top) * 0.5, z), Vector3(0.09, top - y0, 0.09), frame, 0.01)
-		g.box("pane", Vector3(x, (y0 + y1) * 0.5, 0), Vector3(0.03, wall_h - 0.06, d - 0.05), col("pane", rng, 0.02).lightened(0.25))
-		g.tri("pane", Vector3(x, y1, -d * 0.5), Vector3(x, y1, d * 0.5), Vector3(x, y1 + rise, 0), col("pane", rng, 0.02).lightened(0.25), Vector3(s, 0, 0))
-		g.tri("pane", Vector3(x, y1, -d * 0.5), Vector3(x, y1, d * 0.5), Vector3(x, y1 + rise, 0), col("pane", rng, 0.02).lightened(0.25), Vector3(-s, 0, 0))
-	# Дверь в правом торце.
-	g.box("plank_dark", Vector3(w * 0.5 + 0.05, y0 + 0.85, 0), Vector3(0.06, 1.7, 0.85), frame.darkened(0.1), 0.01)
-	g.box("pane", Vector3(w * 0.5 + 0.09, y0 + 1.05, 0), Vector3(0.02, 1.0, 0.6), col("pane", rng, 0.02).lightened(0.3))
-	# Стеклянная крыша со стропилами.
-	var half := d * 0.5 + 0.12
-	var slope := atan2(rise, d * 0.5)
-	var span := Vector2(half, rise + 0.12 * rise / (d * 0.5)).length()
+		var x := s * hx
+		_beam(g, "plank_dark", Vector3(x, y0 + t * 0.5, -hz), Vector3(x, y0 + t * 0.5, hz), t, frame)
+		_beam(g, "plank_dark", Vector3(x, y1, -hz), Vector3(x, y1, hz), t, frame)
+		# Стойки торца — до ската крыши.
+		for z: float in [-hz * 0.5, hz * 0.5]:
+			if s > 0.0:
+				continue
+			_beam(g, "plank_dark", Vector3(x, y0, z), Vector3(x, y1 + (ridge - y1) * (1.0 - absf(z) / hz), z), t, frame)
+		_beam(g, "plank_dark", Vector3(x, y0, 0.0) if s < 0.0 else Vector3(x, y0 + 1.9, 0.0), Vector3(x, ridge, 0.0), t, frame)
+	# Стропила от обвязки к коньку на каждой стойке, конёк.
+	for i in bays + 1:
+		var x := -hx + i * w / bays
+		for s: float in [-1.0, 1.0]:
+			_beam(g, "plank_dark", Vector3(x, y1, s * hz), Vector3(x, ridge, 0.0), t, frame)
+	_beam(g, "plank_dark", Vector3(-hx - t, ridge, 0), Vector3(hx + t, ridge, 0), t * 1.2, frame)
+	# Стёкла — прозрачные, чуть утоплены в каркас.
+	var glass := col("pane", rng, 0.02)
 	for s: float in [-1.0, 1.0]:
-		var b := Basis(Vector3.RIGHT, s * slope)
-		var c := Vector3(0, y1 + rise * 0.5 - 0.04, s * d * 0.25)
-		g.box("pane", c, Vector3(w + 0.1, 0.03, span), col("pane", rng, 0.02).lightened(0.25), 0.0, b)
-		for i in bays + 1:
-			g.box("plank_dark", c + Vector3(-w * 0.5 + i * w / bays, 0.04, 0), Vector3(0.07, 0.07, span), frame, 0.0, b)
-	g.box("plank_dark", Vector3(0, y1 + rise + 0.02, 0), Vector3(w + 0.2, 0.12, 0.14), frame, 0.02)
-	# Внутри — две гряды с зеленью и стол с рассадой.
-	for z: float in [-0.75, 0.75]:
-		g.box("plank", Vector3(-0.4, curb + 0.18, z), Vector3(3.2, 0.36, 0.8), col("plank", rng), 0.02)
-		g.box("soil", Vector3(-0.4, curb + 0.37, z), Vector3(3.1, 0.04, 0.72), col("soil", rng))
+		var z := s * hz
+		g.box("pane", Vector3(0, (y0 + y1) * 0.5, z), Vector3(w, y1 - y0, 0.02), glass)
+		var slope_len := Vector2(hz, ridge - y1).length()
+		var b := Basis(Vector3.RIGHT, s * atan2(ridge - y1, hz))
+		g.box("pane", Vector3(0, (y1 + ridge) * 0.5, s * hz * 0.5), Vector3(w, 0.02, slope_len), glass, 0.0, b)
+	for s: float in [-1.0, 1.0]:
+		var x := s * hx
+		if s < 0.0:
+			g.box("pane", Vector3(x, (y0 + y1) * 0.5, 0), Vector3(0.02, y1 - y0, d), glass)
+		else:
+			for side: float in [-1.0, 1.0]:
+				g.box("pane", Vector3(x, (y0 + y1) * 0.5, side * (hz + 0.45) * 0.5), Vector3(0.02, y1 - y0, hz - 0.45), glass)
+		g.tri("pane", Vector3(x, y1, -hz), Vector3(x, y1, hz), Vector3(x, ridge, 0), glass, Vector3(s, 0, 0))
+	# Дверь в правом торце: рама, стекло, ручка; над ней — перемычка.
+	var door := Rect2(-0.45, y0, 0.9, 1.9)
+	for z: float in [door.position.x, door.end.x]:
+		_beam(g, "plank_dark", Vector3(hx, y0, z), Vector3(hx, y0 + 1.9, z), t, frame)
+	_beam(g, "plank_dark", Vector3(hx + 0.02, y0 + 0.04, -0.4), Vector3(hx + 0.02, y0 + 0.04, 0.4), 0.06, frame)
+	_beam(g, "plank_dark", Vector3(hx + 0.02, y0 + 1.86, -0.4), Vector3(hx + 0.02, y0 + 1.86, 0.4), 0.06, frame)
+	_beam(g, "plank_dark", Vector3(hx + 0.02, y0 + 0.8, -0.4), Vector3(hx + 0.02, y0 + 0.8, 0.4), 0.05, frame)
+	g.box("pane", Vector3(hx + 0.02, y0 + 0.95, 0), Vector3(0.02, 1.85, 0.8), glass)
+	g.box("plank", Vector3(hx + 0.08, y0 + 0.95, 0.3), Vector3(0.05, 0.05, 0.12), col("plank", rng).darkened(0.3), 0.01)
+	# Внутри: две гряды в дощатых коробах, вдоль них — помидоры на кольях, капуста и рассада.
+	for s: float in [-1.0, 1.0]:
+		var z := s * 0.95
+		g.box("plank", Vector3(-0.15, y0 + 0.2, z), Vector3(3.7, 0.4, 0.7), col("plank", rng), 0.02)
+		g.box("soil", Vector3(-0.15, y0 + 0.41, z), Vector3(3.6, 0.04, 0.62), col("soil", rng).darkened(0.05))
 		for k in 6:
-			var at := Vector3(-1.75 + k * 0.54, curb + 0.42, z + rng.randf_range(-0.12, 0.12))
-			var leaf := Color(0.34, 0.6, 0.22).lightened(rng.randf_range(-0.1, 0.15))
-			g.blob("crop", at + Vector3(0, 0.14, 0), Vector3(0.2, 0.18, 0.2), leaf, rng, 1, 0.25, 0.2)
-			if k % 2 == 0:
-				g.blob("crop", at + Vector3(0.08, 0.2, 0.1), Vector3.ONE * 0.06, Color(0.86, 0.22, 0.14), rng, 0, 0.05, 0.1)
+			var at := Vector3(-1.75 + k * 0.62, y0 + 0.43, z)
+			if s < 0.0:
+				# Помидоры: колышек, куст и красные плоды.
+				g.rod("plank", at, at + Vector3(0, 1.1, 0), 0.02, 0.02, 4, col("plank", rng), false)
+				for j in 4:
+					var leaf := Color(0.3, 0.55, 0.2).lightened(rng.randf_range(-0.08, 0.12))
+					g.blob("crop", at + Vector3(rng.randf_range(-0.12, 0.12), 0.25 + j * 0.22, rng.randf_range(-0.1, 0.1)),
+						Vector3(0.16, 0.13, 0.16), leaf, rng, 1, 0.3, 0.2)
+				for j in 3:
+					g.blob("crop", at + Vector3(rng.randf_range(-0.14, 0.14), 0.3 + rng.randf_range(0.0, 0.6), rng.randf_range(-0.14, 0.14)),
+						Vector3.ONE * 0.06, Color(0.86, 0.18, 0.12).lightened(rng.randf_range(0.0, 0.1)), rng, 0, 0.05, 0.1)
+			elif k % 2 == 0:
+				# Капуста — тугие кочаны.
+				g.blob("crop", at + Vector3(0, 0.13, 0), Vector3(0.2, 0.15, 0.2), Color(0.55, 0.72, 0.4), rng, 1, 0.12, 0.2)
+				g.blob("crop", at + Vector3(0, 0.08, 0), Vector3(0.27, 0.07, 0.27), Color(0.38, 0.6, 0.3), rng, 1, 0.25, 0.2)
+			else:
+				# Рассада и цветы.
+				for j in 3:
+					var p := at + Vector3(rng.randf_range(-0.2, 0.2), 0.0, rng.randf_range(-0.2, 0.2))
+					g.rod("crop", p, p + Vector3(0, 0.2, 0), 0.012, 0.012, 3, Color(0.35, 0.6, 0.25), false)
+					var petal := [Color(0.95, 0.8, 0.3), Color(0.92, 0.45, 0.6), Color(0.6, 0.45, 0.9)][j] as Color
+					g.blob("crop", p + Vector3(0, 0.22, 0), Vector3(0.06, 0.04, 0.06), petal, rng, 0, 0.1, 0.1)
+	# Стол с горшками у дальнего торца и подвесные кашпо под коньком.
+	var tx := -hx + 0.42
+	g.box("plank", Vector3(tx, y0 + 0.78, 0), Vector3(0.55, 0.06, 1.1), col("plank", rng), 0.02)
+	for z: float in [-0.45, 0.45]:
+		_beam(g, "plank_dark", Vector3(tx, y0, z), Vector3(tx, y0 + 0.75, z), 0.06, frame)
+	for k in 4:
+		var at := Vector3(tx + rng.randf_range(-0.12, 0.12), y0 + 0.81, -0.4 + k * 0.27)
+		lathe(g, "soil", at, [Vector2(0.06, 0.0), Vector2(0.09, 0.16), Vector2(0.1, 0.17), Vector2(0.0, 0.17)], 8, rng, 0.05)
+		g.blob("crop", at + Vector3(0, 0.23, 0), Vector3(0.1, 0.09, 0.1), Color(0.32, 0.58, 0.24).lightened(rng.randf_range(-0.1, 0.1)),
+			rng, 0, 0.25, 0.2)
+	for x: float in [-1.0, 0.6]:
+		var at := Vector3(x, ridge - 0.65, 0)
+		g.rod("plank", at + Vector3(0, 0.15, 0), Vector3(x, ridge, 0), 0.01, 0.01, 3, col("plank", rng), false)
+		lathe(g, "soil", at, [Vector2(0.0, 0.0), Vector2(0.12, 0.02), Vector2(0.14, 0.15), Vector2(0.0, 0.15)], 8, rng, 0.05)
+		for j in 4:
+			var a := TAU * j / 4.0
+			g.blob("crop", at + Vector3(cos(a) * 0.12, -0.08 - (j % 2) * 0.1, sin(a) * 0.12), Vector3(0.07, 0.14, 0.07),
+				Color(0.36, 0.62, 0.26), rng, 0, 0.2, 0.2)
 
 
 static func _gazebo(g: Geo, rng: RandomNumberGenerator) -> void:

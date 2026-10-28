@@ -14,6 +14,8 @@ signal menu_requested
 signal markers_changed
 ## «Очистить кэш» в настройках.
 signal cache_clear_requested
+## Открыть готовую деревню (VillageBuilder) — новым миром.
+signal village_requested(id: String)
 
 const LOADING_TIPS := [
 	"Срубите пару деревьев и постройте лесопилку — из брёвен выйдут доски.",
@@ -158,6 +160,7 @@ func _ready() -> void:
 		show_message("Мир сохранён" if WorldState.save_game() else "Не удалось сохранить"))
 	_settings.menu_requested.connect(func() -> void: menu_requested.emit())
 	_settings.cache_clear_requested.connect(func() -> void: cache_clear_requested.emit())
+	_settings.village_requested.connect(func(id: String) -> void: village_requested.emit(id))
 	# Время, сезон и погода из настроек меняются сразу — за косой чёрной полосой.
 	_wipe = WorldWipe.new()
 	add_child(_wipe)
