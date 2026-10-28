@@ -4,3 +4,4 @@
 *.tmp
 # сборки
 /build/
+__pycache__/

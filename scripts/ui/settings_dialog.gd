@@ -23,12 +23,12 @@ const BADGE := Color("#EADFD0")
 const NAV_BG := Color("#EFE7DC")
 const ACCENT := Color("#E8643C")
 const SECTIONS := [
-	["game", "Игра", "cat_housing"],
+	["game", "Игра", "icon_game"],
 	["world", "Мир", "season_summer"],
 	["graphics", "Графика", "lantern"],
-	["villages", "Деревни", "marker_home"],
+	["villages", "Деревни", "icon_village"],
 	["help", "Управление", "help"],
-	["about", "О проекте", "marker_star"],
+	["about", "О проекте", "icon_about"],
 ]
 ## Снимки для «О проекте»: файл в assets/about и подпись.
 const ABOUT_SHOTS := [
@@ -403,7 +403,7 @@ func _slider(parent: Control, key: String, title: String, desc: String, lo: floa
 # --- Разделы ---------------------------------------------------------------------------------------
 
 func _build_game(page: VBoxContainer) -> void:
-	var mode := _card(page, "marker_star", "Режим игры", "Обычный — добывайте, стройте и развивайтесь. Творческий — всё сразу и без ограничений.")
+	var mode := _card(page, "icon_modes", "Режим игры", "Обычный — добывайте, стройте и развивайтесь. Творческий — всё сразу и без ограничений.")
 	_chips(mode, "game_mode", [["normal", "Обычный", "tool_harvest"], ["creative", "Творческий", "cat_special"]], 2)
 	var land := _card(page, "tool_flatten", "Земля", "", true)
 	_toggle_row(land, "clear_flattened", "Пустая выровненная земля",
@@ -547,7 +547,7 @@ func _build_threads(page: VBoxContainer) -> void:
 
 ## Справка: тема, скриншот с номерами и пояснения к номерам (для касаний и для мыши).
 const HELP := [
-	{"title": "Экран игры", "icon": "cat_housing", "image": "hud",
+	{"title": "Экран игры", "icon": "icon_village", "image": "hud",
 		"touch": [
 			"[b]Ресурсы[/b] — сколько у вас брёвен, досок, камня. Кнопка «…» — все ресурсы.",
 			"[b]Мини-карта[/b] — где вы и что уже разведано. Нажмите — откроется большая карта.",
@@ -593,7 +593,7 @@ const HELP := [
 			"{2} или «Стройка» — меню зданий; ещё раз — закрыть.",
 			"[b]Разделы[/b]: мастерские, жильё, особые, оборона, на воде, двор, сад и декор.",
 			"[b]Карточка[/b]: цена и время. Недоступное — сразу видно."]},
-	{"title": "Стройка: куда поставить", "icon": "cat_housing", "image": "build_place",
+	{"title": "Стройка: куда поставить", "icon": "icon_buildings", "image": "build_place",
 		"touch": [
 			"[b]Тяните здание пальцем[/b] или нажмите на землю, куда поставить.",
 			"[b]«Повернуть»[/b]: нажмите — повернуть, удерживайте — плавно крутить.",
@@ -663,12 +663,12 @@ func _picture(parent: Control, path: String) -> Control:
 
 ## «Деревни»: готовые большие деревни — каждая открывается новым миром.
 func _build_villages(page: VBoxContainer) -> void:
-	_card(page, "marker_home", "Готовые деревни",
+	_card(page, "icon_village", "Готовые деревни",
 		"Десять больших деревень на красивых местах: улицы, площадь, дома, мастерские, огороды и огни по вечерам. "
 		+ "Деревня откроется новым миром — нынешний мир сохранится и останется в главном меню.")
 	var alt := true
 	for p: Dictionary in VillageBuilder.PRESETS:
-		var card := _card(page, "marker_home", p["name"], p["desc"], alt)
+		var card := _card(page, "preset_" + p["id"], p["name"], p["desc"], alt)
 		alt = not alt
 		_picture(card, "res://assets/villages/%s.jpg" % p["id"])
 		var go := Button.new()

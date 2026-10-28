@@ -1254,7 +1254,7 @@ func _update_actions() -> void:
 				_action_button("check", "Поставить").pressed.connect(interaction.confirm_build)
 			elif bs.selected_id != "":
 				if _touch:
-					_action_button("cat_housing", "Здания").pressed.connect(func() -> void: _set_drawer(not _drawer_open))
+					_action_button("icon_buildings", "Здания").pressed.connect(func() -> void: _set_drawer(not _drawer_open))
 				if GameData.BUILDINGS[bs.selected_id].has("crops"):
 					_state_button(func() -> Array:
 						var c: Dictionary = CropPatch.CROPS[bs.crop_choice]

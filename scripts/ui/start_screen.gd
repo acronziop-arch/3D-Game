@@ -363,7 +363,7 @@ func _preview(id: String) -> Control:
 	badge.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	badge.add_theme_stylebox_override("panel", UiStyle.box(Minimap.PAPER, int(side * 0.2), 8))
-	badge.add_child(UiStyle.icon_rect("marker_home", int(side * 0.6)))
+	badge.add_child(UiStyle.icon_rect("icon_village", int(side * 0.6)))
 	return badge
 
 

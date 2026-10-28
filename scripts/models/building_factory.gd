@@ -1935,7 +1935,8 @@ static func _storehouse(g: Geo, rng: RandomNumberGenerator) -> void:
 	], {"frame": "log", "door": "plank_dark", "corner_trim": "log"})
 	gable_roof(g, rng, Vector3(0, floor_y + 2.66, 0), w, d, 1.7, "plank_dark", "boards", 0.5, "plank_v", "")
 	# Пандус к воротам и ящики.
-	var ramp := Basis(Vector3.RIGHT, -atan2(floor_y + 0.1, 1.6))
+	# Пандус спускается от ворот к земле (вдоль +Z, наружу).
+	var ramp := Basis(Vector3.RIGHT, atan2(floor_y + 0.1, 1.6))
 	for i in 6:
 		g.box("plank", Vector3(-0.9 + (i + 0.5) * 0.3, (floor_y + 0.1) * 0.5, d * 0.5 + 0.95), Vector3(0.28, 0.06, 1.85),
 			col("plank", rng, 0.08), 0.01, ramp)
@@ -2485,7 +2486,7 @@ static func _chicken_coop(g: Geo, rng: RandomNumberGenerator) -> void:
 	# Лесенка с перекладинами к дверце.
 	var r0 := Vector3(0.6, floor_y, cz + d * 0.5)
 	var r1 := Vector3(0.6, 0.0, cz + d * 0.5 + 1.0)
-	var rb := Basis(Vector3.RIGHT, -atan2(floor_y, 1.0))
+	var rb := Basis(Vector3.RIGHT, atan2(floor_y, 1.0))
 	g.box("plank", (r0 + r1) * 0.5 + Vector3(0, 0.02, 0), Vector3(0.45, 0.04, r0.distance_to(r1)), col("plank", rng), 0.01, rb)
 	for k in 4:
 		g.box("plank_dark", r0.lerp(r1, (k + 0.5) / 4.0) + Vector3(0, 0.05, 0), Vector3(0.42, 0.03, 0.04), col("plank_dark", rng), 0.0, rb)
