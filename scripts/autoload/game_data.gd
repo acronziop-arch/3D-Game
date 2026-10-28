@@ -51,6 +51,8 @@ const MATERIALS := {
 	"brick": {"color": Color(0.68, 0.34, 0.25), "res": "brick"},
 	"roof_tile": {"color": Color(0.64, 0.26, 0.18), "res": "brick"},
 	"glass": {"color": Color(0.38, 0.58, 0.85), "res": "glass"},
+	# Стекло теплицы: прозрачное, но ночью не светится, как окна домов.
+	"pane": {"color": Color(0.38, 0.58, 0.85), "res": "glass"},
 	"iron": {"color": Color(0.26, 0.27, 0.3), "res": "iron_ingot"},
 	"copper": {"color": Color(0.36, 0.66, 0.58), "res": "copper_ingot"},
 	"cloth": {"color": Color(0.95, 0.9, 0.8), "res": "cloth"},

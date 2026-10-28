@@ -2618,7 +2618,7 @@ static func _greenhouse(g: Geo, rng: RandomNumberGenerator) -> void:
 			var x := -w * 0.5 + i * w / bays
 			g.box("plank_dark", Vector3(x, (y0 + y1) * 0.5, z), Vector3(0.09, wall_h, 0.09), frame, 0.01)
 		g.box("plank_dark", Vector3(0, y1, z), Vector3(w + 0.1, 0.1, 0.1), frame, 0.01)
-		g.box("glass", Vector3(0, (y0 + y1) * 0.5, z), Vector3(w - 0.05, wall_h - 0.06, 0.03), col("glass", rng, 0.02).lightened(0.25))
+		g.box("pane", Vector3(0, (y0 + y1) * 0.5, z), Vector3(w - 0.05, wall_h - 0.06, 0.03), col("pane", rng, 0.02).lightened(0.25))
 		g.box("plank_dark", Vector3(0, y0 + wall_h * 0.45, z), Vector3(w, 0.05, 0.07), frame, 0.0)
 	# Торцы: стекло до конька, спереди — дверь.
 	for s: float in [-1.0, 1.0]:
@@ -2626,12 +2626,12 @@ static func _greenhouse(g: Geo, rng: RandomNumberGenerator) -> void:
 		for z: float in [-d * 0.5, -d * 0.25, 0.0, d * 0.25, d * 0.5]:
 			var top := y1 + rise * (1.0 - absf(z) / (d * 0.5))
 			g.box("plank_dark", Vector3(x, (y0 + top) * 0.5, z), Vector3(0.09, top - y0, 0.09), frame, 0.01)
-		g.box("glass", Vector3(x, (y0 + y1) * 0.5, 0), Vector3(0.03, wall_h - 0.06, d - 0.05), col("glass", rng, 0.02).lightened(0.25))
-		g.tri("glass", Vector3(x, y1, -d * 0.5), Vector3(x, y1, d * 0.5), Vector3(x, y1 + rise, 0), col("glass", rng, 0.02).lightened(0.25), Vector3(s, 0, 0))
-		g.tri("glass", Vector3(x, y1, -d * 0.5), Vector3(x, y1, d * 0.5), Vector3(x, y1 + rise, 0), col("glass", rng, 0.02).lightened(0.25), Vector3(-s, 0, 0))
+		g.box("pane", Vector3(x, (y0 + y1) * 0.5, 0), Vector3(0.03, wall_h - 0.06, d - 0.05), col("pane", rng, 0.02).lightened(0.25))
+		g.tri("pane", Vector3(x, y1, -d * 0.5), Vector3(x, y1, d * 0.5), Vector3(x, y1 + rise, 0), col("pane", rng, 0.02).lightened(0.25), Vector3(s, 0, 0))
+		g.tri("pane", Vector3(x, y1, -d * 0.5), Vector3(x, y1, d * 0.5), Vector3(x, y1 + rise, 0), col("pane", rng, 0.02).lightened(0.25), Vector3(-s, 0, 0))
 	# Дверь в правом торце.
 	g.box("plank_dark", Vector3(w * 0.5 + 0.05, y0 + 0.85, 0), Vector3(0.06, 1.7, 0.85), frame.darkened(0.1), 0.01)
-	g.box("glass", Vector3(w * 0.5 + 0.09, y0 + 1.05, 0), Vector3(0.02, 1.0, 0.6), col("glass", rng, 0.02).lightened(0.3))
+	g.box("pane", Vector3(w * 0.5 + 0.09, y0 + 1.05, 0), Vector3(0.02, 1.0, 0.6), col("pane", rng, 0.02).lightened(0.3))
 	# Стеклянная крыша со стропилами.
 	var half := d * 0.5 + 0.12
 	var slope := atan2(rise, d * 0.5)
@@ -2639,7 +2639,7 @@ static func _greenhouse(g: Geo, rng: RandomNumberGenerator) -> void:
 	for s: float in [-1.0, 1.0]:
 		var b := Basis(Vector3.RIGHT, s * slope)
 		var c := Vector3(0, y1 + rise * 0.5 - 0.04, s * d * 0.25)
-		g.box("glass", c, Vector3(w + 0.1, 0.03, span), col("glass", rng, 0.02).lightened(0.25), 0.0, b)
+		g.box("pane", c, Vector3(w + 0.1, 0.03, span), col("pane", rng, 0.02).lightened(0.25), 0.0, b)
 		for i in bays + 1:
 			g.box("plank_dark", c + Vector3(-w * 0.5 + i * w / bays, 0.04, 0), Vector3(0.07, 0.07, span), frame, 0.0, b)
 	g.box("plank_dark", Vector3(0, y1 + rise + 0.02, 0), Vector3(w + 0.2, 0.12, 0.14), frame, 0.02)

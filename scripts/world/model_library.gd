@@ -7,6 +7,7 @@ extends RefCounted
 const BUILDING_MATERIALS := {
 	"glass": {"roughness_base": 0.06, "specular_base": 0.8, "porosity": 0.0, "glass": 1.0, "interior": 1.0,
 		"emission_color": Color(1.0, 0.72, 0.38), "emission_night": 1.8},
+	"pane": {"roughness_base": 0.06, "specular_base": 0.8, "porosity": 0.0, "glass": 1.0},
 	"opening": {"roughness_base": 0.95, "specular_base": 0.1, "porosity": 0.0, "interior": 1.0,
 		"emission_color": Color(1.0, 0.66, 0.32), "emission_night": 0.9},
 	"wax": {"roughness_base": 0.6, "emission_color": Color(1.0, 0.78, 0.45), "emission_day": 0.35, "emission_night": 2.4},
