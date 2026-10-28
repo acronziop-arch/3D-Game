@@ -233,7 +233,7 @@ func _fit() -> void:
 		row.vertical = portrait
 	var chrome := (44.0 + 10.0 + 40.0) if _touch else (40.0 + 14.0 + 52.0)
 	if portrait:
-		chrome += 58.0 + 16.0 + 12.0
+		chrome += 66.0 + 16.0 + 12.0
 	var room: float = vp.y - m["top"] - m["bottom"] - chrome
 	_scroll.custom_minimum_size.y = maxf(room, 160.0)
 
