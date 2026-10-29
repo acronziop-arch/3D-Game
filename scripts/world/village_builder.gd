@@ -12,7 +12,7 @@ const PRESETS: Array[Dictionary] = [
 		"plaza": "well", "landmarks": ["tavern", "market", "chapel"],
 		"houses": {"wood_house": 12, "hut": 6, "bathhouse": 2},
 		"workshops": ["sawmill", "smithy", "storehouse"],
-		"shore": {"lighthouse": 1, "platform": 3, "fishing_hut": 4},
+		"shore": {"lighthouse": 1, "platform": 3, "fishing_hut": 4, "fish_store": 1},
 		"farm": {"vegetable_garden": 3, "chicken_coop": 1, "beehives": 1},
 		"orchard": 8, "ring": "", "towers": 0},
 	{"id": "mill", "name": "Мельница у реки", "seed": 52221, "site": "river", "path": "dirt",
@@ -393,6 +393,9 @@ func _free(id: String, pos: Vector2, yaw: float) -> bool:
 	var mode: String = GameData.BUILDINGS[id].get("place", "land")
 	var core := footprint(id, pos, yaw)
 	if mode == "water":
+		# Постройка на сваях — серединой над водой (настил — хоть краем).
+		if id != "platform" and height(pos) > WorldGen.WATER_LEVEL - 0.3:
+			return false
 		var wet := 0
 		for c in core:
 			if height(c) < WorldGen.WATER_LEVEL - 0.3:
@@ -575,7 +578,8 @@ func _place_near(id: String, at: Vector2, r0: float, r1: float, tries := 60) -> 
 	return false
 
 
-## Берег: рыбацкие хижины, мельница, маяк — лицом к воде; причалы-настилы — краем на воде.
+## Берег: мельница, маяк — лицом к воде; причалы-настилы — краем на воде; хижины и склад
+## рыбы на сваях — над водой, мостками к берегу.
 func _place_shore() -> void:
 	var shore: Dictionary = preset["shore"]
 	if shore.is_empty() or water_dir == Vector2.ZERO:
@@ -608,11 +612,15 @@ func _place_shore() -> void:
 				var yaw := atan2(d.x, d.y)
 				var r: Rect2 = Footprints.BASE.get(id, Rect2(-1, -1, 2, 2))
 				var pos: Vector2
+				var nudges: Array[float] = [0.0, -1.5, -3.0, 1.0]
 				if id == "platform":
 					pos = edge + d * 2.6
+				elif GameData.BUILDINGS[id].get("place", "land") == "water":
+					pos = edge + d * 2.2
+					nudges = [0.0, 1.0, 2.0, 3.0]
 				else:
 					pos = edge - d * (r.end.y + 1.2)
-				for nudge: float in [0.0, -1.5, -3.0, 1.0]:
+				for nudge in nudges:
 					var q := pos + d * nudge
 					if _free(id, q, yaw):
 						_put(id, q, yaw)

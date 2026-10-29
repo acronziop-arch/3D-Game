@@ -164,7 +164,7 @@ func update_ghost(hit: Variant, delta: float) -> void:
 			if snapped["snapped"]:
 				target = snapped["pos"]
 				_yaw = snapped["yaw"]
-	if place_mode(selected_id) == "water":
+	if selected_id == "platform":
 		var snapped := _snap_platform(p)
 		target = snapped["pos"]
 		if snapped["snapped"]:
@@ -423,12 +423,18 @@ func _validate(target: Vector3, angle: float) -> Dictionary:
 				if h < WorldGen.WATER_LEVEL - 0.15:
 					wet += 1
 			result["y"] = WorldGen.WATER_LEVEL
+			# Постройка на сваях (хижина, склад) — серединой над водой, настил — хоть краем.
+			var pier := selected_id != "platform"
+			var other := _overlaps(Building.obb_for(selected_id, target, angle, -0.25), mode)
 			if wet < 1:
-				result["reason"] = "Настил ставится на воду — хотя бы краем"
+				result["reason"] = "%s ставится на воду" % GameData.BUILDINGS[selected_id]["name"] if pier \
+					else "Настил ставится на воду — хотя бы краем"
+			elif pier and chunk_manager.get_height(target.x, target.z) > WorldGen.WATER_LEVEL - 0.15:
+				result["reason"] = "Сдвиньте дальше от берега — середина должна быть над водой"
 			elif deepest < WorldGen.WATER_LEVEL - PLATFORM_MAX_DEPTH:
 				result["reason"] = "Слишком глубоко для свай"
-			elif _overlaps(Building.obb_for(selected_id, target, angle, -0.25), mode):
-				result["reason"] = "Здесь уже есть настил"
+			elif other:
+				result["reason"] = "Здесь уже есть настил" if other.id == "platform" else "Мешает другое здание"
 		"bridge":
 			var basis := Basis(Vector3.UP, angle)
 			var a := target + basis * Vector3(0, 0, 6.6)
@@ -464,7 +470,7 @@ func _validate(target: Vector3, angle: float) -> Dictionary:
 			result["reason"] = "Мешают деревья или камни — добудьте их" + _key("1")
 		elif chunk_manager.has_chest_in_rect(Building.footprint_for(selected_id, target, angle)):
 			result["reason"] = "Здесь лежит сундук"
-		elif mode != "water" and _blocked(target, angle, -0.45 if GameData.BUILDINGS[selected_id].has("snap") else -0.15):
+		elif (mode != "water" or selected_id != "platform") and _blocked(target, angle, -0.45 if GameData.BUILDINGS[selected_id].has("snap") else -0.15):
 			result["reason"] = "Мешает другое здание"
 		elif moving == null and not Inventory.has_all(cost):
 			result["reason"] = "Не хватает: %s" % Rich.cost(Inventory.missing(cost), 16)
@@ -611,7 +617,8 @@ static func _is_tall(id: String) -> bool:
 	return (ModelLibrary.building(id)["bounds"] as AABB).end.y > 2.2
 
 
-func _overlaps(box: Dictionary, mode: String) -> bool:
+## Постройка, с которой пересекается box (или null).
+func _overlaps(box: Dictionary, mode: String) -> Building:
 	var group: String = GameData.BUILDINGS[selected_id].get("group", "") if selected_id != "" else ""
 	for b in buildings:
 		if not is_instance_valid(b) or b == moving:
@@ -623,11 +630,12 @@ func _overlaps(box: Dictionary, mode: String) -> bool:
 		# Здания можно ставить на настил — он им не мешает (и настилы — друг другу, если не внахлёст).
 		if b.id == "platform" and mode == "land":
 			continue
-		if mode == "water" and b.id != "platform":
+		# На воде мешают только настилы и постройки на сваях — дома на настиле нет.
+		if mode == "water" and b.id != "platform" and place_mode(b.id) != "water":
 			continue
 		if Building.obb_overlap(box, b.obb()):
-			return true
-	return false
+			return b
+	return null
 
 
 ## Пустая строка — построено (или передвинуто); иначе причина отказа.
@@ -792,7 +800,7 @@ func cycle_crop(b: Building) -> String:
 func can_demolish(b: Building) -> String:
 	if b.id == "platform":
 		for other in buildings:
-			if other != b and is_instance_valid(other) and other.id != "platform" \
+			if other != b and is_instance_valid(other) and place_mode(other.id) != "water" \
 					and Building.obb_overlap(other.obb(-0.2), b.obb()):
 				return "Сначала снесите здание на настиле"
 	return ""

@@ -110,6 +110,9 @@ func _process(_delta: float) -> void:
 	# Подземный цоколь в кадр не берём.
 	box = AABB(Vector3(box.position.x, maxf(box.position.y, -0.2), box.position.z),
 		Vector3(box.size.x, box.end.y - maxf(box.position.y, -0.2), box.size.z))
+	# Постройки на воде — посреди глади: сваи уходят в воду, а не висят в пустоте.
+	if GameData.BUILDINGS.get(_current, {}).get("place", "land") == "water":
+		_pivot.add_child(_water_disc(maxf(box.size.x, box.size.z) * 2.0 + 6.0))
 	var center := box.get_center()
 	var radius := box.size.length() * 0.5
 	var dir := Vector3(0.85, 0.62, 1.0).normalized()
@@ -117,3 +120,19 @@ func _process(_delta: float) -> void:
 	_camera.look_at(center)
 	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	_wait = 2
+
+
+static func _water_disc(radius: float) -> MeshInstance3D:
+	var disc := CylinderMesh.new()
+	disc.top_radius = radius
+	disc.bottom_radius = radius
+	disc.height = 0.02
+	disc.radial_segments = 64
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color(0.36, 0.58, 0.68)
+	m.roughness = 0.25
+	disc.material = m
+	var mi := MeshInstance3D.new()
+	mi.mesh = disc
+	mi.position.y = -0.03
+	return mi
