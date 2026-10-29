@@ -81,6 +81,6 @@ jobs:
           name: Everstead для iPhone (${{ github.ref_name }})
           prerelease: true
           body: |
-            Неподписанная сборка для iPhone и iPad (iOS 14+).
+            Неподписанная сборка для iPhone и iPad (iOS 15+, iPhone XS и новее).
             Установка бесплатно: Sideloadly или AltStore/SideStore со своим Apple ID — приложение
             работает 7 дней, потом его нужно переустановить тем же способом.
