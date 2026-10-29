@@ -21,6 +21,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Шаблоны Godot собраны с iOS SDK из Xcode 26: со старым Xcode не слинковать.
+      - name: Самый новый Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          xc=$(ls -d /Applications/Xcode_[0-9]*.app | sort -V | tail -1)
+          sudo xcode-select -s "$xc"
+          xcodebuild -version
+
       - name: Godot и шаблоны экспорта для iOS
         run: |
           base="https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable"
