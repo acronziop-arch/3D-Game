@@ -1314,12 +1314,13 @@ static func _platform(g: Geo, rng: RandomNumberGenerator) -> void:
 			g.rod("log", Vector3(x, -2.6, z), Vector3(x, deck - 0.1, z), 0.16, 0.16, 7, col("log", rng))
 	for z: float in [-1.6, 1.6]:
 		g.box("log", Vector3(0, deck - 0.2, z), Vector3(s, 0.2, 0.22), col("log", rng), 0.03)
+	# Доски чуть короче настила: их торцы прячутся за окантовкой, а не мерцают в одной плоскости с ней.
 	var boards := 10
 	for i in boards:
 		var x := -s * 0.5 + (i + 0.5) * s / boards
-		g.box("plank", Vector3(x, deck, 0), Vector3(s / boards - 0.03, 0.1, s), col("plank", rng, 0.1), 0.02)
+		g.box("plank", Vector3(x, deck, 0), Vector3(s / boards - 0.03, 0.1, s - 0.05), col("plank", rng, 0.1), 0.02)
 	for z: float in [-1.0, 1.0]:
-		g.box("plank_dark", Vector3(0, deck + 0.02, z * (s * 0.5 - 0.06)), Vector3(s, 0.12, 0.12), col("plank_dark", rng), 0.02)
+		g.box("plank_dark", Vector3(0, deck + 0.01, z * (s * 0.5 - 0.06)), Vector3(s, 0.14, 0.12), col("plank_dark", rng), 0.02)
 
 
 static func _bridge_wood(g: Geo, rng: RandomNumberGenerator) -> void:
@@ -2584,9 +2585,10 @@ static func _rowboat(g: Geo, rng: RandomNumberGenerator, xf: Transform3D) -> voi
 	# Настил на дне: доски вдоль лодки.
 	for z: float in [-0.18, -0.06, 0.06, 0.18]:
 		g.box("plank", Vector3(0, 0.2, z), Vector3(1.4, 0.03, 0.11), col("plank", rng, 0.1), 0.0)
-	g.box("plank", Vector3(0.1, 0.32, 0), Vector3(0.28, 0.05, 1.0), col("plank", rng), 0.01)
-	g.rod("plank", Vector3(-0.7, 0.36, 0.25), Vector3(0.9, 0.3, 0.42), 0.03, 0.03, 4, col("plank", rng))
-	g.box("plank", Vector3(0.95, 0.3, 0.43), Vector3(0.4, 0.03, 0.13), col("plank", rng), 0.0, Basis(Vector3.UP, -0.1))
+	g.box("plank", Vector3(0.1, 0.32, 0), Vector3(0.28, 0.05, 0.96), col("plank", rng), 0.01)
+	# Весло лежит на настиле внутри лодки (не сквозь борт).
+	g.rod("plank", Vector3(-0.75, 0.25, 0.2), Vector3(0.55, 0.25, 0.12), 0.03, 0.03, 4, col("plank", rng))
+	g.box("plank", Vector3(0.75, 0.24, 0.11), Vector3(0.4, 0.03, 0.13), col("plank", rng), 0.0, Basis(Vector3.UP, 0.06))
 	g.pop()
 
 
