@@ -44,6 +44,8 @@ var _ghost: Node3D
 var _ghost_materials: Array[ShaderMaterial] = []
 var _ghost_target := Vector3.ZERO
 var _yaw := 0.0
+## Поворот, с которым здание встанет: _yaw, а у прилипшего к настилу — по сетке настила.
+var _place_yaw := 0.0
 var _ghost_yaw := 0.0
 var _has_target := false
 var _cross: Sprite3D
@@ -129,6 +131,7 @@ func start_move(b: Building) -> void:
 	select(b.id)
 	moving = b
 	_yaw = b.yaw
+	_place_yaw = b.yaw
 	b.visible = false
 	_ghost.position = b.position
 	_ghost.rotation.y = b.yaw
@@ -164,12 +167,14 @@ func update_ghost(hit: Variant, delta: float) -> void:
 			if snapped["snapped"]:
 				target = snapped["pos"]
 				_yaw = snapped["yaw"]
-	if selected_id == "platform":
-		var snapped := _snap_platform(p)
+	var yaw := _yaw
+	if def.has("deck"):
+		var snapped := _snap_deck(p)
 		target = snapped["pos"]
 		if snapped["snapped"]:
-			_yaw = snapped["yaw"]
-	var check := _validate(target, _yaw)
+			yaw = snapped["yaw"]
+	_place_yaw = yaw
+	var check := _validate(target, yaw)
 	target.y = check["y"]
 	is_valid = check["reason"] == ""
 	invalid_reason = check["reason"]
@@ -178,12 +183,12 @@ func update_ghost(hit: Variant, delta: float) -> void:
 	if not _has_target:
 		_has_target = true
 		_ghost.position = target
-		_ghost_yaw = _yaw
+		_ghost_yaw = yaw
 	_ghost.visible = true
 
 	var k := 1.0 - exp(-18.0 * delta)
 	_ghost.position = _ghost.position.lerp(target, k)
-	_ghost_yaw = lerp_angle(_ghost_yaw, _yaw, k)
+	_ghost_yaw = lerp_angle(_ghost_yaw, yaw, k)
 	_ghost_scale = lerpf(_ghost_scale, 1.0, k)
 	_ghost_normal = ground_normal(target.x, target.z) if def.get("tilt", false) else Vector3.UP
 	var rot := Basis(Vector3.UP, _ghost_yaw)
@@ -205,34 +210,60 @@ func update_ghost(hit: Variant, delta: float) -> void:
 		_cross.visible = false
 
 
-## Настил прилипает краем к соседнему, только если палец рядом со свободной
-## клеткой возле него (та же сетка и поворот); иначе ставится свободно.
-func _snap_platform(p: Vector3) -> Dictionary:
+## Настил (и хижина, склад рыбы на своих блоках настила) прилипает краем к соседнему блоку,
+## только если палец рядом со свободной клеткой возле него (та же сетка, поворот — ближайший
+## к выбранному с шагом 90°); иначе ставится свободно.
+func _snap_deck(p: Vector3) -> Dictionary:
 	var free := {"pos": Vector3(snappedf(p.x, GRID), 0, snappedf(p.z, GRID)), "snapped": false}
-	var platforms: Array[Building] = []
+	var cells: Array[Vector3] = []
+	var yaws: Array[float] = []
 	for b in buildings:
-		if is_instance_valid(b) and b.id == "platform" and b != moving:
-			platforms.append(b)
+		if is_instance_valid(b) and b != moving and GameData.BUILDINGS[b.id].has("deck"):
+			for c in deck_cells(b.id, b.position, b.yaw):
+				cells.append(c)
+				yaws.append(b.yaw)
+	var mine: Array = GameData.BUILDINGS[selected_id]["deck"]
 	var best := free
 	var best_d := PLATFORM_SIZE * 0.85
-	for b in platforms:
-		if Vector2(b.position.x - p.x, b.position.z - p.z).length() > PLATFORM_SIZE * 2.0:
+	for i in cells.size():
+		var c := cells[i]
+		if Vector2(c.x - p.x, c.z - p.z).length() > PLATFORM_SIZE * 3.0:
 			continue
-		var basis := Basis(Vector3.UP, b.yaw)
+		var yaw := yaws[i] + roundf(angle_difference(yaws[i], _yaw) / (PI * 0.5)) * PI * 0.5
+		var basis := Basis(Vector3.UP, yaws[i])
+		var turn := Basis(Vector3.UP, yaw)
 		for side: Vector3 in [Vector3.RIGHT, Vector3.LEFT, Vector3.FORWARD, Vector3.BACK]:
-			var slot := b.position + basis * (side * PLATFORM_SIZE)
-			slot.y = 0.0
-			var d := Vector2(slot.x - p.x, slot.z - p.z).length()
-			if d >= best_d or _platform_at(slot, platforms):
+			var slot := c + basis * (side * PLATFORM_SIZE)
+			if _cell_at(slot, cells):
 				continue
-			best_d = d
-			best = {"pos": slot, "snapped": true, "yaw": b.yaw}
+			# Любой из своих блоков может встать в свободную клетку — лишь бы остальные не легли на занятые.
+			for o: Vector3 in mine:
+				var origin := slot - turn * o
+				origin.y = 0.0
+				var d := Vector2(origin.x - p.x, origin.z - p.z).length()
+				if d >= best_d:
+					continue
+				var fits := true
+				for o2: Vector3 in mine:
+					fits = fits and not _cell_at(origin + turn * o2, cells)
+				if fits:
+					best_d = d
+					best = {"pos": origin, "snapped": true, "yaw": yaw}
 	return best
 
 
-static func _platform_at(slot: Vector3, platforms: Array[Building]) -> bool:
-	for o in platforms:
-		if Vector2(o.position.x - slot.x, o.position.z - slot.z).length() < PLATFORM_SIZE * 0.5:
+## Середины блоков настила постройки (в мире).
+static func deck_cells(id: String, pos: Vector3, yaw: float) -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	for o: Vector3 in GameData.BUILDINGS[id].get("deck", []):
+		var c := pos + Basis(Vector3.UP, yaw) * o
+		out.append(Vector3(c.x, 0.0, c.z))
+	return out
+
+
+static func _cell_at(slot: Vector3, cells: Array[Vector3]) -> bool:
+	for o in cells:
+		if Vector2(o.x - slot.x, o.z - slot.z).length() < PLATFORM_SIZE * 0.5:
 			return true
 	return false
 
@@ -379,7 +410,7 @@ func ghost_hit(cam: Camera3D, screen: Vector2, slack: float) -> bool:
 	if _ghost == null or not _has_target:
 		return false
 	var b: AABB = ModelLibrary.building(selected_id)["bounds"]
-	var basis := Basis(Vector3.UP, _yaw)
+	var basis := Basis(Vector3.UP, _place_yaw)
 	var rect := Rect2()
 	var seen := false
 	for i in 8:
@@ -665,7 +696,7 @@ func try_place() -> String:
 	if def.has("crops"):
 		extra["crop"] = crop_choice
 		extra["planted"] = Time.get_unix_time_from_system()
-	var b := spawn(selected_id, _ghost_target, _yaw, false, extra)
+	var b := spawn(selected_id, _ghost_target, _place_yaw, false, extra)
 	var entry := {"id": b.id, "pos": b.position, "yaw": b.yaw}
 	entry.merge(extra)
 	WorldState.buildings.append(entry)
@@ -680,11 +711,11 @@ func _finish_move() -> void:
 	var b := moving
 	var entry: Variant = _save_entry(b)
 	b.position = _ghost_target
-	b.yaw = _yaw
-	b.rotation.y = _yaw
+	b.yaw = _place_yaw
+	b.rotation.y = _place_yaw
 	if GameData.BUILDINGS[b.id].get("tilt", false):
 		b.ground_normal = ground_normal(b.position.x, b.position.z)
-		b.basis = Basis(Quaternion(Vector3.UP, b.ground_normal)) * Basis(Vector3.UP, _yaw)
+		b.basis = Basis(Quaternion(Vector3.UP, b.ground_normal)) * Basis(Vector3.UP, _place_yaw)
 		if entry:
 			entry["normal"] = b.ground_normal
 	b.footprint = Building.footprint_for(b.id, b.position, b.yaw)

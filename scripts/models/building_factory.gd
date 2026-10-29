@@ -17,8 +17,6 @@ const GD := preload("res://scripts/autoload/game_data.gd")
 
 const BASE := 0.3
 const UNDER := -1.3
-## Высота настила построек на воде (над водой, в координатах модели до масштаба).
-const PIER_DECK := 1.1
 
 const STYLES := {
 	"stone_block": {"mat": "stone_block", "course": 0.38, "len": 0.62, "var": 0.34, "depth": 0.08, "bevel": 0.07, "gap": 0.05},
@@ -37,6 +35,10 @@ const ROTOR_PIVOT := {"windmill": Vector3(0, 8.35, 2.85), "watermill": Vector3(0
 ## Здания строятся в «полный» размер, а в игру попадают уменьшенными, чтобы
 ## одноэтажный дом был заметно ниже деревьев. Настил и мосты — по размеру воды и рек.
 const MODEL_SCALE := 0.72
+## Верх настила построек на воде (в координатах модели до масштаба) — вровень с блоком настила.
+const PIER_DECK := 0.8 / MODEL_SCALE
+## Лодки стоят над водой: днище чуть выше волн, внутри — сухой настил (в координатах модели).
+const BOAT_LIFT := 0.08
 const FULL_SIZE := ["platform", "bridge_wood", "bridge_stone", "campfire", "torch", "fence_stone",
 	"path_dirt", "path_wood", "path_stone", "path_brick", "garden_bed", "vegetable_garden",
 	"haystack", "woodpile", "barrels", "crates", "cart", "scarecrow", "beehives", "trough", "bench", "signpost", "shrine"]
@@ -2534,63 +2536,14 @@ static func _chicken_coop(g: Geo, rng: RandomNumberGenerator) -> void:
 	g.tag = ""
 
 
-## Настил на сваях над водой: сваи уходят в дно, под досками — прогоны, по краю — обвязка.
-## rect — XZ-прямоугольник настила, верх досок — на deck_y.
-static func _pier_deck(g: Geo, rng: RandomNumberGenerator, rect: Rect2, deck_y: float, step := 1.6) -> void:
-	var nx := maxi(1, roundi((rect.size.x - 0.4) / step))
-	var nz := maxi(1, roundi((rect.size.y - 0.4) / step))
-	var cx := rect.get_center().x
-	var cz := rect.get_center().y
-	var zs: Array[float] = []
-	for j in nz + 1:
-		zs.append(rect.position.y + 0.2 + j * (rect.size.y - 0.4) / nz)
-	for i in nx + 1:
-		var x := rect.position.x + 0.2 + i * (rect.size.x - 0.4) / nx
-		for z in zs:
-			g.rod("log", Vector3(x, -3.6, z), Vector3(x, deck_y - 0.2, z), 0.14, 0.12, 7, col("log", rng))
-	for z in zs:
-		g.box("log", Vector3(cx, deck_y - 0.2, z), Vector3(rect.size.x, 0.2, 0.22), col("log", rng).darkened(0.08), 0.03)
-	var boards := roundi(rect.size.x / 0.36)
-	for i in boards:
-		var x := rect.position.x + (i + 0.5) * rect.size.x / boards
-		g.box("plank", Vector3(x, deck_y - 0.05, cz), Vector3(rect.size.x / boards - 0.03, 0.1, rect.size.y),
-			col("plank", rng, 0.1), 0.02)
-	for z: float in [rect.position.y + 0.06, rect.end.y - 0.06]:
-		g.box("plank_dark", Vector3(cx, deck_y - 0.14, z), Vector3(rect.size.x + 0.04, 0.2, 0.12), col("plank_dark", rng), 0.02)
-	for x: float in [rect.position.x + 0.06, rect.end.x - 0.06]:
-		g.box("plank_dark", Vector3(x, deck_y - 0.14, cz), Vector3(0.12, 0.2, rect.size.y), col("plank_dark", rng), 0.02)
-
-
-## Мостки с настила к берегу (вдоль -Z): доски поперёк хода, тетивы, столбики с перилами.
-static func _gangway(g: Geo, rng: RandomNumberGenerator, top: Vector3, bottom: Vector3, width: float) -> void:
-	var up := (top - bottom).normalized()
-	var x := Vector3.RIGHT
-	var y := up.cross(x)
-	var basis := Basis(x, y, up)
-	var length := top.distance_to(bottom)
-	var n := roundi(length / 0.3)
-	for i in n:
-		var p := bottom.lerp(top, (i + 0.5) / n)
-		g.box("plank", p - y * 0.05, Vector3(width, 0.08, length / n - 0.04), col("plank", rng, 0.1), 0.015, basis)
-	for s: float in [-1.0, 1.0]:
-		var side := x * s * (width * 0.5 - 0.1)
-		g.box("log", (top + bottom) * 0.5 + side - y * 0.16, Vector3(0.12, 0.14, length), col("log", rng), 0.02, basis)
-		# Столбики у берега и поручень вдоль хода.
-		var foot := bottom + side * 1.12
-		g.rod("log", foot + Vector3(0, -1.2, 0), foot + Vector3(0, 0.85, 0), 0.07, 0.06, 6, col("log", rng))
-		var head := top + side * 1.12
-		g.rod("log", head + Vector3(0, -0.1, 0), head + Vector3(0, 0.85, 0), 0.07, 0.06, 6, col("log", rng))
-		g.rod("log", foot + Vector3(0, 0.82, 0), head + Vector3(0, 0.82, 0), 0.045, 0.045, 5, col("log", rng))
-
-
-## Перила по краю настила от a до b: столбики через ~1.1 м и две жерди.
-static func _deck_rail(g: Geo, rng: RandomNumberGenerator, a: Vector3, b: Vector3) -> void:
-	var n := maxi(1, roundi(a.distance_to(b) / 1.1))
-	for i in n + 1:
-		var p := a.lerp(b, float(i) / n)
-		g.rod("log", p, p + Vector3(0, 0.85, 0), 0.055, 0.05, 6, col("log", rng))
-	for h: float in [0.42, 0.82]:
-		g.rod("log", a + Vector3(0, h, 0), b + Vector3(0, h, 0), 0.04, 0.04, 5, col("log", rng))
+## Настил постройки на воде из обычных блоков настила 4×4 м (такие же доски, сваи и высота):
+## к нему пристраиваются другие настилы. cells — середины блоков в метрах.
+static func _deck_blocks(g: Geo, rng: RandomNumberGenerator, cells: Array) -> void:
+	var k := 1.0 / MODEL_SCALE
+	for c: Vector3 in cells:
+		g.push(Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * k), c * k))
+		_platform(g, rng)
+		g.pop()
 
 
 ## Лесенка с края настила в воду (к лодке).
@@ -2604,7 +2557,7 @@ static func _water_ladder(g: Geo, rng: RandomNumberGenerator, top: Vector3, bott
 		y -= 0.32
 
 
-## Вёсельная лодка (нос — к +X): обшивка из досок по шпангоутам, скамья и весло.
+## Вёсельная лодка (нос — к +X): обшивка из досок по шпангоутам, настил на дне, скамья и весло.
 static func _rowboat(g: Geo, rng: RandomNumberGenerator, xf: Transform3D) -> void:
 	g.push(xf)
 	var hull := col("plank_dark", rng)
@@ -2628,6 +2581,9 @@ static func _rowboat(g: Geo, rng: RandomNumberGenerator, xf: Transform3D) -> voi
 			for k: int in [0, 4]:
 				g.rod("plank", prev[k], ring[k], 0.03, 0.03, 4, col("plank", rng), false)
 		prev = ring
+	# Настил на дне: доски вдоль лодки.
+	for z: float in [-0.18, -0.06, 0.06, 0.18]:
+		g.box("plank", Vector3(0, 0.2, z), Vector3(1.4, 0.03, 0.11), col("plank", rng, 0.1), 0.0)
 	g.box("plank", Vector3(0.1, 0.32, 0), Vector3(0.28, 0.05, 1.0), col("plank", rng), 0.01)
 	g.rod("plank", Vector3(-0.7, 0.36, 0.25), Vector3(0.9, 0.3, 0.42), 0.03, 0.03, 4, col("plank", rng))
 	g.box("plank", Vector3(0.95, 0.3, 0.43), Vector3(0.4, 0.03, 0.13), col("plank", rng), 0.0, Basis(Vector3.UP, -0.1))
@@ -2639,7 +2595,7 @@ static func _mooring(g: Geo, rng: RandomNumberGenerator, post: Vector3, bow: Vec
 	g.rod("log", post, post + Vector3(0, 0.5, 0), 0.11, 0.1, 7, col("log", rng))
 	g.cylinder("log", post + Vector3(0, 0.5, 0), 0.13, 0.13, 0.05, 7, col("log", rng).darkened(0.1))
 	var a := post + Vector3(0, 0.38, 0)
-	var mid := (a + bow) * 0.5 + Vector3(0, -0.25, 0)
+	var mid := (a + bow) * 0.5 + Vector3(0, -0.2, 0)
 	var rope := Color(0.55, 0.46, 0.32)
 	g.rod("cloth", a, mid, 0.022, 0.022, 4, rope, false)
 	g.rod("cloth", mid, bow, 0.022, 0.022, 4, rope, false)
@@ -2663,15 +2619,15 @@ static func _fish_crate(g: Geo, rng: RandomNumberGenerator, base: Vector3, yaw :
 			Color(0.66, 0.7, 0.74).darkened(rng.randf() * 0.15), rng, 0, 0.1, 0.25, 0.0)
 
 
+## Рыбацкая хижина на блоке настила 4×4 м (край настила — ±2 м, в модели ±2/MODEL_SCALE).
 static func _fishing_hut(g: Geo, rng: RandomNumberGenerator) -> void:
 	var deck := PIER_DECK
-	# Настил на сваях над водой; мостки сзади — к берегу.
-	_pier_deck(g, rng, Rect2(-2.6, -2.0, 5.2, 4.3), deck)
-	_gangway(g, rng, Vector3(1.55, deck - 0.02, -2.0), Vector3(1.55, 0.3, -4.5), 1.1)
+	var edge := 2.0 / MODEL_SCALE
+	_deck_blocks(g, rng, [Vector3.ZERO])
 	# Домик на задней половине настила, дверь — к воде.
 	var w := 3.0
 	var d := 2.2
-	g.push(Transform3D(Basis.IDENTITY, Vector3(-0.95, 0, -0.75)))
+	g.push(Transform3D(Basis.IDENTITY, Vector3(-0.75, 0, -1.0)))
 	walls(g, rng, w, d, deck, 2.1, "plank", [
 		{"side": "front", "u": 0.75, "w": 0.85, "h": 1.75, "type": "door"},
 		{"side": "front", "u": -0.7, "v": 0.85, "w": 0.6, "h": 0.6},
@@ -2684,81 +2640,80 @@ static func _fishing_hut(g: Geo, rng: RandomNumberGenerator) -> void:
 	g.cylinder("iron", Vector3(0.8, deck + 3.55, -0.45), 0.15, 0.04, 0.12, 8, col("iron", rng).darkened(0.1))
 	g.pop()
 	# Сушилка для сетей у правого края: два столба, жердь и сеть ячейками.
-	var nx := 2.2
-	for z: float in [-0.5, 1.3]:
+	var nx := 2.3
+	for z: float in [-1.7, 0.3]:
 		g.rod("log", Vector3(nx, deck, z), Vector3(nx, deck + 1.7, z), 0.06, 0.05, 5, col("log", rng))
-	g.rod("log", Vector3(nx, deck + 1.65, -0.65), Vector3(nx, deck + 1.65, 1.45), 0.045, 0.045, 5, col("log", rng))
+	g.rod("log", Vector3(nx, deck + 1.65, -1.85), Vector3(nx, deck + 1.65, 0.45), 0.045, 0.045, 5, col("log", rng))
 	var net := Color(0.3, 0.33, 0.26)
-	for k in 8:
-		var z := -0.42 + k * 0.22
+	for k in 9:
+		var z := -1.62 + k * 0.22
 		var sag := 0.06 * sin(k * 1.1)
 		g.rod("cloth", Vector3(nx, deck + 1.6, z), Vector3(nx, deck + 0.45 + sag, z + 0.03), 0.012, 0.012, 3, net, false)
 	for j in 7:
 		var y := deck + 1.55 - j * 0.17
-		g.rod("cloth", Vector3(nx, y, -0.44), Vector3(nx, y + 0.03 * sin(j * 1.7), 1.24), 0.012, 0.012, 3, net, false)
-	g.box("plank_dark", Vector3(nx, deck + 0.44, 0.4), Vector3(0.05, 0.05, 1.6), col("plank_dark", rng), 0.0)
+		g.rod("cloth", Vector3(nx, y, -1.64), Vector3(nx, y + 0.03 * sin(j * 1.7), 0.24), 0.012, 0.012, 3, net, false)
+	g.box("plank_dark", Vector3(nx, deck + 0.44, -0.7), Vector3(0.05, 0.05, 1.9), col("plank_dark", rng), 0.0)
 	# Вяленая рыба под свесом крыши, у двери — бочка, ящик с уловом и удочки.
 	for k in 4:
-		_fish_string(g, rng, Vector3(-2.1 + k * 0.3, deck + 2.05, 0.6), 2, true)
-	_barrel(g, rng, Vector3(-2.15, deck, 1.45), 0.6, 0.26)
-	_fish_crate(g, rng, Vector3(-1.5, deck, 1.6), 0.3)
+		_fish_string(g, rng, Vector3(-2.0 + k * 0.3, deck + 2.05, 0.3), 2, true)
+	_barrel(g, rng, Vector3(-2.2, deck, 1.0), 0.6, 0.26)
+	_fish_crate(g, rng, Vector3(-1.5, deck, 1.5), 0.3)
 	for k in 2:
-		var foot := Vector3(0.5 + k * 0.18, deck, 0.6)
-		g.rod("log", foot, foot + Vector3(0.25 + k * 0.1, 2.3, -0.12), 0.025, 0.012, 4, col("log", rng).lightened(0.1))
-	# Перила слева и спереди, лесенка в воду, тумба и лодка на привязи.
-	_deck_rail(g, rng, Vector3(-2.5, deck, 0.6), Vector3(-2.5, deck, 2.2))
-	_deck_rail(g, rng, Vector3(-2.5, deck, 2.2), Vector3(-1.8, deck, 2.2))
-	_water_ladder(g, rng, Vector3(-1.3, deck, 2.36), -0.5)
-	_mooring(g, rng, Vector3(0.9, deck, 2.0), Vector3(1.85, 0.3, 3.2))
-	_rowboat(g, rng, Transform3D(Basis(Vector3.UP, -0.06), Vector3(0.6, -0.18, 3.25)))
+		var foot := Vector3(1.0 + k * 0.18, deck, 0.4)
+		g.rod("log", foot, foot + Vector3(-0.15 + k * 0.1, 2.3, -0.2), 0.025, 0.012, 4, col("log", rng).lightened(0.1))
+	# Лесенка в воду, тумба и лодка на привязи у переднего края.
+	_water_ladder(g, rng, Vector3(-1.0, deck, edge + 0.06), -0.5)
+	_mooring(g, rng, Vector3(1.1, deck, edge - 0.35), Vector3(1.65, BOAT_LIFT + 0.45, edge + 0.68))
+	_rowboat(g, rng, Transform3D(Basis(Vector3.UP, -0.04), Vector3(0.4, BOAT_LIFT, edge + 0.68)))
 
 
+## Склад рыбы на двух блоках настила (8×4 м): амбар, коптильня, вешала и журавль.
 static func _fish_store(g: Geo, rng: RandomNumberGenerator) -> void:
 	var deck := PIER_DECK
-	_pier_deck(g, rng, Rect2(-3.4, -2.4, 6.8, 5.2), deck)
-	_gangway(g, rng, Vector3(2.4, deck - 0.02, -2.4), Vector3(2.4, 0.3, -4.9), 1.3)
+	var edge := 2.0 / MODEL_SCALE
+	_deck_blocks(g, rng, [Vector3(-2, 0, 0), Vector3(2, 0, 0)])
 	# Амбар: широкие ворота к воде — улов заносят прямо с лодок.
-	var w := 4.4
-	var d := 3.0
-	g.push(Transform3D(Basis.IDENTITY, Vector3(-0.95, 0, -0.85)))
+	var w := 5.0
+	var d := 3.2
+	g.push(Transform3D(Basis.IDENTITY, Vector3(-2.6, 0, -0.8)))
 	walls(g, rng, w, d, deck, 2.5, "plank", [
-		{"side": "front", "u": 0.35, "w": 1.6, "h": 2.0, "type": "door"},
-		{"side": "front", "u": -1.45, "v": 1.1, "w": 0.6, "h": 0.6},
+		{"side": "front", "u": 0.3, "w": 1.6, "h": 2.0, "type": "door"},
+		{"side": "front", "u": -1.6, "v": 1.1, "w": 0.6, "h": 0.6},
 		{"side": "left", "u": 0.0, "v": 1.1, "w": 0.6, "h": 0.6},
 		{"side": "back", "u": -0.8, "v": 1.1, "w": 0.6, "h": 0.6},
+		{"side": "back", "u": 1.2, "v": 1.1, "w": 0.6, "h": 0.6},
 	], {"frame": "plank_dark", "door": "plank_dark", "thickness": 0.25, "corner_trim": "log"})
-	gable_roof(g, rng, Vector3(0, deck + 2.5, 0), w, d, 1.3, "plank_dark", "shingle", 0.45, "plank", "")
-	# Вывеска над воротами: доска с рыбой.
-	g.box("plank", Vector3(0.35, deck + 2.3, d * 0.5 + 0.16), Vector3(1.1, 0.34, 0.06), col("plank", rng).lightened(0.08), 0.02)
-	g.blob("crop", Vector3(0.35, deck + 2.3, d * 0.5 + 0.2), Vector3(0.36, 0.1, 0.02), Color(0.5, 0.62, 0.72), rng, 0, 0.05, 0.2, 0.0)
+	gable_roof(g, rng, Vector3(0, deck + 2.5, 0), w, d, 1.4, "plank_dark", "shingle", 0.38, "plank", "")
+	# Вывеска справа от ворот (под крышей ей места нет): доска с рыбой.
+	g.box("plank", Vector3(1.8, deck + 1.6, d * 0.5 + 0.15), Vector3(1.0, 0.34, 0.06), col("plank", rng).lightened(0.08), 0.02)
+	g.blob("crop", Vector3(1.8, deck + 1.6, d * 0.5 + 0.19), Vector3(0.34, 0.1, 0.02), Color(0.5, 0.62, 0.72), rng, 0, 0.05, 0.2, 0.0)
 	g.pop()
 	# Коптильня: каменная печь с трубой (из трубы идёт дымок — см. GameData «fire»).
-	var smoke := Vector3(-2.75, deck, 1.85)
+	var smoke := Vector3(-4.7, deck, 2.0)
 	g.box("stone", smoke + Vector3(0, 0.55, 0), Vector3(1.0, 1.1, 0.9), col("stone", rng), 0.05)
 	g.box("stone", smoke + Vector3(0, 1.15, 0), Vector3(1.1, 0.12, 1.0), col("stone", rng).darkened(0.1), 0.04)
 	g.box("iron", smoke + Vector3(0, 0.45, 0.46), Vector3(0.5, 0.45, 0.04), col("iron", rng).darkened(0.2), 0.02)
 	_chimney(g, rng, smoke + Vector3(-0.15, 1.2, -0.1), 0.42, 1.0, "stone")
-	# Бочки с солёной рыбой и мешки соли у ворот.
-	for p: Vector3 in [Vector3(-2.65, deck, 0.75), Vector3(-2.05, deck, 0.95), Vector3(-2.35, deck, 0.3)]:
+	# Бочки с солёной рыбой слева от ворот, мешки соли и ящики с уловом справа.
+	for p: Vector3 in [Vector3(-3.7, deck, 1.3), Vector3(-3.2, deck, 1.75), Vector3(-3.75, deck, 1.95)]:
 		_barrel(g, rng, p, 0.7, 0.28)
-	_barrel(g, rng, Vector3(-2.38, deck + 0.7, 0.68), 0.6, 0.25)
+	_barrel(g, rng, Vector3(-3.5, deck + 0.7, 1.55), 0.6, 0.25)
 	for k in 2:
-		g.blob("cloth", Vector3(-1.45 + k * 0.42, deck + 0.22, 1.05), Vector3(0.22, 0.24, 0.18), Color(0.86, 0.82, 0.72), rng, 1, 0.12, 0.2)
-	_fish_crate(g, rng, Vector3(0.6, deck, 1.25), 0.2)
-	_fish_crate(g, rng, Vector3(-0.15, deck, 1.55), -0.15)
-	_crate(g, rng, Vector3(1.25, deck + 0.25, 0.95), 0.5, 0.1)
-	_crate(g, rng, Vector3(1.2, deck + 0.75, 0.97), 0.5, -0.12)
-	# Вешала: два ряда жердей, на них вялится рыба.
-	for rx: float in [2.2, 3.0]:
-		for z: float in [-1.9, 0.6]:
-			g.rod("log", Vector3(rx, deck, z), Vector3(rx, deck + 1.75, z), 0.055, 0.05, 5, col("log", rng))
+		g.blob("cloth", Vector3(-1.15 + k * 0.42, deck + 0.22, 1.3), Vector3(0.22, 0.24, 0.18), Color(0.86, 0.82, 0.72), rng, 1, 0.12, 0.2)
+	_fish_crate(g, rng, Vector3(-0.2, deck, 1.9), 0.2)
+	_fish_crate(g, rng, Vector3(0.45, deck, 1.45), -0.15)
+	_crate(g, rng, Vector3(-0.15, deck + 0.25, 1.25), 0.5, 0.1)
+	# Вешала: два ряда жердей вдоль склада, на них вялится рыба.
+	for rz: float in [-1.9, -0.7]:
+		for x: float in [0.9, 4.9]:
+			g.rod("log", Vector3(x, deck, rz), Vector3(x, deck + 1.75, rz), 0.055, 0.05, 5, col("log", rng))
 		for h: float in [1.7, 1.1]:
-			g.rod("log", Vector3(rx, deck + h, -2.0), Vector3(rx, deck + h, 0.7), 0.04, 0.04, 5, col("log", rng))
-			for k in 7:
-				_fish_string(g, rng, Vector3(rx, deck + h - 0.02, -1.75 + k * 0.36), 1, h > 1.5)
+			g.rod("log", Vector3(0.8, deck + h, rz), Vector3(5.0, deck + h, rz), 0.04, 0.04, 5, col("log", rng))
+			for k in 11:
+				_fish_string(g, rng, Vector3(1.1 + k * 0.36, deck + h - 0.02, rz), 1, h > 1.5)
 	# Журавль: столб с укосиной над водой, блок, верёвка, корзина с уловом и ворот у столба.
-	var post := Vector3(1.9, deck, 2.35)
-	var tip := Vector3(1.9, deck + 3.0, 4.1)
+	var post := Vector3(1.6, deck, edge - 0.35)
+	var tip := Vector3(1.6, deck + 3.0, edge + 1.4)
 	g.rod("log", post, post + Vector3(0, 3.2, 0), 0.13, 0.11, 7, col("log", rng))
 	g.rod("log", post + Vector3(0, 3.0, -0.15), tip, 0.08, 0.07, 6, col("log", rng))
 	g.rod("log", post + Vector3(0, 2.0, 0.05), post + Vector3(0, 3.0, 1.1), 0.06, 0.06, 5, col("log", rng))
@@ -2778,12 +2733,10 @@ static func _fish_store(g: Geo, rng: RandomNumberGenerator) -> void:
 	g.cylinder("log", post + Vector3(-0.32, 0.62, -0.3), 0.13, 0.13, 0.64, 8, col("log", rng).darkened(0.1), true, true, 0.0,
 		Basis(Vector3.FORWARD, -PI * 0.5))
 	g.rod("iron", post + Vector3(0.38, 0.62, -0.3), post + Vector3(0.38, 0.35, -0.12), 0.025, 0.025, 4, col("iron", rng))
-	# Перила, лесенка и лодка у причала.
-	_deck_rail(g, rng, Vector3(-3.3, deck, -0.2), Vector3(-3.3, deck, 2.7))
-	_deck_rail(g, rng, Vector3(3.3, deck, -2.3), Vector3(3.3, deck, 2.7))
-	_water_ladder(g, rng, Vector3(-1.4, deck, 2.86), -0.5)
-	_mooring(g, rng, Vector3(-0.4, deck, 2.5), Vector3(-0.85, 0.3, 3.75))
-	_rowboat(g, rng, Transform3D(Basis(Vector3.UP, PI + 0.05), Vector3(-2.0, -0.18, 3.75)))
+	# Лесенка, тумба и лодка у переднего края.
+	_water_ladder(g, rng, Vector3(3.0, deck, edge + 0.06), -0.5)
+	_mooring(g, rng, Vector3(4.7, deck, edge - 0.35), Vector3(4.85, BOAT_LIFT + 0.45, edge + 0.72))
+	_rowboat(g, rng, Transform3D(Basis(Vector3.UP, 0.04), Vector3(3.6, BOAT_LIFT, edge + 0.72)))
 
 
 ## Брус квадратного сечения t от точки a до точки b.
